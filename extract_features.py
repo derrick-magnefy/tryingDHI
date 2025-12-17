@@ -57,6 +57,7 @@ FEATURE_NAMES = [
     'rise_fall_ratio',
     'zero_crossing_count',
     'oscillation_count',
+    'energy_charge_ratio',
 ]
 
 
@@ -243,6 +244,15 @@ class PDFeatureExtractor:
 
         # Total energy (integral of squared signal)
         features['energy'] = np.sum(wfm**2) * self.sample_interval
+
+        # Charge (integral of absolute signal)
+        charge = np.sum(np.abs(wfm)) * self.sample_interval
+
+        # Energy/Charge ratio
+        if charge > 0:
+            features['energy_charge_ratio'] = features['energy'] / charge
+        else:
+            features['energy_charge_ratio'] = 0.0
 
         # Equivalent time (energy-weighted time centroid)
         if features['energy'] > 0:
