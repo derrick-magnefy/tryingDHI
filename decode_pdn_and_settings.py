@@ -104,7 +104,7 @@ def compare_pdn_with_wfm(pdn_path, wfm_path):
     print(f"\nComparing first {min_len} values:")
 
     if np.allclose(wfm_flat[:min_len], pdn_floats[:min_len], rtol=1e-5):
-        print("  ✓ Values match exactly!")
+        print("  [OK] Values match exactly!")
     else:
         diff = np.abs(wfm_flat[:min_len] - pdn_floats[:min_len])
         print(f"  Max difference: {diff.max():.6e}")

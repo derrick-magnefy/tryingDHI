@@ -507,12 +507,12 @@ def main():
     print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"\nSteps completed:")
     for step in steps_completed:
-        print(f"  ✓ {step}")
+        print(f"  [OK] {step}")
 
     if all_success:
-        print("\n✓ Pipeline completed successfully!")
+        print("\n[SUCCESS] Pipeline completed successfully!")
     else:
-        print("\n⚠ Pipeline completed with some errors.")
+        print("\n[WARNING] Pipeline completed with some errors.")
 
     print("\nOutput files:")
     print(f"  - Feature files: {args.input_dir}/*-features.csv")
