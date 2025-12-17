@@ -205,3 +205,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Generated feature files (can be regenerated with extract_features.py)
+*-features.csv
+*-features.tsv
+*-features.json
