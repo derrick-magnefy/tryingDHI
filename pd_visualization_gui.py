@@ -550,17 +550,14 @@ def create_app(data_dir=DATA_DIR):
             dcc.Markdown(id='stats-text', style={'padding': '10px', 'backgroundColor': '#f0f0f0', 'borderRadius': '5px'})
         ], style={'width': '90%', 'margin': '10px auto'}),
 
-        # Main plots row
+        # Cluster PRPD - full row
         html.Div([
-            # Cluster PRPD
-            html.Div([
-                dcc.Graph(id='cluster-prpd', style={'height': '600px'})
-            ], style={'width': '48%', 'display': 'inline-block'}),
+            dcc.Graph(id='cluster-prpd', style={'height': '600px'})
+        ], style={'width': '95%', 'margin': 'auto'}),
 
-            # PD Type PRPD
-            html.Div([
-                dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
-            ], style={'width': '48%', 'display': 'inline-block'}),
+        # PD Type PRPD - full row
+        html.Div([
+            dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
         # Second row
