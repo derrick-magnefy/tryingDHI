@@ -49,6 +49,58 @@ CLUSTER_COLORS = [
     '#c49c94', '#f7b6d2', '#c7c7c7', '#dbdb8d', '#9edae5'
 ]
 
+# Feature groups for organized display
+FEATURE_GROUPS = {
+    'Time Domain': ['phase_angle', 'rise_time', 'fall_time', 'pulse_width', 'slew_rate'],
+    'Amplitude': ['peak_amplitude_positive', 'peak_amplitude_negative', 'polarity',
+                  'peak_to_peak_amplitude', 'rms_amplitude', 'crest_factor'],
+    'Energy': ['energy', 'equivalent_time', 'equivalent_bandwidth', 'cumulative_energy_peak',
+               'cumulative_energy_rise_time', 'cumulative_energy_shape_factor',
+               'cumulative_energy_area_ratio', 'energy_charge_ratio'],
+    'Frequency': ['dominant_frequency', 'center_frequency', 'bandwidth_3db',
+                  'spectral_power_low', 'spectral_power_high', 'spectral_flatness', 'spectral_entropy'],
+    'Shape': ['rise_fall_ratio', 'zero_crossing_count', 'oscillation_count']
+}
+
+# Default visible features
+DEFAULT_VISIBLE_FEATURES = [
+    'phase_angle', 'peak_amplitude_positive', 'peak_amplitude_negative',
+    'rise_time', 'energy', 'dominant_frequency'
+]
+
+
+def format_feature_value(name, value):
+    """Format a feature value for display."""
+    if 'frequency' in name.lower() or 'bandwidth' in name.lower():
+        if abs(value) >= 1e6:
+            return f"{value/1e6:.2f} MHz"
+        elif abs(value) >= 1e3:
+            return f"{value/1e3:.2f} kHz"
+        else:
+            return f"{value:.2f} Hz"
+    elif 'time' in name.lower() or name in ['rise_time', 'fall_time', 'pulse_width']:
+        if abs(value) < 1e-6:
+            return f"{value*1e9:.2f} ns"
+        elif abs(value) < 1e-3:
+            return f"{value*1e6:.2f} µs"
+        else:
+            return f"{value*1e3:.2f} ms"
+    elif 'energy' in name.lower():
+        return f"{value:.4e}"
+    elif 'phase' in name.lower() or 'angle' in name.lower():
+        return f"{value:.1f}°"
+    elif 'amplitude' in name.lower():
+        return f"{value:.6f} V"
+    elif 'polarity' in name.lower():
+        return "Positive" if value > 0 else "Negative"
+    elif isinstance(value, float):
+        if abs(value) < 0.01 or abs(value) >= 1000:
+            return f"{value:.4e}"
+        else:
+            return f"{value:.4f}"
+    else:
+        return str(value)
+
 
 class PDDataLoader:
     """Handles loading PD analysis data."""
@@ -427,10 +479,34 @@ def create_app(data_dir=DATA_DIR):
 
         # Second row
         html.Div([
-            # Waveform viewer
+            # Waveform viewer and features
             html.Div([
-                dcc.Graph(id='waveform-plot', style={'height': '525px'})
-            ], style={'width': '48%', 'display': 'inline-block'}),
+                dcc.Graph(id='waveform-plot', style={'height': '400px'}),
+                # Feature display area
+                html.Div([
+                    html.Div([
+                        html.Label("Show Features:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                        dcc.Checklist(
+                            id='feature-toggles',
+                            options=[],  # Will be populated by callback
+                            value=DEFAULT_VISIBLE_FEATURES,
+                            inline=True,
+                            style={'fontSize': '11px'},
+                            inputStyle={'marginRight': '3px'},
+                            labelStyle={'marginRight': '12px'}
+                        ),
+                    ], style={'marginBottom': '8px', 'borderBottom': '1px solid #ddd', 'paddingBottom': '5px'}),
+                    html.Div(id='feature-display', style={
+                        'fontSize': '12px',
+                        'fontFamily': 'monospace',
+                        'backgroundColor': '#f8f8f8',
+                        'padding': '8px',
+                        'borderRadius': '4px',
+                        'maxHeight': '120px',
+                        'overflowY': 'auto'
+                    })
+                ], style={'padding': '5px', 'backgroundColor': '#fff', 'border': '1px solid #ddd', 'borderRadius': '4px'})
+            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
 
             # Histogram
             html.Div([
@@ -438,9 +514,11 @@ def create_app(data_dir=DATA_DIR):
             ], style={'width': '48%', 'display': 'inline-block'}),
         ], style={'width': '95%', 'margin': 'auto'}),
 
-        # Hidden store for selected index
+        # Hidden stores
         dcc.Store(id='selected-index'),
         dcc.Store(id='current-data-store'),
+        dcc.Store(id='selected-waveform-idx'),
+        dcc.Store(id='feature-toggle-store', data=DEFAULT_VISIBLE_FEATURES),
     ])
 
     @app.callback(
@@ -482,7 +560,8 @@ def create_app(data_dir=DATA_DIR):
         return cluster_fig, pdtype_fig, hist_fig, stats, prefix
 
     @app.callback(
-        Output('waveform-plot', 'figure'),
+        [Output('waveform-plot', 'figure'),
+         Output('selected-waveform-idx', 'data')],
         [Input('cluster-prpd', 'clickData'),
          Input('pdtype-prpd', 'clickData')],
         [State('current-data-store', 'data')],
@@ -516,7 +595,7 @@ def create_app(data_dir=DATA_DIR):
                 data['waveforms'], idx,
                 data['features'], data['feature_names'],
                 data['cluster_labels'], data['pd_types']
-            )
+            ), idx
         elif prefix:
             # No point clicked yet, show placeholder
             data = loader.load_all(prefix)
@@ -524,9 +603,116 @@ def create_app(data_dir=DATA_DIR):
                 data['waveforms'], None,
                 data['features'], data['feature_names'],
                 data['cluster_labels'], data['pd_types']
+            ), None
+
+        return create_waveform_plot(None, None, None, None, None, None), None
+
+    @app.callback(
+        Output('feature-toggles', 'options'),
+        [Input('current-data-store', 'data')]
+    )
+    def update_feature_options(prefix):
+        if not prefix:
+            return []
+        data = loader.load_all(prefix)
+        if data['feature_names'] is None:
+            return []
+        # Create options for all features
+        return [{'label': name.replace('_', ' ').title(), 'value': name}
+                for name in data['feature_names']]
+
+    @app.callback(
+        Output('feature-display', 'children'),
+        [Input('selected-waveform-idx', 'data'),
+         Input('feature-toggles', 'value')],
+        [State('current-data-store', 'data')]
+    )
+    def update_feature_display(idx, visible_features, prefix):
+        if idx is None or not prefix or not visible_features:
+            return html.Div("Select a waveform to view features", style={'color': '#888', 'fontStyle': 'italic'})
+
+        data = loader.load_all(prefix)
+        if data['features'] is None or data['feature_names'] is None:
+            return html.Div("No feature data available", style={'color': '#888'})
+
+        features = data['features']
+        feature_names = data['feature_names']
+
+        if idx >= len(features):
+            return html.Div("Invalid waveform index", style={'color': '#888'})
+
+        # Get cluster and PD type info
+        cluster_info = ""
+        if data['cluster_labels'] is not None:
+            cluster = data['cluster_labels'][idx]
+            cluster_info = f"Cluster: {cluster}"
+            if data['pd_types'] is not None:
+                pd_type = data['pd_types'].get(cluster, 'UNKNOWN')
+                cluster_info += f" | Type: {pd_type}"
+
+        # Build feature display
+        feature_items = []
+
+        # Add cluster/type info at top
+        if cluster_info:
+            feature_items.append(
+                html.Div(cluster_info, style={'fontWeight': 'bold', 'marginBottom': '5px', 'color': '#333'})
             )
 
-        return create_waveform_plot(None, None, None, None, None, None)
+        # Group features by category
+        displayed_count = 0
+        for group_name, group_features in FEATURE_GROUPS.items():
+            group_items = []
+            for feat_name in group_features:
+                if feat_name in visible_features and feat_name in feature_names:
+                    feat_idx = feature_names.index(feat_name)
+                    value = features[idx, feat_idx]
+                    formatted = format_feature_value(feat_name, value)
+                    display_name = feat_name.replace('_', ' ').title()
+                    group_items.append(
+                        html.Span([
+                            html.Span(f"{display_name}: ", style={'color': '#666'}),
+                            html.Span(formatted, style={'fontWeight': 'bold'})
+                        ], style={'marginRight': '15px'})
+                    )
+                    displayed_count += 1
+
+            if group_items:
+                feature_items.append(
+                    html.Div([
+                        html.Span(f"{group_name}: ", style={'color': '#999', 'fontSize': '10px'}),
+                        *group_items
+                    ], style={'marginBottom': '3px'})
+                )
+
+        # Add any features not in groups
+        ungrouped = []
+        all_grouped = [f for group in FEATURE_GROUPS.values() for f in group]
+        for feat_name in visible_features:
+            if feat_name not in all_grouped and feat_name in feature_names:
+                feat_idx = feature_names.index(feat_name)
+                value = features[idx, feat_idx]
+                formatted = format_feature_value(feat_name, value)
+                display_name = feat_name.replace('_', ' ').title()
+                ungrouped.append(
+                    html.Span([
+                        html.Span(f"{display_name}: ", style={'color': '#666'}),
+                        html.Span(formatted, style={'fontWeight': 'bold'})
+                    ], style={'marginRight': '15px'})
+                )
+
+        if ungrouped:
+            feature_items.append(
+                html.Div([
+                    html.Span("Other: ", style={'color': '#999', 'fontSize': '10px'}),
+                    *ungrouped
+                ], style={'marginBottom': '3px'})
+            )
+
+        if displayed_count == 0:
+            return html.Div("No features selected", style={'color': '#888', 'fontStyle': 'italic'})
+
+        return html.Div(feature_items)
 
     return app
 
