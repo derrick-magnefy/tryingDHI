@@ -210,3 +210,9 @@ __marimo__/
 *-features.csv
 *-features.tsv
 *-features.json
+
+# Generated cluster files (can be regenerated with cluster_pulses.py)
+*-clusters-*.csv
+
+# Generated cluster feature files (can be regenerated with aggregate_cluster_features.py)
+*-cluster-features-*.csv
