@@ -205,3 +205,21 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Generated feature files (can be regenerated with extract_features.py)
+*-features.csv
+*-features.tsv
+*-features.json
+
+# Generated cluster files (can be regenerated with cluster_pulses.py)
+*-clusters-*.csv
+
+# Generated cluster feature files (can be regenerated with aggregate_cluster_features.py)
+*-cluster-features-*.csv
+
+# Generated PD type classification files (can be regenerated with classify_pd_type.py)
+*-pd-types-*.csv
+pd-classification-summary-*.txt
+
+# Generated summary report (can be regenerated with run_analysis_pipeline.py)
+analysis-summary-report.txt
