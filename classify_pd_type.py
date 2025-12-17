@@ -46,8 +46,9 @@ PHASE_CORRELATION_THRESHOLDS = {
 
 # Branch 3: Symmetry & Phase Location
 SYMMETRY_THRESHOLDS = {
-    # Corona: highly asymmetric
-    'min_asymmetry_corona': 0.6,              # |asymmetry| > 0.6 = corona
+    # Corona: asymmetric discharge
+    'min_asymmetry_corona': 0.4,              # |asymmetry| > 0.4 = corona (was 0.6 - too strict)
+    'min_halfcycle_dominance_corona': 65.0,   # >65% in one half-cycle suggests corona
 
     # Internal: symmetric, peaks at 90° and 270°
     'internal_phase_q1_range': (45, 135),     # Quadrant 1 peak region
@@ -238,6 +239,9 @@ class PDTypeClassifier:
 
         is_highly_asymmetric = abs(asymmetry) > SYMMETRY_THRESHOLDS['min_asymmetry_corona']
 
+        # Negative cross-correlation indicates anti-correlated half-cycles (corona signature)
+        has_negative_correlation = cross_corr < -0.3
+
         result['reasoning'].append(
             f"Phase correlation: cross_corr={cross_corr:.3f}, asymmetry={asymmetry:.3f}, "
             f"spread={phase_spread:.1f}°"
@@ -317,37 +321,53 @@ class PDTypeClassifier:
         confidence_factors = []
 
         # ----- CORONA DETECTION -----
-        if is_highly_asymmetric:
-            # Strong asymmetry indicates corona
+        # Check for corona if: highly asymmetric OR has half-cycle dominance with negative correlation
+        halfcycle_dominant = (
+            positive_half > SYMMETRY_THRESHOLDS['min_halfcycle_dominance_corona'] or
+            negative_half > SYMMETRY_THRESHOLDS['min_halfcycle_dominance_corona']
+        )
+        corona_candidate = is_highly_asymmetric or (has_negative_correlation and halfcycle_dominant)
+
+        if corona_candidate:
+            # Strong asymmetry or negative correlation with half-cycle dominance indicates corona
             corona_confidence = 0.0
 
             # Factor 1: Asymmetry strength
             asym_factor = min(abs(asymmetry), 1.0)
-            corona_confidence += asym_factor * 0.35
+            corona_confidence += asym_factor * 0.30
             confidence_factors.append(f"asymmetry={asym_factor:.2f}")
 
             # Factor 2: Single half-cycle dominance
             if positive_half > QUADRANT_THRESHOLDS['single_halfcycle_threshold'] or \
                negative_half > QUADRANT_THRESHOLDS['single_halfcycle_threshold']:
                 corona_confidence += 0.25
-                confidence_factors.append("single_halfcycle=True")
+                confidence_factors.append("single_halfcycle>80%=True")
+            elif halfcycle_dominant:
+                corona_confidence += 0.20
+                confidence_factors.append(f"halfcycle_dominant={max(positive_half, negative_half):.1f}%")
 
-            # Factor 3: Phase concentration (low spread)
+            # Factor 3: Negative cross-correlation (anti-correlated half-cycles)
+            if has_negative_correlation:
+                neg_corr_factor = min(abs(cross_corr), 1.0) * 0.20
+                corona_confidence += neg_corr_factor
+                confidence_factors.append(f"negative_corr={cross_corr:.2f}")
+
+            # Factor 4: Phase concentration (low spread)
             if phase_spread < PHASE_CORRELATION_THRESHOLDS['max_phase_spread_corona']:
-                corona_confidence += 0.15
+                corona_confidence += 0.10
                 confidence_factors.append(f"concentrated_phase={phase_spread:.1f}°")
 
-            # Factor 4: Near voltage peak
+            # Factor 5: Near voltage peak
             if near_positive_peak or near_negative_peak:
-                corona_confidence += 0.15
+                corona_confidence += 0.10
                 confidence_factors.append("near_peak=True")
 
-            # Factor 5: Amplitude variability
+            # Factor 6: Amplitude variability
             if amplitude_ratio > AMPLITUDE_THRESHOLDS['corona_amplitude_ratio_threshold']:
-                corona_confidence += 0.10
+                corona_confidence += 0.05
                 confidence_factors.append(f"high_amp_ratio={amplitude_ratio:.2f}")
 
-            if corona_confidence > 0.5:
+            if corona_confidence > 0.45:
                 result['pd_type'] = 'CORONA'
                 result['confidence'] = min(corona_confidence, 0.95)
                 result['reasoning'].append(
@@ -432,14 +452,25 @@ class PDTypeClassifier:
                 return result
 
         # ----- FALLBACK: Additional analysis -----
-        # Try to classify based on dominant patterns
+        # Try to classify based on dominant patterns with more permissive thresholds
 
-        # Check for partial corona (less pronounced asymmetry)
-        if abs(asymmetry) > 0.4 and (positive_half > 65 or negative_half > 65):
+        # Check for partial corona (less pronounced asymmetry but clear half-cycle dominance)
+        if abs(asymmetry) > 0.25 and (positive_half > 60 or negative_half > 60):
             result['pd_type'] = 'CORONA'
-            result['confidence'] = 0.6
+            result['confidence'] = 0.55
             result['reasoning'].append(
-                f"Weak CORONA signature: asymmetry={asymmetry:.2f}, half_cycle_dominance"
+                f"Weak CORONA signature: asymmetry={asymmetry:.2f}, "
+                f"half_cycle={max(positive_half, negative_half):.1f}%"
+            )
+            return result
+
+        # Check for corona based on strong negative correlation alone
+        if cross_corr < -0.5 and (positive_half > 55 or negative_half > 55):
+            result['pd_type'] = 'CORONA'
+            result['confidence'] = 0.50
+            result['reasoning'].append(
+                f"CORONA from anti-correlation: cross_corr={cross_corr:.2f}, "
+                f"half_cycle={max(positive_half, negative_half):.1f}%"
             )
             return result
 
@@ -449,6 +480,15 @@ class PDTypeClassifier:
             result['confidence'] = 0.55
             result['reasoning'].append(
                 f"Weak INTERNAL signature: cross_corr={cross_corr:.2f}, asymmetry={asymmetry:.2f}"
+            )
+            return result
+
+        # Check for surface discharge (moderate asymmetry, not near peaks)
+        if 0.15 < abs(asymmetry) < 0.5 and not (near_positive_peak or near_negative_peak):
+            result['pd_type'] = 'SURFACE'
+            result['confidence'] = 0.45
+            result['reasoning'].append(
+                f"Possible SURFACE: asymmetry={asymmetry:.2f}, not near voltage peaks"
             )
             return result
 
