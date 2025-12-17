@@ -50,11 +50,11 @@ SYMMETRY_THRESHOLDS = {
     'min_asymmetry_corona': 0.4,              # |asymmetry| > 0.4 = corona (was 0.6 - too strict)
     'min_halfcycle_dominance_corona': 65.0,   # >65% in one half-cycle suggests corona
 
-    # Internal: symmetric, peaks at 90° and 270°
+    # Internal: symmetric, peaks at 90deg and 270deg
     'internal_phase_q1_range': (45, 135),     # Quadrant 1 peak region
     'internal_phase_q3_range': (225, 315),    # Quadrant 3 peak region
 
-    # Surface: near zero-crossings (0°, 180°, 360°)
+    # Surface: near zero-crossings (0deg, 180deg, 360deg)
     'surface_phase_tolerance': 45,            # Degrees from zero-crossing
 }
 
@@ -93,7 +93,7 @@ PD_TYPES = {
         'description': 'Corona discharge (surface ionization in gas/air)',
         'characteristics': [
             'Highly asymmetric - predominantly in one half-cycle',
-            'Phase concentrated near voltage peaks (0-180° or 180-360°)',
+            'Phase concentrated near voltage peaks (0-180deg or 180-360deg)',
             'Fast rise times (<20ns typical)',
             'Higher amplitude variability',
             '"Rabbit ear" or "wing" pattern in PRPD',
@@ -105,8 +105,8 @@ PD_TYPES = {
         'characteristics': [
             'Symmetric discharge in both half-cycles',
             'High cross-correlation between half-cycles (>0.7)',
-            'Phase peaks near 90° and 270° (voltage peaks)',
-            'Uniform amplitude distribution (Weibull β > 2)',
+            'Phase peaks near 90deg and 270deg (voltage peaks)',
+            'Uniform amplitude distribution (Weibull beta > 2)',
             'Moderate rise times',
         ]
     },
@@ -114,7 +114,7 @@ PD_TYPES = {
         'code': 3,
         'description': 'Surface discharge (tracking/creeping discharge)',
         'characteristics': [
-            'Activity near zero-crossings (0°, 180°)',
+            'Activity near zero-crossings (0deg, 180deg)',
             'Moderate asymmetry',
             'May show tracking patterns',
             'Variable rise times',
@@ -244,7 +244,7 @@ class PDTypeClassifier:
 
         result['reasoning'].append(
             f"Phase correlation: cross_corr={cross_corr:.3f}, asymmetry={asymmetry:.3f}, "
-            f"spread={phase_spread:.1f}°"
+            f"spread={phase_spread:.1f}deg"
         )
 
         # =====================================================================
@@ -257,8 +257,8 @@ class PDTypeClassifier:
         q3 = cluster_features.get('quadrant_3_percentage', 0)
         q4 = cluster_features.get('quadrant_4_percentage', 0)
 
-        positive_half = q1 + q2  # 0-180°
-        negative_half = q3 + q4  # 180-360°
+        positive_half = q1 + q2  # 0-180deg
+        negative_half = q3 + q4  # 180-360deg
 
         result['reasoning'].append(
             f"Quadrant distribution: Q1={q1:.1f}%, Q2={q2:.1f}%, Q3={q3:.1f}%, Q4={q4:.1f}%"
@@ -276,20 +276,20 @@ class PDTypeClassifier:
         inception = cluster_features.get('inception_phase', 0)
         extinction = cluster_features.get('extinction_phase', 0)
 
-        # Check if near zero-crossings (0°, 180°, 360°)
+        # Check if near zero-crossings (0deg, 180deg, 360deg)
         near_zero_crossing = (
             phase_max < SYMMETRY_THRESHOLDS['surface_phase_tolerance'] or
             abs(phase_max - 180) < SYMMETRY_THRESHOLDS['surface_phase_tolerance'] or
             phase_max > (360 - SYMMETRY_THRESHOLDS['surface_phase_tolerance'])
         )
 
-        # Check if at voltage peaks (90°, 270°)
+        # Check if at voltage peaks (90deg, 270deg)
         near_positive_peak = 45 < phase_max < 135
         near_negative_peak = 225 < phase_max < 315
 
         result['reasoning'].append(
-            f"Phase location: max_activity={phase_max:.1f}°, "
-            f"inception={inception:.1f}°, extinction={extinction:.1f}°"
+            f"Phase location: max_activity={phase_max:.1f}deg, "
+            f"inception={inception:.1f}deg, extinction={extinction:.1f}deg"
         )
 
         # =====================================================================
@@ -309,7 +309,7 @@ class PDTypeClassifier:
         amplitude_ratio = max_amp / mean_amp if mean_amp > 0 else 0
 
         result['reasoning'].append(
-            f"Amplitude: Weibull_β={weibull_beta:.2f}, amp_ratio={amplitude_ratio:.2f}"
+            f"Amplitude: Weibull_beta={weibull_beta:.2f}, amp_ratio={amplitude_ratio:.2f}"
         )
 
         # =====================================================================
@@ -355,7 +355,7 @@ class PDTypeClassifier:
             # Factor 4: Phase concentration (low spread)
             if phase_spread < PHASE_CORRELATION_THRESHOLDS['max_phase_spread_corona']:
                 corona_confidence += 0.10
-                confidence_factors.append(f"concentrated_phase={phase_spread:.1f}°")
+                confidence_factors.append(f"concentrated_phase={phase_spread:.1f}deg")
 
             # Factor 5: Near voltage peak
             if near_positive_peak or near_negative_peak:
@@ -404,7 +404,7 @@ class PDTypeClassifier:
             if AMPLITUDE_THRESHOLDS['internal_weibull_beta_min'] < weibull_beta < \
                AMPLITUDE_THRESHOLDS['internal_weibull_beta_max']:
                 internal_confidence += 0.15
-                confidence_factors.append(f"weibull_β={weibull_beta:.2f}")
+                confidence_factors.append(f"weibull_beta={weibull_beta:.2f}")
 
             # Factor 5: Phase at voltage peaks
             if near_positive_peak or near_negative_peak:
@@ -436,7 +436,7 @@ class PDTypeClassifier:
             # Factor 3: Phase spread
             if phase_spread > 30:
                 surface_confidence += 0.15
-                confidence_factors.append(f"phase_spread={phase_spread:.1f}°")
+                confidence_factors.append(f"phase_spread={phase_spread:.1f}deg")
 
             # Factor 4: Concentrated in adjacent quadrants
             if (q1 + q4 > 50) or (q2 + q3 > 50):
@@ -794,21 +794,21 @@ def main():
     print("\nDECISION TREE STRUCTURE:")
     print("-" * 40)
     print("  Branch 1: Noise Detection")
-    print("    ├─ DBSCAN noise label (-1)?")
-    print("    ├─ Pulse count < 10?")
-    print("    └─ Coefficient of variation > 2.0?")
+    print("    |- DBSCAN noise label (-1)?")
+    print("    |- Pulse count < 10?")
+    print("    \\- Coefficient of variation > 2.0?")
     print("  Branch 2: Phase Correlation")
-    print("    ├─ Cross-correlation > 0.7? (symmetric)")
-    print("    └─ |Asymmetry| < 0.35? (symmetric)")
+    print("    |- Cross-correlation > 0.7? (symmetric)")
+    print("    \\- |Asymmetry| < 0.35? (symmetric)")
     print("  Branch 3: Quadrant Distribution")
-    print("    ├─ Single half-cycle > 80%? (corona)")
-    print("    └─ All quadrants 15-35%? (internal)")
+    print("    |- Single half-cycle > 80%? (corona)")
+    print("    \\- All quadrants 15-35%? (internal)")
     print("  Branch 4: Phase Location")
-    print("    ├─ Near zero-crossing? (surface)")
-    print("    └─ Near voltage peak? (corona/internal)")
+    print("    |- Near zero-crossing? (surface)")
+    print("    \\- Near voltage peak? (corona/internal)")
     print("  Branch 5: Amplitude Analysis")
-    print("    ├─ Weibull β: 2-15? (internal)")
-    print("    └─ Amplitude ratio > 3? (corona)")
+    print("    |- Weibull beta: 2-15? (internal)")
+    print("    \\- Amplitude ratio > 3? (corona)")
     print("-" * 40)
 
     # Find files to process
