@@ -193,11 +193,26 @@ class PDDataLoader:
                 for line in f:
                     line = line.strip()
                     if line:
-                        values = [float(v) for v in line.split('\t')]
-                        waveforms.append(values)
-            return np.array(waveforms) if waveforms else None
+                        # Filter empty strings (consistent with extract_features.py)
+                        values = [float(v) for v in line.split('\t') if v.strip()]
+                        waveforms.append(np.array(values))
+            return waveforms if waveforms else None
         except Exception as e:
             print(f"Error loading waveforms: {e}")
+            return None
+
+    def load_settings(self, prefix):
+        """Load settings from -SG.txt file."""
+        filepath = os.path.join(self.data_dir, f"{prefix}-SG.txt")
+        if not os.path.exists(filepath):
+            return None
+        try:
+            with open(filepath, 'r') as f:
+                content = f.read().strip()
+                values = [float(v) for v in content.split('\t') if v.strip()]
+            return values
+        except Exception as e:
+            print(f"Error loading settings: {e}")
             return None
 
     def load_all(self, prefix, method='dbscan'):
@@ -206,13 +221,18 @@ class PDDataLoader:
         cluster_labels = self.load_cluster_labels(prefix, method)
         pd_types = self.load_pd_types(prefix, method)
         waveforms = self.load_waveforms(prefix)
+        settings = self.load_settings(prefix)
+
+        # Get sample_interval from settings (index 10) or use default
+        sample_interval = settings[10] if settings and len(settings) > 10 else 4e-9
 
         return {
             'features': features,
             'feature_names': feature_names,
             'cluster_labels': cluster_labels,
             'pd_types': pd_types,
-            'waveforms': waveforms
+            'waveforms': waveforms,
+            'sample_interval': sample_interval
         }
 
 
@@ -579,13 +599,15 @@ def create_app(data_dir=DATA_DIR):
 
         # Determine polarity method to use
         pm = polarity_method if polarity_method and polarity_method != 'stored' else None
+        sample_interval = data.get('sample_interval', 4e-9)
 
         cluster_fig = create_prpd_plot(
             data['features'], data['feature_names'],
             data['cluster_labels'], data['pd_types'],
             color_by='cluster',
             waveforms=data['waveforms'],
-            polarity_method=pm
+            polarity_method=pm,
+            sample_interval=sample_interval
         )
 
         pdtype_fig = create_prpd_plot(
@@ -593,7 +615,8 @@ def create_app(data_dir=DATA_DIR):
             data['cluster_labels'], data['pd_types'],
             color_by='pdtype',
             waveforms=data['waveforms'],
-            polarity_method=pm
+            polarity_method=pm,
+            sample_interval=sample_interval
         )
 
         hist_fig = create_histogram(
@@ -687,6 +710,7 @@ def create_app(data_dir=DATA_DIR):
         features = data['features']
         feature_names = data['feature_names']
         waveforms = data['waveforms']
+        sample_interval = data.get('sample_interval', 4e-9)
 
         if idx >= len(features):
             return html.Div("Invalid waveform index", style={'color': '#888'})
@@ -712,7 +736,7 @@ def create_app(data_dir=DATA_DIR):
         # Add polarity comparison if waveform is available
         if waveforms is not None and idx < len(waveforms):
             wfm = waveforms[idx]
-            polarity_results = compare_methods(wfm)
+            polarity_results = compare_methods(wfm, sample_interval=sample_interval)
 
             # Show current/selected polarity
             stored_polarity = None
