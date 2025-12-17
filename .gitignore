@@ -220,3 +220,6 @@ __marimo__/
 # Generated PD type classification files (can be regenerated with classify_pd_type.py)
 *-pd-types-*.csv
 pd-classification-summary-*.txt
+
+# Generated summary report (can be regenerated with run_analysis_pipeline.py)
+analysis-summary-report.txt
