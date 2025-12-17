@@ -16,6 +16,9 @@ Options:
     --input-dir DIR         Directory containing data files (default: "Rugged Data Files")
     --clustering-method     Clustering method: 'dbscan' or 'kmeans' (default: dbscan)
     --n-clusters N          Number of clusters for K-means (default: 5)
+    --polarity-method       Method for polarity calculation (default: peak)
+                            Options: peak, first_peak, integrated_charge,
+                                     energy_weighted, dominant_half_cycle, initial_slope
     --skip-extraction       Skip feature extraction step
     --skip-clustering       Skip clustering step
     --skip-aggregation      Skip aggregation step
@@ -30,6 +33,7 @@ import glob
 import argparse
 from datetime import datetime
 import numpy as np
+from polarity_methods import POLARITY_METHODS, DEFAULT_POLARITY_METHOD
 
 DATA_DIR = "Rugged Data Files"
 
@@ -334,6 +338,14 @@ def main():
         help='DBSCAN min_samples parameter (default: 5)'
     )
     parser.add_argument(
+        '--polarity-method',
+        type=str,
+        choices=POLARITY_METHODS,
+        default=DEFAULT_POLARITY_METHOD,
+        help=f'Method for polarity calculation (default: {DEFAULT_POLARITY_METHOD}). '
+             f'Options: {", ".join(POLARITY_METHODS)}'
+    )
+    parser.add_argument(
         '--skip-extraction',
         action='store_true',
         help='Skip feature extraction step'
@@ -372,6 +384,7 @@ def main():
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Input directory: {args.input_dir}")
     print(f"Clustering method: {args.clustering_method}")
+    print(f"Polarity method: {args.polarity_method}")
     print("=" * 70)
 
     # Track overall success
@@ -386,7 +399,8 @@ def main():
 
     # Step 1: Feature Extraction
     if not args.skip_extraction:
-        cmd = [sys.executable, 'extract_features.py', '--input-dir', args.input_dir]
+        cmd = [sys.executable, 'extract_features.py', '--input-dir', args.input_dir,
+               '--polarity-method', args.polarity_method]
         if args.file:
             cmd.extend(['--file', args.file])
 

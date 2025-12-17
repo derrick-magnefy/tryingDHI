@@ -31,6 +31,11 @@ except ImportError:
     DASH_AVAILABLE = False
     print("Dash not available. Install with: pip install dash plotly")
 
+from polarity_methods import (
+    calculate_polarity, compare_methods, POLARITY_METHODS,
+    DEFAULT_POLARITY_METHOD, get_method_description
+)
+
 DATA_DIR = "Rugged Data Files"
 
 # Color schemes
@@ -211,8 +216,20 @@ class PDDataLoader:
         }
 
 
-def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by='cluster'):
-    """Create PRPD scatter plot."""
+def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by='cluster',
+                     waveforms=None, polarity_method=None, sample_interval=4e-9):
+    """Create PRPD scatter plot.
+
+    Args:
+        features: Feature matrix
+        feature_names: List of feature names
+        cluster_labels: Cluster labels for each waveform
+        pd_types: PD type classification for each cluster
+        color_by: 'cluster' or 'pdtype'
+        waveforms: Optional raw waveforms for polarity recalculation
+        polarity_method: If provided and waveforms available, recalculate polarity
+        sample_interval: Sample interval for polarity calculation
+    """
     if features is None:
         return go.Figure()
 
@@ -226,9 +243,20 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
     amp_pos = features[:, amp_pos_idx]
     amp_neg = features[:, amp_neg_idx]  # Already negative values
 
-    # Use polarity to determine which amplitude to show
-    if polarity_idx is not None:
+    # Determine polarity to use
+    if polarity_method is not None and waveforms is not None and polarity_method != 'stored':
+        # Recalculate polarity using selected method
+        polarity = np.array([
+            calculate_polarity(wfm, method=polarity_method, sample_interval=sample_interval)
+            for wfm in waveforms
+        ])
+    elif polarity_idx is not None:
         polarity = features[:, polarity_idx]
+    else:
+        polarity = None
+
+    # Use polarity to determine which amplitude to show
+    if polarity is not None:
         # polarity = 1 means positive dominant, polarity = -1 means negative dominant
         amplitudes = np.where(polarity > 0, amp_pos, amp_neg)
     else:
@@ -450,14 +478,26 @@ def create_app(data_dir=DATA_DIR):
 
         # Controls
         html.Div([
-            html.Label("Select Dataset:"),
-            dcc.Dropdown(
-                id='dataset-dropdown',
-                options=[{'label': d, 'value': d} for d in loader.datasets],
-                value=loader.datasets[0] if loader.datasets else None,
-                style={'width': '100%'}
-            ),
-        ], style={'width': '50%', 'margin': '10px auto'}),
+            html.Div([
+                html.Label("Select Dataset:"),
+                dcc.Dropdown(
+                    id='dataset-dropdown',
+                    options=[{'label': d, 'value': d} for d in loader.datasets],
+                    value=loader.datasets[0] if loader.datasets else None,
+                    style={'width': '100%'}
+                ),
+            ], style={'width': '60%', 'display': 'inline-block', 'marginRight': '2%'}),
+            html.Div([
+                html.Label("Polarity Method:"),
+                dcc.Dropdown(
+                    id='polarity-method-dropdown',
+                    options=[{'label': 'Stored (from features)', 'value': 'stored'}] +
+                            [{'label': get_method_description(m), 'value': m} for m in POLARITY_METHODS],
+                    value='stored',
+                    style={'width': '100%'}
+                ),
+            ], style={'width': '38%', 'display': 'inline-block'}),
+        ], style={'width': '90%', 'margin': '10px auto'}),
 
         # Statistics
         html.Div([
@@ -527,25 +567,33 @@ def create_app(data_dir=DATA_DIR):
          Output('histogram', 'figure'),
          Output('stats-text', 'children'),
          Output('current-data-store', 'data')],
-        [Input('dataset-dropdown', 'value')]
+        [Input('dataset-dropdown', 'value'),
+         Input('polarity-method-dropdown', 'value')]
     )
-    def update_dataset(prefix):
+    def update_dataset(prefix, polarity_method):
         if not prefix:
             empty_fig = go.Figure()
             return empty_fig, empty_fig, empty_fig, "No dataset selected", None
 
         data = loader.load_all(prefix)
 
+        # Determine polarity method to use
+        pm = polarity_method if polarity_method and polarity_method != 'stored' else None
+
         cluster_fig = create_prpd_plot(
             data['features'], data['feature_names'],
             data['cluster_labels'], data['pd_types'],
-            color_by='cluster'
+            color_by='cluster',
+            waveforms=data['waveforms'],
+            polarity_method=pm
         )
 
         pdtype_fig = create_prpd_plot(
             data['features'], data['feature_names'],
             data['cluster_labels'], data['pd_types'],
-            color_by='pdtype'
+            color_by='pdtype',
+            waveforms=data['waveforms'],
+            polarity_method=pm
         )
 
         hist_fig = create_histogram(
@@ -624,10 +672,11 @@ def create_app(data_dir=DATA_DIR):
     @app.callback(
         Output('feature-display', 'children'),
         [Input('selected-waveform-idx', 'data'),
-         Input('feature-toggles', 'value')],
+         Input('feature-toggles', 'value'),
+         Input('polarity-method-dropdown', 'value')],
         [State('current-data-store', 'data')]
     )
-    def update_feature_display(idx, visible_features, prefix):
+    def update_feature_display(idx, visible_features, polarity_method, prefix):
         if idx is None or not prefix or not visible_features:
             return html.Div("Select a waveform to view features", style={'color': '#888', 'fontStyle': 'italic'})
 
@@ -637,6 +686,7 @@ def create_app(data_dir=DATA_DIR):
 
         features = data['features']
         feature_names = data['feature_names']
+        waveforms = data['waveforms']
 
         if idx >= len(features):
             return html.Div("Invalid waveform index", style={'color': '#888'})
@@ -657,6 +707,43 @@ def create_app(data_dir=DATA_DIR):
         if cluster_info:
             feature_items.append(
                 html.Div(cluster_info, style={'fontWeight': 'bold', 'marginBottom': '5px', 'color': '#333'})
+            )
+
+        # Add polarity comparison if waveform is available
+        if waveforms is not None and idx < len(waveforms):
+            wfm = waveforms[idx]
+            polarity_results = compare_methods(wfm)
+
+            # Show current/selected polarity
+            stored_polarity = None
+            if 'polarity' in feature_names:
+                polarity_idx = feature_names.index('polarity')
+                stored_polarity = features[idx, polarity_idx]
+
+            polarity_items = []
+            polarity_items.append(html.Span("Polarity: ", style={'fontWeight': 'bold', 'color': '#333'}))
+
+            # Show stored value
+            if stored_polarity is not None:
+                stored_str = "+" if stored_polarity > 0 else "-"
+                polarity_items.append(html.Span(f"Stored: {stored_str}", style={'marginRight': '10px', 'color': '#666'}))
+
+            # Show all methods comparison
+            method_strs = []
+            for method, pol in polarity_results.items():
+                pol_str = "+" if pol > 0 else "-"
+                is_selected = (polarity_method == method)
+                style = {'fontWeight': 'bold', 'color': '#007bff'} if is_selected else {'color': '#888'}
+                method_short = method.replace('_', ' ').title()[:10]
+                method_strs.append(html.Span(f"{method_short}: {pol_str}", style={**style, 'marginRight': '8px', 'fontSize': '10px'}))
+
+            feature_items.append(
+                html.Div([
+                    *polarity_items,
+                    html.Br(),
+                    html.Span("Methods: ", style={'fontSize': '10px', 'color': '#999'}),
+                    *method_strs
+                ], style={'marginBottom': '8px', 'padding': '5px', 'backgroundColor': '#f0f0f0', 'borderRadius': '3px'})
             )
 
         # Group features by category

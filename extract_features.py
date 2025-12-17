@@ -8,12 +8,15 @@ Extracts comprehensive features from each PD pulse waveform including:
 - Energy-based features (cumulative energy analysis)
 
 Usage:
-    python extract_features.py [--input-dir DIR] [--output FILE] [--format FORMAT]
+    python extract_features.py [--input-dir DIR] [--output FILE] [--format FORMAT] [--polarity-method METHOD]
 
 Options:
-    --input-dir DIR     Directory containing data files (default: "Rugged Data Files")
-    --output FILE       Output file path (default: features.csv)
-    --format FORMAT     Output format: csv, tsv, json (default: csv)
+    --input-dir DIR           Directory containing data files (default: "Rugged Data Files")
+    --output FILE             Output file path (default: features.csv)
+    --format FORMAT           Output format: csv, tsv, json (default: csv)
+    --polarity-method METHOD  Method for polarity calculation (default: peak)
+                              Options: peak, first_peak, integrated_charge,
+                                       energy_weighted, dominant_half_cycle, initial_slope
 """
 
 import numpy as np
@@ -24,6 +27,7 @@ import glob
 import argparse
 import json
 from datetime import datetime
+from polarity_methods import calculate_polarity, POLARITY_METHODS, DEFAULT_POLARITY_METHOD
 
 DATA_DIR = "Rugged Data Files"
 
@@ -92,17 +96,21 @@ def load_settings(filepath):
 class PDFeatureExtractor:
     """Extract features from partial discharge pulse waveforms."""
 
-    def __init__(self, sample_interval=4e-9, ac_frequency=60.0):
+    def __init__(self, sample_interval=4e-9, ac_frequency=60.0, polarity_method=DEFAULT_POLARITY_METHOD):
         """
         Initialize the feature extractor.
 
         Args:
             sample_interval: Time between samples in seconds (default: 4ns)
             ac_frequency: AC line frequency in Hz (default: 60Hz)
+            polarity_method: Method for polarity calculation (default: 'peak')
+                            Options: peak, first_peak, integrated_charge,
+                                     energy_weighted, dominant_half_cycle, initial_slope
         """
         self.sample_interval = sample_interval
         self.ac_frequency = ac_frequency
         self.sample_rate = 1.0 / sample_interval
+        self.polarity_method = polarity_method
 
     def extract_features(self, waveform, phase_angle=None):
         """
@@ -131,11 +139,12 @@ class PDFeatureExtractor:
         features['peak_amplitude_negative'] = np.min(wfm)
         features['peak_to_peak_amplitude'] = features['peak_amplitude_positive'] - features['peak_amplitude_negative']
 
-        # Polarity: 1 if positive peak is larger, -1 if negative peak is larger
-        if abs(features['peak_amplitude_positive']) >= abs(features['peak_amplitude_negative']):
-            features['polarity'] = 1
-        else:
-            features['polarity'] = -1
+        # Polarity: calculated using the configured polarity method
+        features['polarity'] = calculate_polarity(
+            waveform,
+            method=self.polarity_method,
+            sample_interval=self.sample_interval
+        )
 
         # RMS amplitude
         features['rms_amplitude'] = np.sqrt(np.mean(wfm**2))
@@ -383,13 +392,14 @@ class PDFeatureExtractor:
         return features
 
 
-def process_dataset(prefix, data_dir=DATA_DIR):
+def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_METHOD):
     """
     Process a complete dataset and extract features from all waveforms.
 
     Args:
         prefix: Base filename prefix (without -WFMs.txt suffix)
         data_dir: Directory containing the data files
+        polarity_method: Method for polarity calculation (default: 'peak')
 
     Returns:
         tuple: (feature_matrix, metadata_dict)
@@ -413,7 +423,11 @@ def process_dataset(prefix, data_dir=DATA_DIR):
     phase_data = load_single_line_data(p_file) if os.path.exists(p_file) else None
 
     # Initialize feature extractor
-    extractor = PDFeatureExtractor(sample_interval=sample_interval, ac_frequency=ac_frequency)
+    extractor = PDFeatureExtractor(
+        sample_interval=sample_interval,
+        ac_frequency=ac_frequency,
+        polarity_method=polarity_method
+    )
 
     # Extract features from each waveform
     all_features = []
@@ -437,6 +451,7 @@ def process_dataset(prefix, data_dir=DATA_DIR):
         'sample_interval': sample_interval,
         'ac_frequency': ac_frequency,
         'feature_names': FEATURE_NAMES,
+        'polarity_method': polarity_method,
     }
 
     return feature_matrix, metadata
@@ -519,6 +534,14 @@ def main():
         default=None,
         help='Process specific file prefix (default: all files)'
     )
+    parser.add_argument(
+        '--polarity-method',
+        type=str,
+        choices=POLARITY_METHODS,
+        default=DEFAULT_POLARITY_METHOD,
+        help=f'Method for polarity calculation (default: {DEFAULT_POLARITY_METHOD}). '
+             f'Options: {", ".join(POLARITY_METHODS)}'
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -527,6 +550,7 @@ def main():
     print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Input directory: {args.input_dir}")
     print(f"Output format: {args.format}")
+    print(f"Polarity method: {args.polarity_method}")
     print("=" * 70)
 
     # Find files to process
@@ -549,7 +573,7 @@ def main():
         print("="*70)
 
         try:
-            feature_matrix, metadata = process_dataset(prefix, args.input_dir)
+            feature_matrix, metadata = process_dataset(prefix, args.input_dir, args.polarity_method)
 
             # Determine output path
             if args.output:
