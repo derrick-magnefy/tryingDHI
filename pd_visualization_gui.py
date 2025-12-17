@@ -202,7 +202,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                 x=phases[mask],
                 y=amplitudes[mask],
                 mode='markers',
-                marker=dict(size=6, color=color, opacity=0.7),
+                marker=dict(size=3, color=color, opacity=0.7),
                 name=name,
                 customdata=original_indices,
                 hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
@@ -222,7 +222,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                     x=phases[mask],
                     y=amplitudes[mask],
                     mode='markers',
-                    marker=dict(size=6, color=color, opacity=0.7),
+                    marker=dict(size=3, color=color, opacity=0.7),
                     name=pd_type,
                     customdata=original_indices,
                     hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
@@ -232,7 +232,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
             x=phases,
             y=amplitudes,
             mode='markers',
-            marker=dict(size=6, color='blue', opacity=0.7),
+            marker=dict(size=3, color='blue', opacity=0.7),
             name='All pulses',
             customdata=np.arange(len(phases)),
             hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
@@ -416,12 +416,12 @@ def create_app(data_dir=DATA_DIR):
         html.Div([
             # Cluster PRPD
             html.Div([
-                dcc.Graph(id='cluster-prpd', style={'height': '400px'})
+                dcc.Graph(id='cluster-prpd', style={'height': '600px'})
             ], style={'width': '48%', 'display': 'inline-block'}),
 
             # PD Type PRPD
             html.Div([
-                dcc.Graph(id='pdtype-prpd', style={'height': '400px'})
+                dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
             ], style={'width': '48%', 'display': 'inline-block'}),
         ], style={'width': '95%', 'margin': 'auto'}),
 
@@ -429,12 +429,12 @@ def create_app(data_dir=DATA_DIR):
         html.Div([
             # Waveform viewer
             html.Div([
-                dcc.Graph(id='waveform-plot', style={'height': '350px'})
+                dcc.Graph(id='waveform-plot', style={'height': '525px'})
             ], style={'width': '48%', 'display': 'inline-block'}),
 
             # Histogram
             html.Div([
-                dcc.Graph(id='histogram', style={'height': '350px'})
+                dcc.Graph(id='histogram', style={'height': '525px'})
             ], style={'width': '48%', 'display': 'inline-block'}),
         ], style={'width': '95%', 'margin': 'auto'}),
 
