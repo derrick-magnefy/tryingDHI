@@ -20,6 +20,8 @@ import numpy as np
 import os
 import glob
 import argparse
+import subprocess
+import sys
 
 try:
     from dash import Dash, html, dcc, callback, Output, Input, State
@@ -506,9 +508,9 @@ def create_app(data_dir=DATA_DIR):
                     value=loader.datasets[0] if loader.datasets else None,
                     style={'width': '100%'}
                 ),
-            ], style={'width': '60%', 'display': 'inline-block', 'marginRight': '2%'}),
+            ], style={'width': '45%', 'display': 'inline-block', 'marginRight': '2%'}),
             html.Div([
-                html.Label("Polarity Method:"),
+                html.Label("Polarity Method (for display):"),
                 dcc.Dropdown(
                     id='polarity-method-dropdown',
                     options=[{'label': 'Stored (from features)', 'value': 'stored'}] +
@@ -516,8 +518,32 @@ def create_app(data_dir=DATA_DIR):
                     value='stored',
                     style={'width': '100%'}
                 ),
-            ], style={'width': '38%', 'display': 'inline-block'}),
+            ], style={'width': '35%', 'display': 'inline-block', 'marginRight': '2%'}),
+            html.Div([
+                html.Label("Re-analyze:", style={'visibility': 'hidden'}),
+                html.Button(
+                    '🔄 Re-analyze with Selected Method',
+                    id='reanalyze-button',
+                    n_clicks=0,
+                    style={
+                        'width': '100%',
+                        'padding': '8px',
+                        'backgroundColor': '#007bff',
+                        'color': 'white',
+                        'border': 'none',
+                        'borderRadius': '4px',
+                        'cursor': 'pointer',
+                        'fontSize': '12px'
+                    }
+                ),
+            ], style={'width': '14%', 'display': 'inline-block', 'verticalAlign': 'bottom'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
+
+        # Re-analysis status message
+        html.Div(id='reanalysis-status', style={
+            'width': '90%', 'margin': '5px auto', 'padding': '8px',
+            'textAlign': 'center', 'display': 'none'
+        }),
 
         # Statistics
         html.Div([
@@ -579,7 +605,69 @@ def create_app(data_dir=DATA_DIR):
         dcc.Store(id='current-data-store'),
         dcc.Store(id='selected-waveform-idx'),
         dcc.Store(id='feature-toggle-store', data=DEFAULT_VISIBLE_FEATURES),
+        dcc.Store(id='reanalysis-trigger', data=0),
     ])
+
+    @app.callback(
+        [Output('reanalysis-status', 'children'),
+         Output('reanalysis-status', 'style'),
+         Output('reanalysis-trigger', 'data')],
+        [Input('reanalyze-button', 'n_clicks')],
+        [State('dataset-dropdown', 'value'),
+         State('polarity-method-dropdown', 'value'),
+         State('reanalysis-trigger', 'data')],
+        prevent_initial_call=True
+    )
+    def run_reanalysis(n_clicks, prefix, polarity_method, current_trigger):
+        """Run the full analysis pipeline with the selected polarity method."""
+        if not n_clicks or not prefix:
+            return "", {'display': 'none'}, current_trigger
+
+        if polarity_method == 'stored' or polarity_method is None:
+            return html.Div([
+                "⚠️ Please select a polarity method (not 'Stored') to re-analyze"
+            ], style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'}), \
+                {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
+
+        try:
+            # Run the pipeline with the selected polarity method
+            cmd = [
+                sys.executable, 'run_analysis_pipeline.py',
+                '--input-dir', data_dir,
+                '--polarity-method', polarity_method,
+                '--file', prefix
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+
+            if result.returncode == 0:
+                # Increment trigger to force data reload
+                return html.Div([
+                    f"✅ Re-analysis complete with '{polarity_method}' polarity method. ",
+                    "Data has been updated - select 'Stored' to see new results."
+                ], style={'color': '#155724', 'backgroundColor': '#d4edda', 'padding': '10px', 'borderRadius': '4px'}), \
+                    {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger + 1
+            else:
+                return html.Div([
+                    f"❌ Re-analysis failed: {result.stderr[:200] if result.stderr else 'Unknown error'}"
+                ], style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'}), \
+                    {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
+
+        except subprocess.TimeoutExpired:
+            return html.Div([
+                "❌ Re-analysis timed out (exceeded 5 minutes)"
+            ], style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'}), \
+                {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
+        except Exception as e:
+            return html.Div([
+                f"❌ Error running re-analysis: {str(e)}"
+            ], style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'}), \
+                {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
 
     @app.callback(
         [Output('cluster-prpd', 'figure'),
@@ -588,9 +676,10 @@ def create_app(data_dir=DATA_DIR):
          Output('stats-text', 'children'),
          Output('current-data-store', 'data')],
         [Input('dataset-dropdown', 'value'),
-         Input('polarity-method-dropdown', 'value')]
+         Input('polarity-method-dropdown', 'value'),
+         Input('reanalysis-trigger', 'data')]
     )
-    def update_dataset(prefix, polarity_method):
+    def update_dataset(prefix, polarity_method, reanalysis_trigger):
         if not prefix:
             empty_fig = go.Figure()
             return empty_fig, empty_fig, empty_fig, "No dataset selected", None
