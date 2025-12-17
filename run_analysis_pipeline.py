@@ -157,6 +157,7 @@ def generate_summary_report(data_dir, clustering_methods, file_prefix=None):
 
             # Load cluster info
             cluster_file = os.path.join(data_dir, f"{prefix}-clusters-{method}.csv")
+            cluster_counts = {}  # Store counts for use in PD type classification
             if os.path.exists(cluster_file):
                 cluster_labels = []
                 with open(cluster_file, 'r') as f:
@@ -179,8 +180,10 @@ def generate_summary_report(data_dir, clustering_methods, file_prefix=None):
                     report_lines.append("  Cluster Sizes:")
                     for label in unique_labels:
                         count = cluster_labels.count(label)
-                        label_str = "Noise" if label == -1 else f"Cluster {label}"
-                        report_lines.append(f"    {label_str}: {count} pulses ({count/len(cluster_labels)*100:.1f}%)")
+                        label_str = "noise" if label == -1 else str(label)
+                        cluster_counts[label_str] = count
+                        display_label = "Noise" if label == -1 else f"Cluster {label}"
+                        report_lines.append(f"    {display_label}: {count} pulses ({count/len(cluster_labels)*100:.1f}%)")
 
             # Load cluster features
             cluster_feat_file = os.path.join(data_dir, f"{prefix}-cluster-features-{method}.csv")
@@ -223,8 +226,10 @@ def generate_summary_report(data_dir, clustering_methods, file_prefix=None):
                                 label = parts[0]
                                 pd_type = parts[1]
                                 confidence = float(parts[3])
+                                # Get waveform count for this cluster
+                                n_waveforms = cluster_counts.get(label, 0)
                                 report_lines.append(
-                                    f"    Cluster {label}: {pd_type} ({confidence:.1%} confidence)"
+                                    f"    Cluster {label}: {pd_type} ({confidence:.1%} confidence) - {n_waveforms} waveforms"
                                 )
                                 if pd_type in pd_type_counts:
                                     pd_type_counts[pd_type] += 1
