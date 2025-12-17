@@ -216,3 +216,7 @@ __marimo__/
 
 # Generated cluster feature files (can be regenerated with aggregate_cluster_features.py)
 *-cluster-features-*.csv
+
+# Generated PD type classification files (can be regenerated with classify_pd_type.py)
+*-pd-types-*.csv
+pd-classification-summary-*.txt
