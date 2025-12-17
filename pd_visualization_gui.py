@@ -23,6 +23,7 @@ import argparse
 
 try:
     from dash import Dash, html, dcc, callback, Output, Input, State
+    from dash import ctx  # For callback context
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     DASH_AVAILABLE = True
@@ -195,13 +196,15 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                 color = CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
                 name = f'Cluster {label}'
 
+            # Get original indices for this cluster
+            original_indices = np.where(mask)[0].tolist()
             fig.add_trace(go.Scatter(
                 x=phases[mask],
                 y=amplitudes[mask],
                 mode='markers',
                 marker=dict(size=6, color=color, opacity=0.7),
                 name=name,
-                customdata=np.where(mask)[0],
+                customdata=original_indices,
                 hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
             ))
 
@@ -213,13 +216,15 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
             if np.any(mask):
                 color = PD_TYPE_COLORS.get(pd_type, '#000000')
 
+                # Get original indices for this PD type
+                original_indices = np.where(mask)[0].tolist()
                 fig.add_trace(go.Scatter(
                     x=phases[mask],
                     y=amplitudes[mask],
                     mode='markers',
                     marker=dict(size=6, color=color, opacity=0.7),
                     name=pd_type,
-                    customdata=np.where(mask)[0],
+                    customdata=original_indices,
                     hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
                 ))
     else:
@@ -480,23 +485,43 @@ def create_app(data_dir=DATA_DIR):
         Output('waveform-plot', 'figure'),
         [Input('cluster-prpd', 'clickData'),
          Input('pdtype-prpd', 'clickData')],
-        [State('current-data-store', 'data')]
+        [State('current-data-store', 'data')],
+        prevent_initial_call=True
     )
     def update_waveform(cluster_click, pdtype_click, prefix):
-        # Get clicked point index
+        # Use callback context to determine which input triggered
         idx = None
-        click_data = cluster_click or pdtype_click
+
+        # Check which input triggered the callback
+        triggered_id = ctx.triggered_id
+        if triggered_id == 'cluster-prpd' and cluster_click:
+            click_data = cluster_click
+        elif triggered_id == 'pdtype-prpd' and pdtype_click:
+            click_data = pdtype_click
+        else:
+            click_data = cluster_click or pdtype_click
 
         if click_data and 'points' in click_data and len(click_data['points']) > 0:
             point = click_data['points'][0]
             if 'customdata' in point:
                 idx = int(point['customdata'])
+            elif 'pointIndex' in point:
+                # Fallback to pointIndex if customdata not available
+                idx = int(point['pointIndex'])
 
-        if prefix:
-            # Reload data for the waveform (ensures we have the waveforms)
+        if prefix and idx is not None:
+            # Reload data for the waveform
             data = loader.load_all(prefix)
             return create_waveform_plot(
                 data['waveforms'], idx,
+                data['features'], data['feature_names'],
+                data['cluster_labels'], data['pd_types']
+            )
+        elif prefix:
+            # No point clicked yet, show placeholder
+            data = loader.load_all(prefix)
+            return create_waveform_plot(
+                data['waveforms'], None,
                 data['features'], data['feature_names'],
                 data['cluster_labels'], data['pd_types']
             )
