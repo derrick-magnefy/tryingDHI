@@ -167,11 +167,20 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
     phase_idx = feature_names.index('phase_angle') if 'phase_angle' in feature_names else 0
     amp_pos_idx = feature_names.index('peak_amplitude_positive') if 'peak_amplitude_positive' in feature_names else 1
     amp_neg_idx = feature_names.index('peak_amplitude_negative') if 'peak_amplitude_negative' in feature_names else 2
+    polarity_idx = feature_names.index('polarity') if 'polarity' in feature_names else None
 
     phases = features[:, phase_idx]
     amp_pos = features[:, amp_pos_idx]
-    amp_neg = features[:, amp_neg_idx]
-    amplitudes = np.where(amp_pos >= amp_neg, amp_pos, -amp_neg)
+    amp_neg = features[:, amp_neg_idx]  # Already negative values
+
+    # Use polarity to determine which amplitude to show
+    if polarity_idx is not None:
+        polarity = features[:, polarity_idx]
+        # polarity = 1 means positive dominant, polarity = -1 means negative dominant
+        amplitudes = np.where(polarity > 0, amp_pos, amp_neg)
+    else:
+        # Fallback: use the larger magnitude with appropriate sign
+        amplitudes = np.where(amp_pos >= np.abs(amp_neg), amp_pos, amp_neg)
 
     fig = go.Figure()
 
@@ -379,9 +388,6 @@ def create_app(data_dir=DATA_DIR):
     app = Dash(__name__)
     loader = PDDataLoader(data_dir)
 
-    # Store for current data
-    current_data = {'data': None}
-
     app.layout = html.Div([
         html.H1("PD Analysis Visualization", style={'textAlign': 'center'}),
 
@@ -446,7 +452,6 @@ def create_app(data_dir=DATA_DIR):
             return empty_fig, empty_fig, empty_fig, "No dataset selected", None
 
         data = loader.load_all(prefix)
-        current_data['data'] = data
 
         cluster_fig = create_prpd_plot(
             data['features'], data['feature_names'],
@@ -487,8 +492,9 @@ def create_app(data_dir=DATA_DIR):
             if 'customdata' in point:
                 idx = int(point['customdata'])
 
-        if prefix and current_data['data'] is not None:
-            data = current_data['data']
+        if prefix:
+            # Reload data for the waveform (ensures we have the waveforms)
+            data = loader.load_all(prefix)
             return create_waveform_plot(
                 data['waveforms'], idx,
                 data['features'], data['feature_names'],
