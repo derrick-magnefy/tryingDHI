@@ -653,8 +653,14 @@ def create_app(data_dir=DATA_DIR):
                 ], style={'color': '#155724', 'backgroundColor': '#d4edda', 'padding': '10px', 'borderRadius': '4px'}), \
                     {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger + 1
             else:
+                # Show more of the error message
+                error_msg = result.stderr if result.stderr else result.stdout if result.stdout else 'Unknown error'
+                # Get last 500 chars which usually contain the actual error
+                if len(error_msg) > 500:
+                    error_msg = "..." + error_msg[-500:]
                 return html.Div([
-                    f"❌ Re-analysis failed: {result.stderr[:200] if result.stderr else 'Unknown error'}"
+                    html.Div("❌ Re-analysis failed:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                    html.Pre(error_msg, style={'whiteSpace': 'pre-wrap', 'fontSize': '11px', 'margin': '0'})
                 ], style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'}), \
                     {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
 
