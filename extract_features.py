@@ -29,7 +29,18 @@ import json
 from datetime import datetime
 from polarity_methods import calculate_polarity, POLARITY_METHODS, DEFAULT_POLARITY_METHOD
 
+# Import TU Delft format parser
+try:
+    from wfm_parser import TektronixWFMParser, load_tu_delft_timing, convert_timing_to_phase
+    HAS_WFM_PARSER = True
+except ImportError:
+    HAS_WFM_PARSER = False
+
 DATA_DIR = "Rugged Data Files"
+
+# Format constants
+FORMAT_RUGGED = 'rugged'      # Original format with -WFMs.txt
+FORMAT_TUDELFT = 'tudelft'    # TU Delft format with _Ch1.wfm binary
 
 # Feature names in order
 FEATURE_NAMES = [
@@ -92,6 +103,71 @@ def load_settings(filepath):
         content = f.read().strip()
         values = [float(v) for v in content.split('\t') if v.strip()]
     return values
+
+
+def detect_format(prefix, data_dir):
+    """
+    Detect the format of a dataset.
+
+    Args:
+        prefix: Dataset prefix/name
+        data_dir: Directory containing the data files
+
+    Returns:
+        str: FORMAT_RUGGED or FORMAT_TUDELFT
+    """
+    # Check for TU Delft format: _Ch1.wfm file
+    ch1_file = os.path.join(data_dir, f"{prefix}_Ch1.wfm")
+    if os.path.exists(ch1_file):
+        return FORMAT_TUDELFT
+
+    # Check for Rugged format: -WFMs.txt file
+    wfm_file = os.path.join(data_dir, f"{prefix}-WFMs.txt")
+    if os.path.exists(wfm_file):
+        return FORMAT_RUGGED
+
+    # Default to rugged
+    return FORMAT_RUGGED
+
+
+def load_waveforms_tudelft(prefix, data_dir, channel=1):
+    """
+    Load waveform data from TU Delft binary .wfm files.
+
+    Args:
+        prefix: Dataset prefix/name
+        data_dir: Directory containing the data files
+        channel: Channel number (1 or 2)
+
+    Returns:
+        tuple: (waveforms, sample_interval, phase_data)
+    """
+    if not HAS_WFM_PARSER:
+        raise ImportError("wfm_parser module not available for TU Delft format")
+
+    # Load binary waveform file
+    wfm_file = os.path.join(data_dir, f"{prefix}_Ch{channel}.wfm")
+    if not os.path.exists(wfm_file):
+        raise FileNotFoundError(f"TU Delft waveform file not found: {wfm_file}")
+
+    print(f"  Parsing TU Delft binary file: {wfm_file}")
+    parser = TektronixWFMParser(wfm_file)
+
+    waveforms = parser.get_waveforms()
+    sample_interval = parser.get_sample_interval()
+
+    # Load timing information and convert to phase
+    timing_file = os.path.join(data_dir, f"{prefix}.txt")
+    phase_data = None
+    if os.path.exists(timing_file):
+        print(f"  Loading timing data from: {timing_file}")
+        timing = load_tu_delft_timing(timing_file)
+        if timing:
+            # TU Delft typically uses 50Hz AC
+            phase_data = convert_timing_to_phase(timing, ac_frequency=50.0)
+            print(f"  Converted {len(phase_data)} timestamps to phase angles")
+
+    return waveforms, sample_interval, phase_data
 
 
 class PDFeatureExtractor:
@@ -405,23 +481,35 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
     Returns:
         tuple: (feature_matrix, metadata_dict)
     """
-    wfm_file = os.path.join(data_dir, f"{prefix}-WFMs.txt")
-    sg_file = os.path.join(data_dir, f"{prefix}-SG.txt")
-    p_file = os.path.join(data_dir, f"{prefix}-P.txt")
-    ti_file = os.path.join(data_dir, f"{prefix}-Ti.txt")
-
-    # Load waveforms
+    # Detect format
+    data_format = detect_format(prefix, data_dir)
     print(f"Loading waveforms from {prefix}...")
-    waveforms = load_waveforms(wfm_file)
-    print(f"  Loaded {len(waveforms)} waveforms")
+    print(f"  Detected format: {data_format}")
 
-    # Load settings
-    settings = load_settings(sg_file) if os.path.exists(sg_file) else None
-    sample_interval = settings[10] if settings and len(settings) > 10 else 4e-9
-    ac_frequency = settings[9] if settings and len(settings) > 9 else 60.0
+    if data_format == FORMAT_TUDELFT:
+        # TU Delft binary format
+        waveforms_raw, sample_interval, phase_data = load_waveforms_tudelft(prefix, data_dir)
+        # Convert to numpy arrays
+        waveforms = [np.array(w) for w in waveforms_raw]
+        ac_frequency = 50.0  # TU Delft uses 50Hz
+        print(f"  Loaded {len(waveforms)} waveforms from TU Delft binary format")
+    else:
+        # Original Rugged format
+        wfm_file = os.path.join(data_dir, f"{prefix}-WFMs.txt")
+        sg_file = os.path.join(data_dir, f"{prefix}-SG.txt")
+        p_file = os.path.join(data_dir, f"{prefix}-P.txt")
 
-    # Load phase data
-    phase_data = load_single_line_data(p_file) if os.path.exists(p_file) else None
+        # Load waveforms
+        waveforms = load_waveforms(wfm_file)
+        print(f"  Loaded {len(waveforms)} waveforms from Rugged format")
+
+        # Load settings
+        settings = load_settings(sg_file) if os.path.exists(sg_file) else None
+        sample_interval = settings[10] if settings and len(settings) > 10 else 4e-9
+        ac_frequency = settings[9] if settings and len(settings) > 9 else 60.0
+
+        # Load phase data
+        phase_data = load_single_line_data(p_file) if os.path.exists(p_file) else None
 
     # Initialize feature extractor
     extractor = PDFeatureExtractor(
@@ -453,6 +541,7 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
         'ac_frequency': ac_frequency,
         'feature_names': FEATURE_NAMES,
         'polarity_method': polarity_method,
+        'data_format': data_format,
     }
 
     return feature_matrix, metadata
@@ -558,11 +647,27 @@ def main():
     if args.file:
         prefixes = [args.file]
     else:
+        prefixes = []
+
+        # Find Rugged format datasets (-WFMs.txt)
         wfm_files = glob.glob(os.path.join(args.input_dir, "*-WFMs.txt"))
-        prefixes = [os.path.basename(f).replace("-WFMs.txt", "") for f in wfm_files]
+        for f in wfm_files:
+            prefix = os.path.basename(f).replace("-WFMs.txt", "")
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+
+        # Find TU Delft format datasets (*_Ch1.wfm)
+        tu_delft_files = glob.glob(os.path.join(args.input_dir, "*_Ch1.wfm"))
+        for f in tu_delft_files:
+            # Extract prefix: "1-Internal_45mm33_Ch1.wfm" -> "1-Internal_45mm33"
+            basename = os.path.basename(f)
+            prefix = basename.replace("_Ch1.wfm", "")
+            if prefix not in prefixes:
+                prefixes.append(prefix)
 
     if not prefixes:
         print("No waveform files found!")
+        print("  Looking for: *-WFMs.txt (Rugged format) or *_Ch1.wfm (TU Delft format)")
         return
 
     print(f"\nFound {len(prefixes)} dataset(s) to process\n")
