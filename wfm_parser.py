@@ -94,18 +94,29 @@ class TektronixWFMParser:
 
     def _extract_waveforms(self, data, data_start):
         """Extract individual waveforms from the data."""
-        record_length = self.header.get('record_length', 500)
         bytes_per_sample = 2  # int16
 
-        # Calculate number of waveforms
-        data_size = len(data) - data_start
-        samples_per_wfm = min(record_length, 500)  # Cap at reasonable size
-        bytes_per_wfm = samples_per_wfm * bytes_per_sample
+        # record_length in FastFrame format is the number of frames (waveforms)
+        # not samples per waveform
+        record_length = self.header.get('record_length', 500)
 
-        if bytes_per_wfm == 0:
+        # Calculate data size and determine structure
+        data_size = len(data) - data_start
+
+        # If record_length is large (>1000), it's likely the frame count
+        if record_length > 1000:
+            num_waveforms = record_length
+            bytes_per_wfm = data_size // num_waveforms
+            samples_per_wfm = bytes_per_wfm // bytes_per_sample
+        else:
+            # Small record_length means it's samples per waveform
+            samples_per_wfm = min(record_length, 500)
+            bytes_per_wfm = samples_per_wfm * bytes_per_sample
+            num_waveforms = data_size // bytes_per_wfm
+
+        if bytes_per_wfm == 0 or samples_per_wfm == 0:
             return
 
-        num_waveforms = data_size // bytes_per_wfm
         self.header['num_waveforms'] = num_waveforms
         self.header['samples_per_waveform'] = samples_per_wfm
 
