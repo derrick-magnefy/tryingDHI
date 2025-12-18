@@ -22,6 +22,8 @@ import glob
 import argparse
 import subprocess
 import sys
+import tempfile
+import json
 
 try:
     from dash import Dash, html, dcc, callback, Output, Input, State
@@ -70,6 +72,9 @@ EXTERNAL_DATA_DIRS = [
 # Clustering methods available
 CLUSTERING_METHODS = ['dbscan', 'kmeans']
 DEFAULT_CLUSTERING_METHOD = 'dbscan'
+
+# Progress file for batch operations
+PROGRESS_FILE = os.path.join(tempfile.gettempdir(), 'pd_gui_progress.json')
 
 # Pulse features used for clustering (from extract_features.py)
 PULSE_FEATURES = [
@@ -1358,9 +1363,14 @@ def create_app(data_dir=DATA_DIR):
                                                style={'backgroundColor': '#c2185b', 'color': 'white',
                                                       'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
                                                       'cursor': 'pointer', 'fontWeight': 'bold'}),
+                                    html.Span(id='recluster-all-progress', style={'marginLeft': '10px', 'fontStyle': 'italic', 'color': '#666'}),
                                 ], style={'marginBottom': '10px'}),
                                 html.Div(id='recluster-main-result', style={'marginBottom': '10px'}),
-                                html.Div(id='recluster-all-result', style={'marginBottom': '10px'}),
+                                dcc.Loading(
+                                    id='recluster-all-loading',
+                                    type='circle',
+                                    children=html.Div(id='recluster-all-result', style={'marginBottom': '10px'})
+                                ),
                                 dcc.Checklist(
                                     id='pulse-features-checklist',
                                     options=[{'label': f, 'value': f} for f in PULSE_FEATURES],
@@ -1398,9 +1408,14 @@ def create_app(data_dir=DATA_DIR):
                                                style={'backgroundColor': '#7b1fa2', 'color': 'white',
                                                       'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
                                                       'cursor': 'pointer', 'fontWeight': 'bold'}),
+                                    html.Span(id='reclassify-all-progress', style={'marginLeft': '10px', 'fontStyle': 'italic', 'color': '#666'}),
                                 ], style={'marginBottom': '10px'}),
                                 html.Div(id='reclassify-result', style={'marginBottom': '10px'}),
-                                html.Div(id='reclassify-all-result', style={'marginBottom': '10px'}),
+                                dcc.Loading(
+                                    id='reclassify-all-loading',
+                                    type='circle',
+                                    children=html.Div(id='reclassify-all-result', style={'marginBottom': '10px'})
+                                ),
                                 dcc.Checklist(
                                     id='cluster-features-checklist',
                                     options=[{'label': f, 'value': f} for f in CLUSTER_FEATURES],
@@ -1658,6 +1673,9 @@ def create_app(data_dir=DATA_DIR):
         # Per-dataset feature selections (persisted in localStorage)
         dcc.Store(id='pulse-features-per-dataset', storage_type='local', data={}),
         dcc.Store(id='cluster-features-per-dataset', storage_type='local', data={}),
+        # Progress tracking for batch operations
+        dcc.Store(id='batch-progress-store', data={'active': False, 'current': 0, 'total': 0, 'operation': '', 'dataset': ''}),
+        dcc.Interval(id='progress-interval', interval=500, disabled=True),  # Poll every 500ms when active
     ])
 
     # Callbacks for pulse features selection buttons
@@ -2281,6 +2299,28 @@ def create_app(data_dir=DATA_DIR):
         except Exception as e:
             return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
 
+    def write_progress(operation, current, total, dataset):
+        """Write progress to file for polling."""
+        try:
+            with open(PROGRESS_FILE, 'w') as f:
+                json.dump({
+                    'active': True,
+                    'operation': operation,
+                    'current': current,
+                    'total': total,
+                    'dataset': dataset
+                }, f)
+        except:
+            pass
+
+    def clear_progress():
+        """Clear progress file."""
+        try:
+            with open(PROGRESS_FILE, 'w') as f:
+                json.dump({'active': False, 'current': 0, 'total': 0, 'operation': '', 'dataset': ''}, f)
+        except:
+            pass
+
     @app.callback(
         Output('recluster-all-result', 'children'),
         [Input('recluster-all-btn', 'n_clicks')],
@@ -2312,7 +2352,13 @@ def create_app(data_dir=DATA_DIR):
         fail_count = 0
         results_details = []
 
-        for dataset in datasets:
+        # Write initial progress
+        write_progress('recluster', 0, len(datasets), 'Starting...')
+
+        for i, dataset in enumerate(datasets):
+            # Update progress
+            write_progress('recluster', i + 1, len(datasets), dataset)
+
             try:
                 data_path = loader.get_dataset_path(dataset)
                 clean_prefix = loader.get_clean_prefix(dataset)
@@ -2367,6 +2413,9 @@ def create_app(data_dir=DATA_DIR):
                 fail_count += 1
                 results_details.append(f"✗ {dataset}: {str(e)[:50]}")
 
+        # Clear progress when done
+        clear_progress()
+
         return html.Div([
             html.Div(f"Reclustered {success_count}/{len(datasets)} datasets",
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
@@ -2411,7 +2460,13 @@ def create_app(data_dir=DATA_DIR):
         fail_count = 0
         results_details = []
 
-        for dataset in datasets:
+        # Write initial progress
+        write_progress('reclassify', 0, len(datasets), 'Starting...')
+
+        for i, dataset in enumerate(datasets):
+            # Update progress
+            write_progress('reclassify', i + 1, len(datasets), dataset)
+
             try:
                 data_path = loader.get_dataset_path(dataset)
                 clean_prefix = loader.get_clean_prefix(dataset)
@@ -2446,6 +2501,9 @@ def create_app(data_dir=DATA_DIR):
                 fail_count += 1
                 results_details.append(f"✗ {dataset}: {str(e)[:50]}")
 
+        # Clear progress when done
+        clear_progress()
+
         return html.Div([
             html.Div(f"Reclassified {success_count}/{len(datasets)} datasets",
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
@@ -2458,6 +2516,57 @@ def create_app(data_dir=DATA_DIR):
             html.Div("Refresh the page to see updated results.",
                     style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
         ], style={'padding': '10px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'})
+
+    # Enable interval when batch operation buttons are clicked
+    @app.callback(
+        Output('progress-interval', 'disabled'),
+        [Input('recluster-all-btn', 'n_clicks'),
+         Input('reclassify-all-btn', 'n_clicks'),
+         Input('recluster-all-result', 'children'),
+         Input('reclassify-all-result', 'children')],
+        prevent_initial_call=True
+    )
+    def toggle_progress_interval(recluster_clicks, reclassify_clicks, recluster_result, reclassify_result):
+        """Enable interval when operation starts, disable when result is received."""
+        triggered = ctx.triggered_id
+        if triggered in ['recluster-all-btn', 'reclassify-all-btn']:
+            return False  # Enable interval
+        else:
+            return True  # Disable interval when result comes in
+
+    # Poll progress file and update progress displays
+    @app.callback(
+        [Output('recluster-all-progress', 'children'),
+         Output('reclassify-all-progress', 'children')],
+        [Input('progress-interval', 'n_intervals')],
+        prevent_initial_call=True
+    )
+    def update_progress_display(n_intervals):
+        """Read progress file and update progress spans."""
+        recluster_progress = ''
+        reclassify_progress = ''
+
+        try:
+            if os.path.exists(PROGRESS_FILE):
+                with open(PROGRESS_FILE, 'r') as f:
+                    progress = json.load(f)
+
+                if progress.get('active'):
+                    operation = progress.get('operation', '')
+                    current = progress.get('current', 0)
+                    total = progress.get('total', 0)
+                    dataset = progress.get('dataset', '')
+
+                    progress_text = f"Processing {current}/{total}: {dataset}"
+
+                    if operation == 'recluster':
+                        recluster_progress = progress_text
+                    elif operation == 'reclassify':
+                        reclassify_progress = progress_text
+        except:
+            pass
+
+        return recluster_progress, reclassify_progress
 
     @app.callback(
         [Output('all-datasets-analysis-display', 'children'),
