@@ -748,8 +748,7 @@ def create_correlation_matrix(features, feature_names, selected_features=None):
         zmin=-1,
         zmax=1,
         colorbar=dict(
-            title='R value',
-            titleside='right'
+            title=dict(text='R value', side='right')
         ),
         hovertemplate='%{x} vs %{y}<br>R = %{z:.3f}<extra></extra>'
     ))
@@ -856,8 +855,7 @@ def create_pca_loadings(features, feature_names, selected_features=None, n_compo
         colorscale='RdBu_r',
         zmid=0,
         colorbar=dict(
-            title='Loading',
-            titleside='right'
+            title=dict(text='Loading', side='right')
         ),
         hovertemplate='%{y}<br>%{x}<br>Loading = %{z:.3f}<extra></extra>'
     ))
