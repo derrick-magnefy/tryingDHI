@@ -1337,11 +1337,21 @@ def create_app(data_dir=DATA_DIR):
                                               'cursor': 'pointer', 'fontWeight': 'bold', 'marginLeft': '10px',
                                               'display': 'none'},
                                        disabled=True),
+                            html.Button("Analyze All Datasets", id='analyze-all-datasets-btn',
+                                       style={'backgroundColor': '#9C27B0', 'color': 'white',
+                                              'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
+                                              'cursor': 'pointer', 'fontWeight': 'bold', 'marginLeft': '20px'}),
                         ], style={'marginBottom': '15px'}),
 
-                        # Recommended Features Display
+                        # Recommended Features Display (single dataset)
                         html.Div(id='recommended-features-display', style={
                             'padding': '15px', 'backgroundColor': '#f5f5f5', 'borderRadius': '4px',
+                            'marginBottom': '20px', 'display': 'none'
+                        }),
+
+                        # All Datasets Analysis Display
+                        html.Div(id='all-datasets-analysis-display', style={
+                            'padding': '15px', 'backgroundColor': '#f0f0ff', 'borderRadius': '4px',
                             'marginBottom': '20px', 'display': 'none'
                         }),
                     ], style={'padding': '10px', 'borderBottom': '1px solid #ddd'}),
@@ -1561,6 +1571,167 @@ def create_app(data_dir=DATA_DIR):
         if not n_clicks or not recommended:
             raise PreventUpdate
         return recommended
+
+    @app.callback(
+        [Output('all-datasets-analysis-display', 'children'),
+         Output('all-datasets-analysis-display', 'style')],
+        [Input('analyze-all-datasets-btn', 'n_clicks')],
+        [State('n-features-input', 'value'),
+         State('correlation-threshold-input', 'value'),
+         State('pulse-features-checklist', 'value')],
+        prevent_initial_call=True
+    )
+    def analyze_all_datasets(n_clicks, n_features, corr_threshold, current_features):
+        """Analyze all datasets and display summary of recommended features."""
+        hidden_style = {'display': 'none'}
+
+        if not n_clicks:
+            return [], hidden_style
+
+        n_features = n_features or 5
+        corr_threshold = corr_threshold or 0.85
+
+        # Get all datasets
+        datasets = loader.datasets
+        if not datasets:
+            return html.Div("No datasets available", style={'color': 'red'}), \
+                   {'padding': '15px', 'backgroundColor': '#ffebee', 'borderRadius': '4px',
+                    'marginBottom': '20px', 'display': 'block'}
+
+        # Analyze each dataset
+        results = []
+        feature_counts = {}  # Track how often each feature is recommended
+
+        for dataset in datasets:
+            data = loader.load_all(dataset)
+            if data['features'] is None or data['feature_names'] is None:
+                results.append({
+                    'dataset': dataset,
+                    'error': 'No data',
+                    'recommended': [],
+                    'variance': 0
+                })
+                continue
+
+            # Get subset of features based on current selection
+            if current_features and len(current_features) > 0:
+                indices = []
+                names = []
+                for feat in current_features:
+                    if feat in data['feature_names']:
+                        indices.append(data['feature_names'].index(feat))
+                        names.append(feat)
+                if len(indices) < 2:
+                    results.append({
+                        'dataset': dataset,
+                        'error': 'Too few features',
+                        'recommended': [],
+                        'variance': 0
+                    })
+                    continue
+                features_subset = data['features'][:, indices]
+                feature_names = names
+            else:
+                features_subset = data['features']
+                feature_names = list(data['feature_names'])
+
+            # Compute recommendations
+            result = compute_recommended_features(
+                features_subset, feature_names,
+                min(n_features, len(feature_names)), corr_threshold
+            )
+
+            if result.get('error'):
+                results.append({
+                    'dataset': dataset,
+                    'error': result['error'],
+                    'recommended': [],
+                    'variance': 0
+                })
+            else:
+                results.append({
+                    'dataset': dataset,
+                    'error': None,
+                    'recommended': result['recommended'],
+                    'variance': result['variance_explained']
+                })
+                # Count feature occurrences
+                for feat in result['recommended']:
+                    feature_counts[feat] = feature_counts.get(feat, 0) + 1
+
+        # Build summary table
+        table_rows = [
+            html.Tr([
+                html.Th("Dataset", style={'textAlign': 'left', 'padding': '10px', 'borderBottom': '2px solid #666', 'backgroundColor': '#e0e0e0'}),
+                html.Th("Variance", style={'textAlign': 'center', 'padding': '10px', 'borderBottom': '2px solid #666', 'backgroundColor': '#e0e0e0'}),
+                html.Th("Recommended Features", style={'textAlign': 'left', 'padding': '10px', 'borderBottom': '2px solid #666', 'backgroundColor': '#e0e0e0'})
+            ])
+        ]
+
+        for r in results:
+            if r['error']:
+                table_rows.append(html.Tr([
+                    html.Td(r['dataset'], style={'padding': '8px', 'borderBottom': '1px solid #ddd'}),
+                    html.Td('-', style={'padding': '8px', 'textAlign': 'center', 'borderBottom': '1px solid #ddd'}),
+                    html.Td(f"Error: {r['error']}", style={'padding': '8px', 'color': 'red', 'borderBottom': '1px solid #ddd'})
+                ]))
+            else:
+                variance_color = '#2e7d32' if r['variance'] >= 80 else ('#f57c00' if r['variance'] >= 60 else '#d32f2f')
+                table_rows.append(html.Tr([
+                    html.Td(r['dataset'], style={'padding': '8px', 'borderBottom': '1px solid #ddd', 'fontWeight': 'bold'}),
+                    html.Td(f"{r['variance']:.1f}%", style={'padding': '8px', 'textAlign': 'center',
+                                                            'borderBottom': '1px solid #ddd', 'color': variance_color,
+                                                            'fontWeight': 'bold'}),
+                    html.Td(", ".join(r['recommended']), style={'padding': '8px', 'borderBottom': '1px solid #ddd',
+                                                                 'fontFamily': 'monospace', 'fontSize': '12px'})
+                ]))
+
+        # Build feature frequency summary
+        sorted_features = sorted(feature_counts.items(), key=lambda x: x[1], reverse=True)
+        total_datasets = len([r for r in results if not r['error']])
+
+        frequency_items = []
+        for feat, count in sorted_features:
+            pct = (count / total_datasets * 100) if total_datasets > 0 else 0
+            color = '#2e7d32' if pct >= 80 else ('#1976d2' if pct >= 50 else '#757575')
+            frequency_items.append(
+                html.Span([
+                    html.Span(feat, style={'fontWeight': 'bold', 'fontFamily': 'monospace'}),
+                    html.Span(f" ({count}/{total_datasets}, {pct:.0f}%)", style={'color': color, 'fontSize': '11px'})
+                ], style={'marginRight': '15px', 'display': 'inline-block', 'marginBottom': '5px'})
+            )
+
+        # Calculate average variance
+        valid_variances = [r['variance'] for r in results if not r['error'] and r['variance'] > 0]
+        avg_variance = sum(valid_variances) / len(valid_variances) if valid_variances else 0
+
+        display_content = html.Div([
+            html.H5(f"Analysis Across All Datasets ({len(datasets)} datasets)", style={'marginBottom': '15px'}),
+
+            # Summary stats
+            html.Div([
+                html.Span("Average Variance Coverage: ", style={'fontWeight': 'bold'}),
+                html.Span(f"{avg_variance:.1f}%", style={'color': '#1976d2', 'fontWeight': 'bold', 'fontSize': '16px'}),
+                html.Span(f" | Datasets analyzed: {total_datasets}/{len(datasets)}", style={'marginLeft': '20px', 'color': '#666'})
+            ], style={'marginBottom': '15px', 'padding': '10px', 'backgroundColor': '#e3f2fd', 'borderRadius': '4px'}),
+
+            # Feature frequency
+            html.Div([
+                html.H6("Feature Selection Frequency:", style={'marginBottom': '10px'}),
+                html.Div(frequency_items, style={'lineHeight': '2'})
+            ], style={'marginBottom': '15px', 'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'border': '1px solid #ddd'}),
+
+            # Per-dataset table
+            html.Details([
+                html.Summary("Per-Dataset Details", style={'cursor': 'pointer', 'fontWeight': 'bold', 'marginBottom': '10px'}),
+                html.Table(table_rows, style={'width': '100%', 'borderCollapse': 'collapse', 'marginTop': '10px'})
+            ], open=True)
+        ])
+
+        show_style = {'padding': '15px', 'backgroundColor': '#f0f0ff', 'borderRadius': '4px',
+                      'marginBottom': '20px', 'display': 'block'}
+
+        return display_content, show_style
 
     @app.callback(
         [Output('reanalysis-status', 'children'),
