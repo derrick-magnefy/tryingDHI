@@ -654,7 +654,14 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
         xaxis=dict(range=[0, 360]),
         showlegend=True,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.02),
-        margin=dict(r=150)
+        margin=dict(r=150),
+        dragmode='select'  # Enable box selection by default
+    )
+
+    # Add modebar buttons for selection
+    fig.update_layout(
+        modebar_add=['select2d', 'lasso2d'],
+        modebar_remove=['autoScale2d']
     )
 
     return fig
@@ -1482,6 +1489,75 @@ def create_app(data_dir=DATA_DIR):
             dcc.Graph(id='cluster-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
+        # Manual Cluster Definition Section
+        html.Div([
+            html.Details([
+                html.Summary("Manual Cluster Definition (Feature Discovery)", style={
+                    'cursor': 'pointer',
+                    'fontWeight': 'bold',
+                    'padding': '10px',
+                    'backgroundColor': '#e3f2fd',
+                    'borderRadius': '4px',
+                    'fontSize': '14px'
+                }),
+                html.Div([
+                    html.P([
+                        "Use the ",
+                        html.B("box select"),
+                        " or ",
+                        html.B("lasso select"),
+                        " tools in the plot above to select points, then assign them to clusters. ",
+                        "Once you've defined your clusters, click 'Analyze Features' to find which features best separate them."
+                    ], style={'marginBottom': '15px', 'color': '#555'}),
+
+                    # Selection status
+                    html.Div([
+                        html.Span("Selected points: ", style={'fontWeight': 'bold'}),
+                        html.Span(id='manual-selection-count', children="0"),
+                    ], style={'marginBottom': '10px'}),
+
+                    # Cluster assignment buttons
+                    html.Div([
+                        html.Button("Assign to Cluster 1", id='assign-cluster-1-btn', n_clicks=0,
+                                   style={'backgroundColor': '#1f77b4', 'color': 'white', 'marginRight': '10px',
+                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                        html.Button("Assign to Cluster 2", id='assign-cluster-2-btn', n_clicks=0,
+                                   style={'backgroundColor': '#ff7f0e', 'color': 'white', 'marginRight': '10px',
+                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                        html.Button("Assign to Cluster 3", id='assign-cluster-3-btn', n_clicks=0,
+                                   style={'backgroundColor': '#2ca02c', 'color': 'white', 'marginRight': '10px',
+                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                        html.Button("Assign to Cluster 4", id='assign-cluster-4-btn', n_clicks=0,
+                                   style={'backgroundColor': '#d62728', 'color': 'white', 'marginRight': '10px',
+                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                        html.Button("Clear All", id='clear-manual-clusters-btn', n_clicks=0,
+                                   style={'backgroundColor': '#6c757d', 'color': 'white', 'marginRight': '10px',
+                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                    ], style={'marginBottom': '15px'}),
+
+                    # Cluster assignment status
+                    html.Div(id='manual-cluster-status', style={'marginBottom': '15px', 'fontSize': '13px'}),
+
+                    # Analyze button
+                    html.Div([
+                        html.Button("Analyze Features", id='analyze-manual-clusters-btn', n_clicks=0,
+                                   style={'backgroundColor': '#28a745', 'color': 'white',
+                                          'padding': '10px 25px', 'border': 'none', 'borderRadius': '4px',
+                                          'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '14px'}),
+                        html.Span(" Find which features best separate your manually-defined clusters",
+                                 style={'marginLeft': '10px', 'color': '#666', 'fontStyle': 'italic', 'fontSize': '12px'})
+                    ], style={'marginBottom': '15px'}),
+
+                    # Results display
+                    dcc.Loading(
+                        id='feature-analysis-loading',
+                        type='circle',
+                        children=html.Div(id='manual-cluster-analysis-result')
+                    ),
+                ], style={'padding': '15px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+            ])
+        ], style={'width': '95%', 'margin': '10px auto'}),
+
         # Cluster details toggle and display
         html.Div([
             html.Div([
@@ -1676,6 +1752,9 @@ def create_app(data_dir=DATA_DIR):
         # Progress tracking for batch operations
         dcc.Store(id='batch-progress-store', data={'active': False, 'current': 0, 'total': 0, 'operation': '', 'dataset': ''}),
         dcc.Interval(id='progress-interval', interval=500, disabled=True),  # Poll every 500ms when active
+        # Manual cluster definition storage
+        dcc.Store(id='manual-cluster-assignments', data={}),  # {point_index: cluster_number}
+        dcc.Store(id='current-selection-indices', data=[]),  # Currently selected point indices
     ])
 
     # Callbacks for pulse features selection buttons
@@ -3514,6 +3593,249 @@ def create_app(data_dir=DATA_DIR):
             return html.Div("No features selected", style={'color': '#888', 'fontStyle': 'italic'})
 
         return html.Div(feature_items)
+
+    # Manual Cluster Definition Callbacks
+    @app.callback(
+        [Output('current-selection-indices', 'data'),
+         Output('manual-selection-count', 'children')],
+        [Input('cluster-prpd', 'selectedData')],
+        prevent_initial_call=True
+    )
+    def capture_selection(selected_data):
+        """Capture selected points from the PRPD plot."""
+        if not selected_data or 'points' not in selected_data:
+            return [], "0"
+
+        # Extract indices from customdata
+        indices = []
+        for point in selected_data['points']:
+            if 'customdata' in point:
+                indices.append(point['customdata'])
+
+        return indices, str(len(indices))
+
+    @app.callback(
+        [Output('manual-cluster-assignments', 'data'),
+         Output('manual-cluster-status', 'children')],
+        [Input('assign-cluster-1-btn', 'n_clicks'),
+         Input('assign-cluster-2-btn', 'n_clicks'),
+         Input('assign-cluster-3-btn', 'n_clicks'),
+         Input('assign-cluster-4-btn', 'n_clicks'),
+         Input('clear-manual-clusters-btn', 'n_clicks')],
+        [State('current-selection-indices', 'data'),
+         State('manual-cluster-assignments', 'data')],
+        prevent_initial_call=True
+    )
+    def assign_to_cluster(c1, c2, c3, c4, clear, current_selection, assignments):
+        """Assign selected points to a cluster."""
+        triggered = ctx.triggered_id
+        assignments = assignments or {}
+
+        if triggered == 'clear-manual-clusters-btn':
+            return {}, html.Div("All assignments cleared", style={'color': '#6c757d'})
+
+        if not current_selection:
+            return assignments, html.Div("No points selected. Use box or lasso select on the plot above.",
+                                        style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '5px', 'borderRadius': '3px'})
+
+        # Determine which cluster was clicked
+        cluster_num = None
+        if triggered == 'assign-cluster-1-btn':
+            cluster_num = 1
+        elif triggered == 'assign-cluster-2-btn':
+            cluster_num = 2
+        elif triggered == 'assign-cluster-3-btn':
+            cluster_num = 3
+        elif triggered == 'assign-cluster-4-btn':
+            cluster_num = 4
+
+        if cluster_num:
+            for idx in current_selection:
+                assignments[str(idx)] = cluster_num
+
+        # Generate status summary
+        cluster_counts = {}
+        for idx, c in assignments.items():
+            cluster_counts[c] = cluster_counts.get(c, 0) + 1
+
+        if cluster_counts:
+            status_items = []
+            colors = {1: '#1f77b4', 2: '#ff7f0e', 3: '#2ca02c', 4: '#d62728'}
+            for c in sorted(cluster_counts.keys()):
+                status_items.append(
+                    html.Span([
+                        html.Span(f"Cluster {c}: ", style={'fontWeight': 'bold', 'color': colors.get(c, '#000')}),
+                        html.Span(f"{cluster_counts[c]} points", style={'marginRight': '15px'})
+                    ])
+                )
+            status = html.Div([
+                html.Span(f"Total assigned: {sum(cluster_counts.values())} points | ", style={'fontWeight': 'bold'}),
+                *status_items
+            ])
+        else:
+            status = html.Div("No points assigned yet", style={'color': '#666'})
+
+        return assignments, status
+
+    @app.callback(
+        Output('manual-cluster-analysis-result', 'children'),
+        [Input('analyze-manual-clusters-btn', 'n_clicks')],
+        [State('manual-cluster-assignments', 'data'),
+         State('dataset-dropdown', 'value')],
+        prevent_initial_call=True
+    )
+    def analyze_manual_clusters(n_clicks, assignments, prefix):
+        """Analyze which features best separate the manually-defined clusters."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not assignments or len(assignments) == 0:
+            return html.Div("No cluster assignments. Please select points and assign them to clusters first.",
+                          style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'})
+
+        # Check we have at least 2 clusters
+        unique_clusters = set(assignments.values())
+        if len(unique_clusters) < 2:
+            return html.Div("Need at least 2 different clusters to analyze. Please assign points to at least 2 clusters.",
+                          style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'})
+
+        # Load feature data
+        data = loader.load_all(prefix)
+        if data['features'] is None or data['feature_names'] is None:
+            return html.Div("No feature data available for this dataset.",
+                          style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'})
+
+        features = data['features']
+        feature_names = list(data['feature_names'])
+
+        # Get indices and labels for assigned points
+        indices = []
+        labels = []
+        for idx_str, cluster in assignments.items():
+            idx = int(idx_str)
+            if 0 <= idx < len(features):
+                indices.append(idx)
+                labels.append(cluster)
+
+        if len(indices) < 10:
+            return html.Div(f"Only {len(indices)} valid points assigned. Please assign more points for reliable analysis.",
+                          style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'})
+
+        # Extract features for assigned points
+        X = features[indices]
+        y = np.array(labels)
+
+        # Calculate feature importance using multiple methods
+        try:
+            from sklearn.ensemble import RandomForestClassifier
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.feature_selection import f_classif, mutual_info_classif
+
+            # Standardize features
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            # Method 1: Random Forest feature importance
+            rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+            rf.fit(X_scaled, y)
+            rf_importance = rf.feature_importances_
+
+            # Method 2: ANOVA F-scores
+            f_scores, _ = f_classif(X_scaled, y)
+            f_scores = np.nan_to_num(f_scores, nan=0.0)
+
+            # Method 3: Mutual Information
+            mi_scores = mutual_info_classif(X_scaled, y, random_state=42)
+
+            # Combine scores (normalize each to 0-1 range and average)
+            def normalize(arr):
+                min_val, max_val = arr.min(), arr.max()
+                if max_val > min_val:
+                    return (arr - min_val) / (max_val - min_val)
+                return np.zeros_like(arr)
+
+            rf_norm = normalize(rf_importance)
+            f_norm = normalize(f_scores)
+            mi_norm = normalize(mi_scores)
+
+            combined_score = (rf_norm + f_norm + mi_norm) / 3
+
+            # Sort features by combined score
+            sorted_indices = np.argsort(combined_score)[::-1]
+
+            # Create results display
+            results = []
+
+            # Summary
+            results.append(html.Div([
+                html.H4("Feature Importance Analysis", style={'marginBottom': '10px', 'color': '#28a745'}),
+                html.P(f"Analyzed {len(indices)} points across {len(unique_clusters)} clusters",
+                      style={'color': '#666', 'marginBottom': '15px'})
+            ]))
+
+            # Top features table
+            results.append(html.H5("Top Features for Separating Your Clusters:", style={'marginBottom': '10px'}))
+
+            table_rows = [
+                html.Tr([
+                    html.Th("Rank", style={'padding': '8px', 'borderBottom': '2px solid #dee2e6'}),
+                    html.Th("Feature", style={'padding': '8px', 'borderBottom': '2px solid #dee2e6'}),
+                    html.Th("Combined Score", style={'padding': '8px', 'borderBottom': '2px solid #dee2e6'}),
+                    html.Th("RF Importance", style={'padding': '8px', 'borderBottom': '2px solid #dee2e6'}),
+                    html.Th("F-Score", style={'padding': '8px', 'borderBottom': '2px solid #dee2e6'}),
+                    html.Th("Mutual Info", style={'padding': '8px', 'borderBottom': '2px solid #dee2e6'})
+                ])
+            ]
+
+            # Show top 15 features
+            for rank, idx in enumerate(sorted_indices[:15], 1):
+                feat_name = feature_names[idx]
+                bg_color = '#d4edda' if rank <= 5 else '#fff3cd' if rank <= 10 else '#fff'
+                table_rows.append(
+                    html.Tr([
+                        html.Td(str(rank), style={'padding': '6px', 'textAlign': 'center'}),
+                        html.Td(feat_name, style={'padding': '6px', 'fontWeight': 'bold' if rank <= 5 else 'normal'}),
+                        html.Td(f"{combined_score[idx]:.3f}", style={'padding': '6px', 'textAlign': 'center'}),
+                        html.Td(f"{rf_importance[idx]:.3f}", style={'padding': '6px', 'textAlign': 'center'}),
+                        html.Td(f"{f_scores[idx]:.1f}", style={'padding': '6px', 'textAlign': 'center'}),
+                        html.Td(f"{mi_scores[idx]:.3f}", style={'padding': '6px', 'textAlign': 'center'})
+                    ], style={'backgroundColor': bg_color})
+                )
+
+            results.append(
+                html.Table(table_rows, style={
+                    'width': '100%',
+                    'borderCollapse': 'collapse',
+                    'fontSize': '13px',
+                    'marginBottom': '15px'
+                })
+            )
+
+            # Recommendation
+            top_features = [feature_names[sorted_indices[i]] for i in range(min(5, len(sorted_indices)))]
+            results.append(html.Div([
+                html.H5("Recommended Features for Clustering:", style={'marginTop': '15px', 'marginBottom': '10px'}),
+                html.P([
+                    "Based on your manual cluster definitions, these features best separate your clusters: ",
+                    html.B(", ".join(top_features))
+                ], style={'backgroundColor': '#d4edda', 'padding': '10px', 'borderRadius': '4px'}),
+                html.P([
+                    "Try selecting these features in the ",
+                    html.B("Pulse Features (for clustering)"),
+                    " section above, then click ",
+                    html.B("Recluster"),
+                    " to see if the automatic clustering matches your expectations."
+                ], style={'color': '#666', 'fontSize': '12px', 'marginTop': '10px'})
+            ]))
+
+            return html.Div(results, style={'padding': '10px', 'backgroundColor': '#f8f9fa', 'borderRadius': '4px'})
+
+        except ImportError:
+            return html.Div("sklearn is required for feature analysis. Install with: pip install scikit-learn",
+                          style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'})
+        except Exception as e:
+            return html.Div(f"Error during analysis: {str(e)}",
+                          style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'})
 
     return app
 
