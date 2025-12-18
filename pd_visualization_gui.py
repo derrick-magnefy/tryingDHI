@@ -52,7 +52,20 @@ from classify_pd_type import (
     SYMMETRY_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
 )
 
+# Try to import the Tektronix WFM parser
+try:
+    from wfm_parser import TektronixWFMParser, load_tu_delft_timing, convert_timing_to_phase
+    WFM_PARSER_AVAILABLE = True
+except ImportError:
+    WFM_PARSER_AVAILABLE = False
+    print("WFM parser not available. TU Delft format files will not be supported.")
+
+# Data directories - primary and external
 DATA_DIR = "Rugged Data Files"
+EXTERNAL_DATA_DIRS = [
+    "../datasets",  # External datasets not in git
+    "TU Delft WFMs",  # TU Delft format data
+]
 
 # Clustering methods available
 CLUSTERING_METHODS = ['dbscan', 'kmeans']
@@ -205,28 +218,107 @@ def format_feature_value(name, value):
 
 
 class PDDataLoader:
-    """Handles loading PD analysis data."""
+    """Handles loading PD analysis data from multiple directories and formats."""
 
-    def __init__(self, data_dir=DATA_DIR):
+    # Format types
+    FORMAT_RUGGED = 'rugged'  # Original format with -WFMs.txt, -SG.txt, etc.
+    FORMAT_TUDELFT = 'tudelft'  # TU Delft format with .wfm binary files
+    FORMAT_UNKNOWN = 'unknown'
+
+    def __init__(self, data_dir=DATA_DIR, external_dirs=None):
         self.data_dir = data_dir
+        self.external_dirs = external_dirs or EXTERNAL_DATA_DIRS
         self.datasets = []
+        self.dataset_info = {}  # Maps dataset name to {path, format, ...}
         self.find_datasets()
 
     def find_datasets(self):
-        """Find all available datasets."""
-        feature_files = glob.glob(os.path.join(self.data_dir, "*-features.csv"))
+        """Find all available datasets from all directories."""
         self.datasets = []
+        self.dataset_info = {}
 
-        for f in sorted(feature_files):
-            basename = os.path.basename(f)
-            prefix = basename.replace("-features.csv", "")
-            self.datasets.append(prefix)
+        # Search directories
+        all_dirs = [self.data_dir] + self.external_dirs
+
+        for data_dir in all_dirs:
+            if not os.path.exists(data_dir):
+                continue
+
+            # Find processed datasets (have -features.csv)
+            feature_files = glob.glob(os.path.join(data_dir, "*-features.csv"))
+            for f in sorted(feature_files):
+                basename = os.path.basename(f)
+                prefix = basename.replace("-features.csv", "")
+                if prefix not in self.dataset_info:
+                    self.datasets.append(prefix)
+                    self.dataset_info[prefix] = {
+                        'path': data_dir,
+                        'format': self.FORMAT_RUGGED,
+                        'has_features': True
+                    }
+
+            # Find TU Delft format datasets (subdirectories with .wfm files)
+            if WFM_PARSER_AVAILABLE:
+                for subdir in os.listdir(data_dir):
+                    subdir_path = os.path.join(data_dir, subdir)
+                    if os.path.isdir(subdir_path):
+                        wfm_files = glob.glob(os.path.join(subdir_path, "*.wfm"))
+                        if wfm_files:
+                            # This is a TU Delft format dataset
+                            dataset_name = f"[TUD] {subdir}"
+                            if dataset_name not in self.dataset_info:
+                                self.datasets.append(dataset_name)
+                                self.dataset_info[dataset_name] = {
+                                    'path': subdir_path,
+                                    'format': self.FORMAT_TUDELFT,
+                                    'wfm_files': wfm_files,
+                                    'has_features': os.path.exists(
+                                        os.path.join(subdir_path, f"{subdir}-features.csv")
+                                    )
+                                }
+
+            # Find raw datasets in external dirs (have .wfm or -WFMs.txt but no features yet)
+            raw_wfm_files = glob.glob(os.path.join(data_dir, "*.wfm"))
+            for f in raw_wfm_files:
+                basename = os.path.basename(f)
+                prefix = basename.replace(".wfm", "")
+                dataset_name = f"[RAW] {prefix}"
+                if dataset_name not in self.dataset_info:
+                    self.datasets.append(dataset_name)
+                    self.dataset_info[dataset_name] = {
+                        'path': data_dir,
+                        'format': self.FORMAT_RUGGED,
+                        'has_features': False,
+                        'raw_file': f
+                    }
 
         return self.datasets
 
+    def get_dataset_path(self, prefix):
+        """Get the data directory for a dataset."""
+        info = self.dataset_info.get(prefix, {})
+        return info.get('path', self.data_dir)
+
+    def get_dataset_format(self, prefix):
+        """Get the format type for a dataset."""
+        info = self.dataset_info.get(prefix, {})
+        return info.get('format', self.FORMAT_RUGGED)
+
+    def get_clean_prefix(self, prefix):
+        """Remove format tags from prefix for file loading."""
+        # Remove [TUD], [RAW], etc. prefixes
+        if prefix.startswith('[TUD] '):
+            return prefix[6:]
+        elif prefix.startswith('[RAW] '):
+            return prefix[6:]
+        return prefix
+
     def load_features(self, prefix):
         """Load features from CSV."""
-        filepath = os.path.join(self.data_dir, f"{prefix}-features.csv")
+        data_path = self.get_dataset_path(prefix)
+        clean_prefix = self.get_clean_prefix(prefix)
+
+        filepath = os.path.join(data_path, f"{clean_prefix}-features.csv")
         if not os.path.exists(filepath):
             return None, None
 
@@ -247,7 +339,10 @@ class PDDataLoader:
 
     def load_cluster_labels(self, prefix, method='dbscan'):
         """Load cluster labels."""
-        filepath = os.path.join(self.data_dir, f"{prefix}-clusters-{method}.csv")
+        data_path = self.get_dataset_path(prefix)
+        clean_prefix = self.get_clean_prefix(prefix)
+
+        filepath = os.path.join(data_path, f"{clean_prefix}-clusters-{method}.csv")
         if not os.path.exists(filepath):
             return None
 
@@ -263,7 +358,10 @@ class PDDataLoader:
 
     def load_pd_types(self, prefix, method='dbscan'):
         """Load PD type classifications."""
-        filepath = os.path.join(self.data_dir, f"{prefix}-pd-types-{method}.csv")
+        data_path = self.get_dataset_path(prefix)
+        clean_prefix = self.get_clean_prefix(prefix)
+
+        filepath = os.path.join(data_path, f"{clean_prefix}-pd-types-{method}.csv")
         if not os.path.exists(filepath):
             return None
 
@@ -279,10 +377,24 @@ class PDDataLoader:
         return pd_types
 
     def load_waveforms(self, prefix):
-        """Load raw waveforms from WFMs.txt file."""
-        filepath = os.path.join(self.data_dir, f"{prefix}-WFMs.txt")
+        """Load raw waveforms - auto-detects format."""
+        data_path = self.get_dataset_path(prefix)
+        clean_prefix = self.get_clean_prefix(prefix)
+        fmt = self.get_dataset_format(prefix)
+
+        if fmt == self.FORMAT_TUDELFT:
+            return self._load_waveforms_tudelft(prefix)
+        else:
+            return self._load_waveforms_rugged(data_path, clean_prefix)
+
+    def _load_waveforms_rugged(self, data_path, clean_prefix):
+        """Load waveforms from -WFMs.txt file (original format)."""
+        filepath = os.path.join(data_path, f"{clean_prefix}-WFMs.txt")
         if not os.path.exists(filepath):
-            return None
+            # Try .wfm extension (single file format)
+            filepath = os.path.join(data_path, f"{clean_prefix}.wfm")
+            if not os.path.exists(filepath):
+                return None
 
         try:
             waveforms = []
@@ -290,7 +402,6 @@ class PDDataLoader:
                 for line in f:
                     line = line.strip()
                     if line:
-                        # Filter empty strings (consistent with extract_features.py)
                         values = [float(v) for v in line.split('\t') if v.strip()]
                         waveforms.append(np.array(values))
             return waveforms if waveforms else None
@@ -298,9 +409,49 @@ class PDDataLoader:
             print(f"Error loading waveforms: {e}")
             return None
 
+    def _load_waveforms_tudelft(self, prefix):
+        """Load waveforms from TU Delft format .wfm files."""
+        if not WFM_PARSER_AVAILABLE:
+            print("TU Delft format not supported - WFM parser not available")
+            return None
+
+        info = self.dataset_info.get(prefix, {})
+        wfm_files = info.get('wfm_files', [])
+
+        if not wfm_files:
+            return None
+
+        try:
+            # Use the first channel (Ch1) by default
+            ch1_file = None
+            for f in wfm_files:
+                if 'Ch1' in f or '_1.' in f:
+                    ch1_file = f
+                    break
+            if not ch1_file:
+                ch1_file = wfm_files[0]
+
+            parser = TektronixWFMParser(ch1_file)
+            waveforms = parser.get_waveforms()
+            return [np.array(w) for w in waveforms] if waveforms else None
+        except Exception as e:
+            print(f"Error loading TU Delft waveforms: {e}")
+            return None
+
     def load_settings(self, prefix):
+        """Load settings from -SG.txt file or extract from WFM header."""
+        data_path = self.get_dataset_path(prefix)
+        clean_prefix = self.get_clean_prefix(prefix)
+        fmt = self.get_dataset_format(prefix)
+
+        if fmt == self.FORMAT_TUDELFT:
+            return self._load_settings_tudelft(prefix)
+        else:
+            return self._load_settings_rugged(data_path, clean_prefix)
+
+    def _load_settings_rugged(self, data_path, clean_prefix):
         """Load settings from -SG.txt file."""
-        filepath = os.path.join(self.data_dir, f"{prefix}-SG.txt")
+        filepath = os.path.join(data_path, f"{clean_prefix}-SG.txt")
         if not os.path.exists(filepath):
             return None
         try:
@@ -310,6 +461,31 @@ class PDDataLoader:
             return values
         except Exception as e:
             print(f"Error loading settings: {e}")
+            return None
+
+    def _load_settings_tudelft(self, prefix):
+        """Extract settings from TU Delft WFM file header."""
+        if not WFM_PARSER_AVAILABLE:
+            return None
+
+        info = self.dataset_info.get(prefix, {})
+        wfm_files = info.get('wfm_files', [])
+
+        if not wfm_files:
+            return None
+
+        try:
+            parser = TektronixWFMParser(wfm_files[0])
+            sample_interval = parser.get_sample_interval()
+
+            # Return settings array compatible with existing format
+            # Index 10 is sample_interval, index 9 is AC frequency
+            settings = [0.0] * 18
+            settings[9] = 50.0  # Default 50 Hz AC
+            settings[10] = sample_interval
+            return settings
+        except Exception as e:
+            print(f"Error loading TU Delft settings: {e}")
             return None
 
     def load_all(self, prefix, method='dbscan'):
