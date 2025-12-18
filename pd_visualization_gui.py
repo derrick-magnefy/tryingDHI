@@ -670,6 +670,107 @@ def create_pca_plot(features, feature_names, cluster_labels):
     return fig
 
 
+def create_correlation_matrix(features, feature_names, selected_features=None):
+    """Create correlation matrix heatmap for selected features.
+
+    Args:
+        features: Feature matrix (n_samples x n_features)
+        feature_names: List of all feature names
+        selected_features: List of feature names to include (None = all)
+
+    Returns:
+        Plotly figure with correlation matrix heatmap
+    """
+    if features is None or feature_names is None:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Feature Correlation Matrix",
+            annotations=[{
+                'text': 'No data available',
+                'xref': 'paper', 'yref': 'paper',
+                'x': 0.5, 'y': 0.5, 'showarrow': False,
+                'font': {'size': 16, 'color': 'gray'}
+            }]
+        )
+        return fig
+
+    # Filter to selected features
+    if selected_features and len(selected_features) > 0:
+        # Get indices of selected features
+        indices = []
+        labels = []
+        for feat in selected_features:
+            if feat in feature_names:
+                indices.append(feature_names.index(feat))
+                labels.append(feat)
+
+        if len(indices) < 2:
+            fig = go.Figure()
+            fig.update_layout(
+                title="Feature Correlation Matrix",
+                annotations=[{
+                    'text': 'Select at least 2 features',
+                    'xref': 'paper', 'yref': 'paper',
+                    'x': 0.5, 'y': 0.5, 'showarrow': False,
+                    'font': {'size': 16, 'color': 'gray'}
+                }]
+            )
+            return fig
+
+        feature_subset = features[:, indices]
+    else:
+        feature_subset = features
+        labels = feature_names
+
+    # Handle NaN/Inf values
+    feature_subset = np.nan_to_num(feature_subset, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Compute correlation matrix
+    n_features = feature_subset.shape[1]
+    corr_matrix = np.corrcoef(feature_subset.T)
+
+    # Handle case where corrcoef returns NaN (constant features)
+    corr_matrix = np.nan_to_num(corr_matrix, nan=0.0)
+
+    # Create text annotations with R values
+    text_annotations = [[f'{corr_matrix[i, j]:.2f}' for j in range(n_features)] for i in range(n_features)]
+
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=corr_matrix,
+        x=labels,
+        y=labels,
+        text=text_annotations,
+        texttemplate='%{text}',
+        textfont={'size': 9},
+        colorscale='RdBu_r',
+        zmid=0,
+        zmin=-1,
+        zmax=1,
+        colorbar=dict(
+            title='R value',
+            titleside='right'
+        ),
+        hovertemplate='%{x} vs %{y}<br>R = %{z:.3f}<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title=f'Feature Correlation Matrix ({len(labels)} features)',
+        xaxis=dict(
+            tickangle=45,
+            tickfont=dict(size=10)
+        ),
+        yaxis=dict(
+            tickfont=dict(size=10),
+            autorange='reversed'
+        ),
+        width=max(600, len(labels) * 35 + 150),
+        height=max(600, len(labels) * 35 + 150),
+    )
+
+    return fig
+
+
 def create_app(data_dir=DATA_DIR):
     """Create the Dash application."""
     app = Dash(__name__)
@@ -931,6 +1032,23 @@ def create_app(data_dir=DATA_DIR):
             dcc.Graph(id='histogram', style={'height': '450px'})
         ], style={'width': '95%', 'margin': '20px auto'}),
 
+        # Correlation Matrix (toggleable)
+        html.Div([
+            html.Div([
+                dcc.Checklist(
+                    id='show-correlation-matrix-checkbox',
+                    options=[{'label': ' Show Feature Correlation Matrix', 'value': 'show'}],
+                    value=[],
+                    style={'display': 'inline-block', 'marginRight': '20px', 'fontWeight': 'bold'}
+                ),
+                html.Span("(Computes Pearson R values between selected pulse features)",
+                         style={'color': '#666', 'fontSize': '12px', 'fontStyle': 'italic'})
+            ], style={'marginBottom': '10px'}),
+            html.Div([
+                dcc.Graph(id='correlation-matrix', style={'height': '700px'})
+            ], id='correlation-matrix-container', style={'display': 'none'})
+        ], style={'width': '95%', 'margin': '20px auto'}),
+
         # PCA Plot (shown only for K-means)
         html.Div([
             html.Div([
@@ -1167,6 +1285,38 @@ def create_app(data_dir=DATA_DIR):
         )
 
         return pca_fig, {'width': '95%', 'margin': '20px auto', 'display': 'block'}
+
+    @app.callback(
+        [Output('correlation-matrix', 'figure'),
+         Output('correlation-matrix-container', 'style')],
+        [Input('show-correlation-matrix-checkbox', 'value'),
+         Input('dataset-dropdown', 'value'),
+         Input('pulse-features-checklist', 'value'),
+         Input('reanalysis-trigger', 'data')]
+    )
+    def update_correlation_matrix(show_corr, prefix, selected_features, reanalysis_trigger):
+        """Update correlation matrix based on checkbox and selected features."""
+        # Check if enabled
+        if not show_corr or 'show' not in show_corr:
+            empty_fig = go.Figure()
+            return empty_fig, {'display': 'none'}
+
+        if not prefix:
+            empty_fig = go.Figure()
+            empty_fig.update_layout(title="Correlation Matrix - No data")
+            return empty_fig, {'display': 'none'}
+
+        # Load data
+        data = loader.load_all(prefix)
+
+        # Create correlation matrix with selected features
+        corr_fig = create_correlation_matrix(
+            data['features'],
+            data['feature_names'],
+            selected_features
+        )
+
+        return corr_fig, {'display': 'block'}
 
     @app.callback(
         [Output('waveform-plot', 'figure'),
