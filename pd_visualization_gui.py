@@ -1259,7 +1259,9 @@ def create_app(data_dir=DATA_DIR):
                     id='dataset-dropdown',
                     options=[{'label': d, 'value': d} for d in loader.datasets],
                     value=loader.datasets[0] if loader.datasets else None,
-                    style={'width': '100%'}
+                    style={'width': '100%'},
+                    persistence=True,
+                    persistence_type='local'
                 ),
             ], style={'width': '60%', 'display': 'inline-block', 'marginRight': '2%'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
@@ -1299,7 +1301,9 @@ def create_app(data_dir=DATA_DIR):
                                         inline=True,
                                         style={'display': 'inline-block'},
                                         inputStyle={'marginRight': '5px'},
-                                        labelStyle={'marginRight': '20px'}
+                                        labelStyle={'marginRight': '20px'},
+                                        persistence=True,
+                                        persistence_type='local'
                                     ),
                                 ], style={'marginBottom': '10px'}),
                                 html.Div([
@@ -1364,7 +1368,9 @@ def create_app(data_dir=DATA_DIR):
                                     inline=True,
                                     style={'fontSize': '12px', 'maxHeight': '150px', 'overflowY': 'auto'},
                                     inputStyle={'marginRight': '5px'},
-                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
+                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'},
+                                    persistence=True,
+                                    persistence_type='local'
                                 ),
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ], style={'marginBottom': '15px'}),
@@ -1404,7 +1410,9 @@ def create_app(data_dir=DATA_DIR):
                                     inline=True,
                                     style={'fontSize': '12px', 'maxHeight': '150px', 'overflowY': 'auto'},
                                     inputStyle={'marginRight': '5px'},
-                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
+                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'},
+                                    persistence=True,
+                                    persistence_type='local'
                                 ),
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ]),
@@ -1426,7 +1434,9 @@ def create_app(data_dir=DATA_DIR):
                                         options=[{'label': 'Stored (from features)', 'value': 'stored'}] +
                                                 [{'label': get_method_description(m), 'value': m} for m in POLARITY_METHODS],
                                         value='stored',
-                                        style={'width': '300px', 'display': 'inline-block'}
+                                        style={'width': '300px', 'display': 'inline-block'},
+                                        persistence=True,
+                                        persistence_type='local'
                                     ),
                                     html.Button("Re-analyze with Polarity", id='reanalyze-button',
                                                n_clicks=0,
