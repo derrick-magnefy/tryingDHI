@@ -1261,35 +1261,7 @@ def create_app(data_dir=DATA_DIR):
                     value=loader.datasets[0] if loader.datasets else None,
                     style={'width': '100%'}
                 ),
-            ], style={'width': '45%', 'display': 'inline-block', 'marginRight': '2%'}),
-            html.Div([
-                html.Label("Polarity Method (for display):"),
-                dcc.Dropdown(
-                    id='polarity-method-dropdown',
-                    options=[{'label': 'Stored (from features)', 'value': 'stored'}] +
-                            [{'label': get_method_description(m), 'value': m} for m in POLARITY_METHODS],
-                    value='stored',
-                    style={'width': '100%'}
-                ),
-            ], style={'width': '35%', 'display': 'inline-block', 'marginRight': '2%'}),
-            html.Div([
-                html.Label("Re-analyze:", style={'visibility': 'hidden'}),
-                html.Button(
-                    'Re-analyze',
-                    id='reanalyze-button',
-                    n_clicks=0,
-                    style={
-                        'width': '100%',
-                        'padding': '8px',
-                        'backgroundColor': '#007bff',
-                        'color': 'white',
-                        'border': 'none',
-                        'borderRadius': '4px',
-                        'cursor': 'pointer',
-                        'fontSize': '12px'
-                    }
-                ),
-            ], style={'width': '14%', 'display': 'inline-block', 'verticalAlign': 'bottom'}),
+            ], style={'width': '60%', 'display': 'inline-block', 'marginRight': '2%'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
 
         # Advanced Options (collapsible)
@@ -1373,8 +1345,13 @@ def create_app(data_dir=DATA_DIR):
                                     html.Button("Select None", id='pulse-features-select-none', n_clicks=0,
                                                style={'marginRight': '10px', 'padding': '5px 10px'}),
                                     html.Button("Reset Defaults", id='pulse-features-reset', n_clicks=0,
-                                               style={'padding': '5px 10px'}),
+                                               style={'marginRight': '20px', 'padding': '5px 10px'}),
+                                    html.Button("Recluster", id='recluster-main-btn',
+                                               style={'backgroundColor': '#e91e63', 'color': 'white',
+                                                      'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold'}),
                                 ], style={'marginBottom': '10px'}),
+                                html.Div(id='recluster-main-result', style={'marginBottom': '10px'}),
                                 dcc.Checklist(
                                     id='pulse-features-checklist',
                                     options=[{'label': f, 'value': f} for f in PULSE_FEATURES],
@@ -1419,6 +1396,38 @@ def create_app(data_dir=DATA_DIR):
                                     inputStyle={'marginRight': '5px'},
                                     labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
                                 ),
+                            ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+                        ]),
+
+                        # Row 4: Polarity Method
+                        html.Details([
+                            html.Summary("Polarity Method", style={
+                                'cursor': 'pointer',
+                                'fontWeight': 'bold',
+                                'padding': '8px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '4px'
+                            }),
+                            html.Div([
+                                html.Div([
+                                    html.Label("Display Method:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    dcc.Dropdown(
+                                        id='polarity-method-dropdown',
+                                        options=[{'label': 'Stored (from features)', 'value': 'stored'}] +
+                                                [{'label': get_method_description(m), 'value': m} for m in POLARITY_METHODS],
+                                        value='stored',
+                                        style={'width': '300px', 'display': 'inline-block'}
+                                    ),
+                                    html.Button("Re-analyze with Polarity", id='reanalyze-button',
+                                               n_clicks=0,
+                                               style={'backgroundColor': '#007bff', 'color': 'white',
+                                                      'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold', 'marginLeft': '15px'}),
+                                ], style={'marginBottom': '10px'}),
+                                html.Div(id='reanalyze-polarity-result', style={'marginTop': '10px'}),
+                                html.P("Note: 'Stored' uses the polarity saved in the features file. Other options recalculate polarity from raw waveforms for display only. "
+                                       "Click 'Re-analyze' to re-extract features with a new polarity method.",
+                                       style={'fontSize': '11px', 'color': '#666', 'fontStyle': 'italic', 'marginTop': '10px'})
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ]),
                     ]),
@@ -2024,6 +2033,92 @@ def create_app(data_dir=DATA_DIR):
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
                     html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div(f"Features: {features_str}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div("Refresh the page or change dataset and back to see updated results.",
+                            style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
+                ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+            else:
+                error_msg = result.stderr[:500] if result.stderr else "Unknown error"
+                return html.Div([
+                    html.Div("✗ Clustering failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
+                    html.Pre(error_msg, style={'fontSize': '10px', 'color': '#666', 'whiteSpace': 'pre-wrap'})
+                ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
+
+        except subprocess.TimeoutExpired:
+            return html.Div("Clustering timed out (>120s)", style={'color': 'red', 'padding': '10px'})
+        except Exception as e:
+            return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
+
+    @app.callback(
+        Output('recluster-main-result', 'children'),
+        [Input('recluster-main-btn', 'n_clicks')],
+        [State('pulse-features-checklist', 'value'),
+         State('dataset-dropdown', 'value'),
+         State('clustering-method-radio', 'value')],
+        prevent_initial_call=True
+    )
+    def recluster_main_with_features(n_clicks, selected_features, prefix, clustering_method):
+        """Run clustering with the selected pulse features from Advanced Options."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not selected_features or len(selected_features) < 2:
+            return html.Div("Please select at least 2 features for clustering",
+                          style={'color': 'orange', 'padding': '10px'})
+
+        if not prefix:
+            return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
+
+        # Get dataset info
+        data_path = loader.get_dataset_path(prefix)
+        clean_prefix = loader.get_clean_prefix(prefix)
+
+        if not data_path or not clean_prefix:
+            return html.Div("Could not determine dataset path", style={'color': 'red', 'padding': '10px'})
+
+        # Build the clustering command
+        features_str = ','.join(selected_features)
+        method = clustering_method or 'dbscan'
+
+        import subprocess
+        import sys
+
+        try:
+            # Run clustering
+            cmd = [
+                sys.executable, 'cluster_pulses.py',
+                '--input-dir', data_path,
+                '--method', method,
+                '--features', features_str
+            ]
+
+            # Add input file for specific dataset
+            input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+            if os.path.exists(input_file):
+                cmd.extend(['--input', input_file])
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+            if result.returncode == 0:
+                # Also run aggregation and classification
+                agg_cmd = [
+                    sys.executable, 'aggregate_cluster_features.py',
+                    '--input-dir', data_path,
+                    '--method', method,
+                    '--file', clean_prefix
+                ]
+                subprocess.run(agg_cmd, capture_output=True, text=True, timeout=60)
+
+                class_cmd = [
+                    sys.executable, 'classify_pd_type.py',
+                    '--input-dir', data_path,
+                    '--method', method,
+                    '--file', clean_prefix
+                ]
+                subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
+
+                return html.Div([
+                    html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
+                    html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
                 ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
