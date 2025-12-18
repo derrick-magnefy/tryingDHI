@@ -1349,9 +1349,14 @@ def create_app(data_dir=DATA_DIR):
                                     html.Button("Recluster", id='recluster-main-btn',
                                                style={'backgroundColor': '#e91e63', 'color': 'white',
                                                       'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    html.Button("Recluster All Datasets", id='recluster-all-btn',
+                                               style={'backgroundColor': '#c2185b', 'color': 'white',
+                                                      'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
                                                       'cursor': 'pointer', 'fontWeight': 'bold'}),
                                 ], style={'marginBottom': '10px'}),
                                 html.Div(id='recluster-main-result', style={'marginBottom': '10px'}),
+                                html.Div(id='recluster-all-result', style={'marginBottom': '10px'}),
                                 dcc.Checklist(
                                     id='pulse-features-checklist',
                                     options=[{'label': f, 'value': f} for f in PULSE_FEATURES],
@@ -1384,9 +1389,14 @@ def create_app(data_dir=DATA_DIR):
                                     html.Button("Reclassify with Selected", id='reclassify-btn',
                                                style={'backgroundColor': '#9c27b0', 'color': 'white',
                                                       'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    html.Button("Reclassify All Datasets", id='reclassify-all-btn',
+                                               style={'backgroundColor': '#7b1fa2', 'color': 'white',
+                                                      'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
                                                       'cursor': 'pointer', 'fontWeight': 'bold'}),
                                 ], style={'marginBottom': '10px'}),
                                 html.Div(id='reclassify-result', style={'marginBottom': '10px'}),
+                                html.Div(id='reclassify-all-result', style={'marginBottom': '10px'}),
                                 dcc.Checklist(
                                     id='cluster-features-checklist',
                                     options=[{'label': f, 'value': f} for f in CLUSTER_FEATURES],
@@ -2199,6 +2209,184 @@ def create_app(data_dir=DATA_DIR):
             return html.Div("Classification timed out (>60s)", style={'color': 'red', 'padding': '10px'})
         except Exception as e:
             return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
+
+    @app.callback(
+        Output('recluster-all-result', 'children'),
+        [Input('recluster-all-btn', 'n_clicks')],
+        [State('pulse-features-checklist', 'value'),
+         State('clustering-method-radio', 'value')],
+        prevent_initial_call=True
+    )
+    def recluster_all_datasets(n_clicks, selected_features, clustering_method):
+        """Run clustering on all datasets with the selected features."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not selected_features or len(selected_features) < 2:
+            return html.Div("Please select at least 2 features for clustering",
+                          style={'color': 'orange', 'padding': '10px'})
+
+        # Get all datasets
+        datasets = loader.datasets
+        if not datasets:
+            return html.Div("No datasets available", style={'color': 'red', 'padding': '10px'})
+
+        features_str = ','.join(selected_features)
+        method = clustering_method or 'dbscan'
+
+        import subprocess
+        import sys
+
+        success_count = 0
+        fail_count = 0
+        results_details = []
+
+        for dataset in datasets:
+            try:
+                data_path = loader.get_dataset_path(dataset)
+                clean_prefix = loader.get_clean_prefix(dataset)
+
+                if not data_path or not clean_prefix:
+                    fail_count += 1
+                    results_details.append(f"✗ {dataset}: Could not determine path")
+                    continue
+
+                # Run clustering
+                cmd = [
+                    sys.executable, 'cluster_pulses.py',
+                    '--input-dir', data_path,
+                    '--method', method,
+                    '--features', features_str
+                ]
+
+                input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+                if os.path.exists(input_file):
+                    cmd.extend(['--input', input_file])
+
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+                if result.returncode == 0:
+                    # Also run aggregation and classification
+                    agg_cmd = [
+                        sys.executable, 'aggregate_cluster_features.py',
+                        '--input-dir', data_path,
+                        '--method', method,
+                        '--file', clean_prefix
+                    ]
+                    subprocess.run(agg_cmd, capture_output=True, text=True, timeout=60)
+
+                    class_cmd = [
+                        sys.executable, 'classify_pd_type.py',
+                        '--input-dir', data_path,
+                        '--method', method,
+                        '--file', clean_prefix
+                    ]
+                    subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
+
+                    success_count += 1
+                    results_details.append(f"✓ {dataset}")
+                else:
+                    fail_count += 1
+                    results_details.append(f"✗ {dataset}: Clustering failed")
+
+            except subprocess.TimeoutExpired:
+                fail_count += 1
+                results_details.append(f"✗ {dataset}: Timeout")
+            except Exception as e:
+                fail_count += 1
+                results_details.append(f"✗ {dataset}: {str(e)[:50]}")
+
+        return html.Div([
+            html.Div(f"Reclustered {success_count}/{len(datasets)} datasets",
+                    style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
+            html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
+            html.Details([
+                html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
+                html.Div([html.Div(d, style={'fontSize': '11px'}) for d in results_details],
+                        style={'maxHeight': '100px', 'overflowY': 'auto', 'marginTop': '5px'})
+            ]) if results_details else None,
+            html.Div("Refresh the page to see updated results.",
+                    style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
+        ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+
+    @app.callback(
+        Output('reclassify-all-result', 'children'),
+        [Input('reclassify-all-btn', 'n_clicks')],
+        [State('cluster-features-checklist', 'value'),
+         State('clustering-method-radio', 'value')],
+        prevent_initial_call=True
+    )
+    def reclassify_all_datasets(n_clicks, selected_features, clustering_method):
+        """Run classification on all datasets with the selected cluster features."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not selected_features or len(selected_features) < 1:
+            return html.Div("Please select at least 1 feature for classification",
+                          style={'color': 'orange', 'padding': '10px'})
+
+        # Get all datasets
+        datasets = loader.datasets
+        if not datasets:
+            return html.Div("No datasets available", style={'color': 'red', 'padding': '10px'})
+
+        features_str = ','.join(selected_features)
+        method = clustering_method or 'dbscan'
+
+        import subprocess
+        import sys
+
+        success_count = 0
+        fail_count = 0
+        results_details = []
+
+        for dataset in datasets:
+            try:
+                data_path = loader.get_dataset_path(dataset)
+                clean_prefix = loader.get_clean_prefix(dataset)
+
+                if not data_path or not clean_prefix:
+                    fail_count += 1
+                    results_details.append(f"✗ {dataset}: Could not determine path")
+                    continue
+
+                # Run classification with selected features
+                cmd = [
+                    sys.executable, 'classify_pd_type.py',
+                    '--input-dir', data_path,
+                    '--method', method,
+                    '--file', clean_prefix,
+                    '--cluster-features', features_str
+                ]
+
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+                if result.returncode == 0:
+                    success_count += 1
+                    results_details.append(f"✓ {dataset}")
+                else:
+                    fail_count += 1
+                    results_details.append(f"✗ {dataset}: Classification failed")
+
+            except subprocess.TimeoutExpired:
+                fail_count += 1
+                results_details.append(f"✗ {dataset}: Timeout")
+            except Exception as e:
+                fail_count += 1
+                results_details.append(f"✗ {dataset}: {str(e)[:50]}")
+
+        return html.Div([
+            html.Div(f"Reclassified {success_count}/{len(datasets)} datasets",
+                    style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
+            html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
+            html.Details([
+                html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
+                html.Div([html.Div(d, style={'fontSize': '11px'}) for d in results_details],
+                        style={'maxHeight': '100px', 'overflowY': 'auto', 'marginTop': '5px'})
+            ]) if results_details else None,
+            html.Div("Refresh the page to see updated results.",
+                    style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
+        ], style={'padding': '10px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'})
 
     @app.callback(
         [Output('all-datasets-analysis-display', 'children'),
