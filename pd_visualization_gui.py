@@ -407,14 +407,23 @@ class PDDataLoader:
         """Load waveforms from -WFMs.txt file (original format)."""
         filepath = os.path.join(data_path, f"{clean_prefix}-WFMs.txt")
         if not os.path.exists(filepath):
-            # Try .wfm extension (single file format)
+            # Try .wfm extension (single ASCII wfm file format)
             filepath = os.path.join(data_path, f"{clean_prefix}.wfm")
             if not os.path.exists(filepath):
                 return None
+            # Check if it's a binary file (TU Delft format) - don't try to read as text
+            try:
+                with open(filepath, 'rb') as f:
+                    header = f.read(20)
+                    if b':WFM#' in header:
+                        # This is a binary Tektronix file, not ASCII
+                        return None
+            except:
+                pass
 
         try:
             waveforms = []
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
                 for line in f:
                     line = line.strip()
                     if line:
