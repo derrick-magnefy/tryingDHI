@@ -40,6 +40,92 @@ from polarity_methods import (
 
 DATA_DIR = "Rugged Data Files"
 
+# Clustering methods available
+CLUSTERING_METHODS = ['dbscan', 'kmeans']
+DEFAULT_CLUSTERING_METHOD = 'dbscan'
+
+# Pulse features used for clustering (from extract_features.py)
+PULSE_FEATURES = [
+    'phase_angle',
+    'peak_amplitude_positive',
+    'peak_amplitude_negative',
+    'polarity',
+    'rise_time',
+    'fall_time',
+    'pulse_width',
+    'slew_rate',
+    'energy',
+    'equivalent_time',
+    'equivalent_bandwidth',
+    'cumulative_energy_peak',
+    'cumulative_energy_rise_time',
+    'cumulative_energy_shape_factor',
+    'cumulative_energy_area_ratio',
+    'dominant_frequency',
+    'center_frequency',
+    'bandwidth_3db',
+    'spectral_power_low',
+    'spectral_power_high',
+    'spectral_flatness',
+    'spectral_entropy',
+    'peak_to_peak_amplitude',
+    'rms_amplitude',
+    'crest_factor',
+    'rise_fall_ratio',
+    'zero_crossing_count',
+    'oscillation_count',
+    'energy_charge_ratio',
+]
+
+# Default pulse features for clustering
+DEFAULT_CLUSTERING_FEATURES = [
+    'phase_angle', 'peak_amplitude_positive', 'peak_amplitude_negative',
+    'rise_time', 'energy', 'dominant_frequency'
+]
+
+# Cluster-level aggregated features (from aggregate_cluster_features.py)
+CLUSTER_FEATURES = [
+    'pulses_per_positive_halfcycle',
+    'pulses_per_negative_halfcycle',
+    'cross_correlation',
+    'discharge_asymmetry',
+    'skewness_Hn_positive',
+    'skewness_Hn_negative',
+    'kurtosis_Hn_positive',
+    'kurtosis_Hn_negative',
+    'skewness_Hqn_positive',
+    'skewness_Hqn_negative',
+    'kurtosis_Hqn_positive',
+    'kurtosis_Hqn_negative',
+    'mean_amplitude_positive',
+    'mean_amplitude_negative',
+    'max_amplitude_positive',
+    'max_amplitude_negative',
+    'number_of_peaks_Hn_positive',
+    'number_of_peaks_Hn_negative',
+    'phase_of_max_activity',
+    'phase_spread',
+    'inception_phase',
+    'extinction_phase',
+    'quadrant_1_percentage',
+    'quadrant_2_percentage',
+    'quadrant_3_percentage',
+    'quadrant_4_percentage',
+    'weibull_alpha',
+    'weibull_beta',
+    'variance_amplitude_positive',
+    'variance_amplitude_negative',
+    'coefficient_of_variation',
+    'repetition_rate',
+]
+
+# Default cluster features for classification
+DEFAULT_CLASSIFICATION_FEATURES = [
+    'cross_correlation', 'discharge_asymmetry', 'phase_of_max_activity',
+    'phase_spread', 'quadrant_1_percentage', 'quadrant_2_percentage',
+    'quadrant_3_percentage', 'quadrant_4_percentage', 'weibull_beta'
+]
+
 # Color schemes
 PD_TYPE_COLORS = {
     'NOISE': '#808080',      # Gray
@@ -522,7 +608,7 @@ def create_app(data_dir=DATA_DIR):
             html.Div([
                 html.Label("Re-analyze:", style={'visibility': 'hidden'}),
                 html.Button(
-                    '🔄 Re-analyze with Selected Method',
+                    'Re-analyze',
                     id='reanalyze-button',
                     n_clicks=0,
                     style={
@@ -537,6 +623,135 @@ def create_app(data_dir=DATA_DIR):
                     }
                 ),
             ], style={'width': '14%', 'display': 'inline-block', 'verticalAlign': 'bottom'}),
+        ], style={'width': '90%', 'margin': '10px auto'}),
+
+        # Advanced Options (collapsible)
+        html.Div([
+            html.Details([
+                html.Summary("Advanced Analysis Options", style={
+                    'cursor': 'pointer',
+                    'fontWeight': 'bold',
+                    'padding': '10px',
+                    'backgroundColor': '#e9ecef',
+                    'borderRadius': '4px',
+                    'marginBottom': '10px'
+                }),
+                html.Div([
+                    # Row 1: Clustering Method
+                    html.Div([
+                        html.Details([
+                            html.Summary("Clustering Method", style={
+                                'cursor': 'pointer',
+                                'fontWeight': 'bold',
+                                'padding': '8px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '4px'
+                            }),
+                            html.Div([
+                                html.Div([
+                                    html.Label("Method:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    dcc.RadioItems(
+                                        id='clustering-method-radio',
+                                        options=[
+                                            {'label': 'DBSCAN (density-based)', 'value': 'dbscan'},
+                                            {'label': 'K-Means (centroid-based)', 'value': 'kmeans'}
+                                        ],
+                                        value=DEFAULT_CLUSTERING_METHOD,
+                                        inline=True,
+                                        style={'display': 'inline-block'},
+                                        inputStyle={'marginRight': '5px'},
+                                        labelStyle={'marginRight': '20px'}
+                                    ),
+                                ], style={'marginBottom': '10px'}),
+                                html.Div([
+                                    html.Div([
+                                        html.Label("DBSCAN min_samples:", style={'marginRight': '10px'}),
+                                        dcc.Input(
+                                            id='dbscan-min-samples',
+                                            type='number',
+                                            value=5,
+                                            min=2,
+                                            max=50,
+                                            style={'width': '80px'}
+                                        ),
+                                    ], style={'display': 'inline-block', 'marginRight': '30px'}),
+                                    html.Div([
+                                        html.Label("K-Means clusters:", style={'marginRight': '10px'}),
+                                        dcc.Input(
+                                            id='kmeans-n-clusters',
+                                            type='number',
+                                            value=5,
+                                            min=2,
+                                            max=20,
+                                            style={'width': '80px'}
+                                        ),
+                                    ], style={'display': 'inline-block'}),
+                                ]),
+                            ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+                        ], style={'marginBottom': '15px'}),
+
+                        # Row 2: Pulse Features for Clustering
+                        html.Details([
+                            html.Summary("Pulse Features (for clustering)", style={
+                                'cursor': 'pointer',
+                                'fontWeight': 'bold',
+                                'padding': '8px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '4px'
+                            }),
+                            html.Div([
+                                html.Div([
+                                    html.Button("Select All", id='pulse-features-select-all', n_clicks=0,
+                                               style={'marginRight': '10px', 'padding': '5px 10px'}),
+                                    html.Button("Select None", id='pulse-features-select-none', n_clicks=0,
+                                               style={'marginRight': '10px', 'padding': '5px 10px'}),
+                                    html.Button("Reset Defaults", id='pulse-features-reset', n_clicks=0,
+                                               style={'padding': '5px 10px'}),
+                                ], style={'marginBottom': '10px'}),
+                                dcc.Checklist(
+                                    id='pulse-features-checklist',
+                                    options=[{'label': f, 'value': f} for f in PULSE_FEATURES],
+                                    value=DEFAULT_CLUSTERING_FEATURES,
+                                    inline=True,
+                                    style={'fontSize': '12px', 'maxHeight': '150px', 'overflowY': 'auto'},
+                                    inputStyle={'marginRight': '5px'},
+                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
+                                ),
+                            ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+                        ], style={'marginBottom': '15px'}),
+
+                        # Row 3: Cluster Features for Classification
+                        html.Details([
+                            html.Summary("Cluster Features (for classification)", style={
+                                'cursor': 'pointer',
+                                'fontWeight': 'bold',
+                                'padding': '8px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '4px'
+                            }),
+                            html.Div([
+                                html.Div([
+                                    html.Button("Select All", id='cluster-features-select-all', n_clicks=0,
+                                               style={'marginRight': '10px', 'padding': '5px 10px'}),
+                                    html.Button("Select None", id='cluster-features-select-none', n_clicks=0,
+                                               style={'marginRight': '10px', 'padding': '5px 10px'}),
+                                    html.Button("Reset Defaults", id='cluster-features-reset', n_clicks=0,
+                                               style={'padding': '5px 10px'}),
+                                ], style={'marginBottom': '10px'}),
+                                dcc.Checklist(
+                                    id='cluster-features-checklist',
+                                    options=[{'label': f, 'value': f} for f in CLUSTER_FEATURES],
+                                    value=DEFAULT_CLASSIFICATION_FEATURES,
+                                    inline=True,
+                                    style={'fontSize': '12px', 'maxHeight': '150px', 'overflowY': 'auto'},
+                                    inputStyle={'marginRight': '5px'},
+                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
+                                ),
+                            ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+                        ]),
+                    ]),
+                ], style={'padding': '15px', 'border': '1px solid #ddd', 'borderRadius': '4px', 'marginTop': '5px'})
+            ])
         ], style={'width': '90%', 'margin': '10px auto'}),
 
         # Re-analysis status message
@@ -605,6 +820,44 @@ def create_app(data_dir=DATA_DIR):
         dcc.Store(id='reanalysis-trigger', data=0),
     ])
 
+    # Callbacks for pulse features selection buttons
+    @app.callback(
+        Output('pulse-features-checklist', 'value'),
+        [Input('pulse-features-select-all', 'n_clicks'),
+         Input('pulse-features-select-none', 'n_clicks'),
+         Input('pulse-features-reset', 'n_clicks')],
+        [State('pulse-features-checklist', 'value')],
+        prevent_initial_call=True
+    )
+    def update_pulse_features(select_all, select_none, reset, current_value):
+        triggered = ctx.triggered_id
+        if triggered == 'pulse-features-select-all':
+            return PULSE_FEATURES
+        elif triggered == 'pulse-features-select-none':
+            return []
+        elif triggered == 'pulse-features-reset':
+            return DEFAULT_CLUSTERING_FEATURES
+        return current_value
+
+    # Callbacks for cluster features selection buttons
+    @app.callback(
+        Output('cluster-features-checklist', 'value'),
+        [Input('cluster-features-select-all', 'n_clicks'),
+         Input('cluster-features-select-none', 'n_clicks'),
+         Input('cluster-features-reset', 'n_clicks')],
+        [State('cluster-features-checklist', 'value')],
+        prevent_initial_call=True
+    )
+    def update_cluster_features(select_all, select_none, reset, current_value):
+        triggered = ctx.triggered_id
+        if triggered == 'cluster-features-select-all':
+            return CLUSTER_FEATURES
+        elif triggered == 'cluster-features-select-none':
+            return []
+        elif triggered == 'cluster-features-reset':
+            return DEFAULT_CLASSIFICATION_FEATURES
+        return current_value
+
     @app.callback(
         [Output('reanalysis-status', 'children'),
          Output('reanalysis-status', 'style'),
@@ -612,28 +865,54 @@ def create_app(data_dir=DATA_DIR):
         [Input('reanalyze-button', 'n_clicks')],
         [State('dataset-dropdown', 'value'),
          State('polarity-method-dropdown', 'value'),
+         State('clustering-method-radio', 'value'),
+         State('dbscan-min-samples', 'value'),
+         State('kmeans-n-clusters', 'value'),
+         State('pulse-features-checklist', 'value'),
+         State('cluster-features-checklist', 'value'),
          State('reanalysis-trigger', 'data')],
         prevent_initial_call=True
     )
-    def run_reanalysis(n_clicks, prefix, polarity_method, current_trigger):
-        """Run the full analysis pipeline with the selected polarity method."""
+    def run_reanalysis(n_clicks, prefix, polarity_method, clustering_method,
+                       dbscan_min_samples, kmeans_n_clusters,
+                       pulse_features, cluster_features, current_trigger):
+        """Run the full analysis pipeline with the selected options."""
         if not n_clicks or not prefix:
             return "", {'display': 'none'}, current_trigger
 
         if polarity_method == 'stored' or polarity_method is None:
             return html.Div([
-                "⚠️ Please select a polarity method (not 'Stored') to re-analyze"
+                "Please select a polarity method (not 'Stored') to re-analyze"
+            ], style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'}), \
+                {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
+
+        if not pulse_features:
+            return html.Div([
+                "Please select at least one pulse feature for clustering"
+            ], style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'}), \
+                {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
+
+        if not cluster_features:
+            return html.Div([
+                "Please select at least one cluster feature for classification"
             ], style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'}), \
                 {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
 
         try:
-            # Run the pipeline with the selected polarity method
+            # Build command with all selected options
             cmd = [
                 sys.executable, 'run_analysis_pipeline.py',
                 '--input-dir', data_dir,
                 '--polarity-method', polarity_method,
+                '--clustering-method', clustering_method,
                 '--file', prefix
             ]
+
+            # Add clustering-specific parameters
+            if clustering_method == 'dbscan':
+                cmd.extend(['--min-samples', str(dbscan_min_samples or 5)])
+            else:
+                cmd.extend(['--n-clusters', str(kmeans_n_clusters or 5)])
 
             result = subprocess.run(
                 cmd,
@@ -645,7 +924,8 @@ def create_app(data_dir=DATA_DIR):
             if result.returncode == 0:
                 # Increment trigger to force data reload
                 return html.Div([
-                    f"✅ Re-analysis complete with '{polarity_method}' polarity method. ",
+                    f"Re-analysis complete! ",
+                    f"Polarity: {polarity_method}, Clustering: {clustering_method.upper()}. ",
                     "Data has been updated - select 'Stored' to see new results."
                 ], style={'color': '#155724', 'backgroundColor': '#d4edda', 'padding': '10px', 'borderRadius': '4px'}), \
                     {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger + 1
