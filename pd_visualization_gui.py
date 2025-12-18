@@ -33,6 +33,14 @@ except ImportError:
     DASH_AVAILABLE = False
     print("Dash not available. Install with: pip install dash plotly")
 
+try:
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+    PCA_AVAILABLE = True
+except ImportError:
+    PCA_AVAILABLE = False
+    print("sklearn not available for PCA. Install with: pip install scikit-learn")
+
 from polarity_methods import (
     calculate_polarity, compare_methods, POLARITY_METHODS,
     DEFAULT_POLARITY_METHOD, get_method_description
@@ -570,6 +578,92 @@ def create_stats_text(features, cluster_labels, pd_types):
     return "\n".join(lines)
 
 
+def create_pca_plot(features, feature_names, cluster_labels):
+    """Create PCA plot (PC1 vs PC2) colored by cluster.
+
+    Args:
+        features: Feature matrix
+        feature_names: List of feature names
+        cluster_labels: Cluster labels for each point
+
+    Returns:
+        Plotly figure with PCA scatter plot
+    """
+    if features is None or not PCA_AVAILABLE:
+        fig = go.Figure()
+        fig.update_layout(
+            title="PCA Plot (PC1 vs PC2)",
+            annotations=[{
+                'text': 'PCA not available' if not PCA_AVAILABLE else 'No data',
+                'xref': 'paper', 'yref': 'paper',
+                'x': 0.5, 'y': 0.5, 'showarrow': False,
+                'font': {'size': 16, 'color': 'gray'}
+            }]
+        )
+        return fig
+
+    # Handle infinite/NaN values
+    features_clean = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Scale features
+    scaler = StandardScaler()
+    features_scaled = scaler.fit_transform(features_clean)
+
+    # Perform PCA
+    pca = PCA(n_components=2)
+    pca_result = pca.fit_transform(features_scaled)
+
+    fig = go.Figure()
+
+    if cluster_labels is not None:
+        unique_labels = sorted(set(cluster_labels))
+        for label in unique_labels:
+            mask = cluster_labels == label
+            if label == -1:
+                color = '#808080'
+                name = 'Noise'
+            else:
+                color = CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
+                name = f'Cluster {label}'
+
+            original_indices = np.where(mask)[0].tolist()
+            fig.add_trace(go.Scatter(
+                x=pca_result[mask, 0],
+                y=pca_result[mask, 1],
+                mode='markers',
+                marker=dict(size=5, color=color, opacity=0.7),
+                name=name,
+                customdata=original_indices,
+                hovertemplate='PC1: %{x:.3f}<br>PC2: %{y:.3f}<br>Index: %{customdata}<extra></extra>'
+            ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=pca_result[:, 0],
+            y=pca_result[:, 1],
+            mode='markers',
+            marker=dict(size=5, color='blue', opacity=0.7),
+            name='All pulses'
+        ))
+
+    # Add explained variance to axis labels
+    var_explained = pca.explained_variance_ratio_ * 100
+
+    fig.update_layout(
+        title=f"PCA Plot - Feature Space Visualization",
+        xaxis_title=f"PC1 ({var_explained[0]:.1f}% variance)",
+        yaxis_title=f"PC2 ({var_explained[1]:.1f}% variance)",
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99
+        ),
+        hovermode='closest'
+    )
+
+    return fig
+
+
 def create_app(data_dir=DATA_DIR):
     """Create the Dash application."""
     app = Dash(__name__)
@@ -792,8 +886,13 @@ def create_app(data_dir=DATA_DIR):
             dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
-        # Second row
+        # Third row: Histogram (left) and Waveform+Features (right)
         html.Div([
+            # Histogram (Phase Distribution)
+            html.Div([
+                dcc.Graph(id='histogram', style={'height': '525px'})
+            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+
             # Waveform viewer and features
             html.Div([
                 dcc.Graph(id='waveform-plot', style={'height': '400px'}),
@@ -822,12 +921,14 @@ def create_app(data_dir=DATA_DIR):
                     })
                 ], style={'padding': '5px', 'backgroundColor': '#fff', 'border': '1px solid #ddd', 'borderRadius': '4px'})
             ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
-
-            # Histogram
-            html.Div([
-                dcc.Graph(id='histogram', style={'height': '525px'})
-            ], style={'width': '48%', 'display': 'inline-block'}),
         ], style={'width': '95%', 'margin': 'auto'}),
+
+        # PCA Plot (shown only for K-means)
+        html.Div([
+            html.Div([
+                dcc.Graph(id='pca-plot', style={'height': '500px'})
+            ])
+        ], id='pca-container', style={'width': '95%', 'margin': '20px auto', 'display': 'none'}),
 
         # Hidden stores
         dcc.Store(id='selected-index'),
@@ -1028,6 +1129,36 @@ def create_app(data_dir=DATA_DIR):
         )
 
         return cluster_fig, pdtype_fig, hist_fig, stats, prefix
+
+    @app.callback(
+        [Output('pca-plot', 'figure'),
+         Output('pca-container', 'style')],
+        [Input('clustering-method-radio', 'value'),
+         Input('dataset-dropdown', 'value'),
+         Input('reanalysis-trigger', 'data')]
+    )
+    def update_pca_plot(clustering_method, prefix, reanalysis_trigger):
+        """Update PCA plot - only shown for K-means clustering."""
+        # Only show PCA for K-means
+        if clustering_method != 'kmeans':
+            empty_fig = go.Figure()
+            return empty_fig, {'display': 'none'}
+
+        if not prefix:
+            empty_fig = go.Figure()
+            empty_fig.update_layout(title="PCA Plot - No data")
+            return empty_fig, {'display': 'none'}
+
+        # Load data
+        data = loader.load_all(prefix)
+
+        # Create PCA plot
+        pca_fig = create_pca_plot(
+            data['features'], data['feature_names'],
+            data['cluster_labels']
+        )
+
+        return pca_fig, {'width': '95%', 'margin': '20px auto', 'display': 'block'}
 
     @app.callback(
         [Output('waveform-plot', 'figure'),
