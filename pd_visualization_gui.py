@@ -1781,7 +1781,13 @@ def create_app(data_dir=DATA_DIR):
                                style={'backgroundColor': '#ff9800', 'color': 'white',
                                       'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
                                       'cursor': 'pointer', 'fontWeight': 'bold', 'marginTop': '15px'}),
-                    html.Div(id='recalc-variance-result', style={'marginTop': '10px'})
+                    html.Button("Recluster with Selected Features", id='recluster-btn',
+                               style={'backgroundColor': '#e91e63', 'color': 'white',
+                                      'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
+                                      'cursor': 'pointer', 'fontWeight': 'bold', 'marginTop': '15px',
+                                      'marginLeft': '10px'}),
+                    html.Div(id='recalc-variance-result', style={'marginTop': '10px'}),
+                    html.Div(id='recluster-result', style={'marginTop': '10px'})
                 ]),
             ], style={'padding': '15px', 'backgroundColor': '#fff', 'borderRadius': '4px',
                       'border': '1px solid #ddd', 'marginBottom': '15px'}),
@@ -1940,6 +1946,93 @@ def create_app(data_dir=DATA_DIR):
 
         except Exception as e:
             return html.Div(f"Error calculating variance: {str(e)}", style={'color': 'red'}), manual_selection
+
+    @app.callback(
+        Output('recluster-result', 'children'),
+        [Input('recluster-btn', 'n_clicks')],
+        [State('manual-feature-selection', 'value'),
+         State('dataset-dropdown', 'value'),
+         State('clustering-method-radio', 'value')],
+        prevent_initial_call=True
+    )
+    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method):
+        """Run clustering with the selected features."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not selected_features or len(selected_features) < 2:
+            return html.Div("Please select at least 2 features for clustering",
+                          style={'color': 'orange', 'padding': '10px'})
+
+        if not prefix:
+            return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
+
+        # Get dataset info
+        data_path = loader.get_dataset_path(prefix)
+        clean_prefix = loader.get_clean_prefix(prefix)
+
+        if not data_path or not clean_prefix:
+            return html.Div("Could not determine dataset path", style={'color': 'red', 'padding': '10px'})
+
+        # Build the clustering command
+        features_str = ','.join(selected_features)
+        method = clustering_method or 'dbscan'
+
+        import subprocess
+        import sys
+
+        try:
+            # Run clustering
+            cmd = [
+                sys.executable, 'cluster_pulses.py',
+                '--input-dir', data_path,
+                '--method', method,
+                '--features', features_str
+            ]
+
+            # Add input file for specific dataset
+            input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+            if os.path.exists(input_file):
+                cmd.extend(['--input', input_file])
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+            if result.returncode == 0:
+                # Also run aggregation and classification
+                agg_cmd = [
+                    sys.executable, 'aggregate_cluster_features.py',
+                    '--input-dir', data_path,
+                    '--method', method,
+                    '--file', clean_prefix
+                ]
+                subprocess.run(agg_cmd, capture_output=True, text=True, timeout=60)
+
+                class_cmd = [
+                    sys.executable, 'classify_pd_type.py',
+                    '--input-dir', data_path,
+                    '--method', method,
+                    '--file', clean_prefix
+                ]
+                subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
+
+                return html.Div([
+                    html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
+                    html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div(f"Features: {features_str}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div("Refresh the page or change dataset and back to see updated results.",
+                            style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
+                ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+            else:
+                error_msg = result.stderr[:500] if result.stderr else "Unknown error"
+                return html.Div([
+                    html.Div("✗ Clustering failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
+                    html.Pre(error_msg, style={'fontSize': '10px', 'color': '#666', 'whiteSpace': 'pre-wrap'})
+                ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
+
+        except subprocess.TimeoutExpired:
+            return html.Div("Clustering timed out (>120s)", style={'color': 'red', 'padding': '10px'})
+        except Exception as e:
+            return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
 
     @app.callback(
         [Output('all-datasets-analysis-display', 'children'),
