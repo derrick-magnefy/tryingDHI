@@ -160,29 +160,32 @@ def load_tu_delft_timing(txt_filepath):
                 continue
 
             # Format: "1, 16 Sep 2016 15:05:56.172 869 519 614"
+            # The digits after the time are additional decimal places
+            # So 56.172 869 519 614 = 56.172869519614 seconds
             parts = line.split(',', 1)
             if len(parts) >= 2:
                 try:
                     idx = int(parts[0])
-                    # Parse timestamp - extract seconds with nanoseconds
+                    # Parse timestamp - extract seconds with full precision
                     time_part = parts[1].strip()
                     # Find the time portion (HH:MM:SS.nnn...)
                     time_parts = time_part.split()
                     for i, p in enumerate(time_parts):
                         if ':' in p:  # Found time
                             time_str = p
-                            # Collect fractional parts
+                            # Collect fractional parts (additional decimal digits)
                             frac_parts = time_parts[i+1:] if i+1 < len(time_parts) else []
 
                             # Parse HH:MM:SS.fraction
-                            h, m, s = time_str.split(':')
-                            seconds = int(h) * 3600 + int(m) * 60 + float(s)
+                            h, m, s_with_frac = time_str.split(':')
 
-                            # Add nanosecond fractions if present
+                            # Append additional fractional digits
+                            # 56.172 + "869 519 614" -> "56.172869519614"
                             if frac_parts:
-                                frac_str = ''.join(frac_parts)
-                                frac_val = float('0.' + frac_str) if frac_str else 0
-                                seconds += frac_val / 1e9  # Assuming nanoseconds
+                                additional_digits = ''.join(frac_parts)
+                                s_with_frac = s_with_frac + additional_digits
+
+                            seconds = int(h) * 3600 + int(m) * 60 + float(s_with_frac)
 
                             timing.append((idx, seconds))
                             break
