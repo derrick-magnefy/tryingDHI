@@ -1489,74 +1489,86 @@ def create_app(data_dir=DATA_DIR):
             dcc.Graph(id='cluster-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
-        # Manual Cluster Definition Section
+        # Manual Cluster Definition Section - Full dedicated mode
         html.Div([
-            html.Details([
-                html.Summary("Manual Cluster Definition (Feature Discovery)", style={
-                    'cursor': 'pointer',
-                    'fontWeight': 'bold',
-                    'padding': '10px',
-                    'backgroundColor': '#e3f2fd',
-                    'borderRadius': '4px',
-                    'fontSize': '14px'
-                }),
-                html.Div([
-                    html.P([
-                        "Use the ",
-                        html.B("box select"),
-                        " or ",
-                        html.B("lasso select"),
-                        " tools in the plot above to select points, then assign them to clusters. ",
-                        "Once you've defined your clusters, click 'Analyze Features' to find which features best separate them."
-                    ], style={'marginBottom': '15px', 'color': '#555'}),
+            html.Div([
+                html.Button("Enter Manual Cluster Mode", id='enter-manual-mode-btn', n_clicks=0,
+                           style={'backgroundColor': '#17a2b8', 'color': 'white',
+                                  'padding': '10px 20px', 'border': 'none', 'borderRadius': '4px',
+                                  'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '14px'}),
+                html.Span(" Define your own clusters to discover which features best separate them",
+                         style={'marginLeft': '15px', 'color': '#666', 'fontStyle': 'italic'})
+            ], style={'marginBottom': '10px'}),
+        ], style={'width': '95%', 'margin': '10px auto'}),
 
-                    # Selection status
-                    html.Div([
-                        html.Span("Selected points: ", style={'fontWeight': 'bold'}),
+        # Manual Cluster Mode Container (hidden by default)
+        html.Div(id='manual-cluster-mode-container', children=[
+            html.Div([
+                html.H4("Manual Cluster Definition Mode", style={'color': '#17a2b8', 'marginBottom': '10px'}),
+                html.P([
+                    "1. Use ",
+                    html.B("box select"),
+                    " or ",
+                    html.B("lasso select"),
+                    " (toolbar icons) to select points on the plot below. ",
+                    "2. Click a cluster button to assign selected points. ",
+                    "3. Repeat until you've defined all clusters. ",
+                    "4. Click 'Analyze Features' to find the best separating features."
+                ], style={'color': '#555', 'marginBottom': '15px', 'fontSize': '13px'}),
+
+                # Controls row
+                html.Div([
+                    # Selection count
+                    html.Span([
+                        html.Span("Selected: ", style={'fontWeight': 'bold'}),
                         html.Span(id='manual-selection-count', children="0"),
-                    ], style={'marginBottom': '10px'}),
+                        html.Span(" points", style={'marginRight': '20px'})
+                    ]),
 
                     # Cluster assignment buttons
-                    html.Div([
-                        html.Button("Assign to Cluster 1", id='assign-cluster-1-btn', n_clicks=0,
-                                   style={'backgroundColor': '#1f77b4', 'color': 'white', 'marginRight': '10px',
-                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
-                        html.Button("Assign to Cluster 2", id='assign-cluster-2-btn', n_clicks=0,
-                                   style={'backgroundColor': '#ff7f0e', 'color': 'white', 'marginRight': '10px',
-                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
-                        html.Button("Assign to Cluster 3", id='assign-cluster-3-btn', n_clicks=0,
-                                   style={'backgroundColor': '#2ca02c', 'color': 'white', 'marginRight': '10px',
-                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
-                        html.Button("Assign to Cluster 4", id='assign-cluster-4-btn', n_clicks=0,
-                                   style={'backgroundColor': '#d62728', 'color': 'white', 'marginRight': '10px',
-                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
-                        html.Button("Clear All", id='clear-manual-clusters-btn', n_clicks=0,
-                                   style={'backgroundColor': '#6c757d', 'color': 'white', 'marginRight': '10px',
-                                          'padding': '8px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
-                    ], style={'marginBottom': '15px'}),
+                    html.Button("Cluster 1", id='assign-cluster-1-btn', n_clicks=0,
+                               style={'backgroundColor': '#1f77b4', 'color': 'white', 'marginRight': '5px',
+                                      'padding': '6px 12px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                    html.Button("Cluster 2", id='assign-cluster-2-btn', n_clicks=0,
+                               style={'backgroundColor': '#ff7f0e', 'color': 'white', 'marginRight': '5px',
+                                      'padding': '6px 12px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                    html.Button("Cluster 3", id='assign-cluster-3-btn', n_clicks=0,
+                               style={'backgroundColor': '#2ca02c', 'color': 'white', 'marginRight': '5px',
+                                      'padding': '6px 12px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                    html.Button("Cluster 4", id='assign-cluster-4-btn', n_clicks=0,
+                               style={'backgroundColor': '#d62728', 'color': 'white', 'marginRight': '15px',
+                                      'padding': '6px 12px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
 
-                    # Cluster assignment status
-                    html.Div(id='manual-cluster-status', style={'marginBottom': '15px', 'fontSize': '13px'}),
+                    html.Button("Clear All", id='clear-manual-clusters-btn', n_clicks=0,
+                               style={'backgroundColor': '#6c757d', 'color': 'white', 'marginRight': '15px',
+                                      'padding': '6px 12px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
 
-                    # Analyze button
-                    html.Div([
-                        html.Button("Analyze Features", id='analyze-manual-clusters-btn', n_clicks=0,
-                                   style={'backgroundColor': '#28a745', 'color': 'white',
-                                          'padding': '10px 25px', 'border': 'none', 'borderRadius': '4px',
-                                          'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '14px'}),
-                        html.Span(" Find which features best separate your manually-defined clusters",
-                                 style={'marginLeft': '10px', 'color': '#666', 'fontStyle': 'italic', 'fontSize': '12px'})
-                    ], style={'marginBottom': '15px'}),
+                    html.Button("Analyze Features", id='analyze-manual-clusters-btn', n_clicks=0,
+                               style={'backgroundColor': '#28a745', 'color': 'white', 'marginRight': '15px',
+                                      'padding': '6px 15px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer', 'fontWeight': 'bold'}),
 
-                    # Results display
-                    dcc.Loading(
-                        id='feature-analysis-loading',
-                        type='circle',
-                        children=html.Div(id='manual-cluster-analysis-result')
-                    ),
-                ], style={'padding': '15px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
-            ])
-        ], style={'width': '95%', 'margin': '10px auto'}),
+                    html.Button("Exit Manual Mode", id='exit-manual-mode-btn', n_clicks=0,
+                               style={'backgroundColor': '#dc3545', 'color': 'white',
+                                      'padding': '6px 12px', 'border': 'none', 'borderRadius': '4px', 'cursor': 'pointer'}),
+                ], style={'marginBottom': '10px'}),
+
+                # Status display
+                html.Div(id='manual-cluster-status', style={'marginBottom': '10px', 'fontSize': '13px'}),
+
+            ], style={'padding': '15px', 'backgroundColor': '#e8f4f8', 'borderRadius': '4px', 'marginBottom': '10px'}),
+
+            # Manual cluster plot
+            html.Div([
+                dcc.Graph(id='manual-cluster-plot', style={'height': '600px'})
+            ]),
+
+            # Analysis results
+            dcc.Loading(
+                id='feature-analysis-loading',
+                type='circle',
+                children=html.Div(id='manual-cluster-analysis-result', style={'marginTop': '15px'})
+            ),
+        ], style={'width': '95%', 'margin': '10px auto', 'display': 'none'}),
 
         # Cluster details toggle and display
         html.Div([
@@ -1755,6 +1767,7 @@ def create_app(data_dir=DATA_DIR):
         # Manual cluster definition storage
         dcc.Store(id='manual-cluster-assignments', data={}),  # {point_index: cluster_number}
         dcc.Store(id='current-selection-indices', data=[]),  # Currently selected point indices
+        dcc.Store(id='manual-mode-active', data=False),  # Whether manual mode is active
     ])
 
     # Callbacks for pulse features selection buttons
@@ -3595,14 +3608,143 @@ def create_app(data_dir=DATA_DIR):
         return html.Div(feature_items)
 
     # Manual Cluster Definition Callbacks
+
+    # Toggle manual cluster mode
+    @app.callback(
+        [Output('manual-cluster-mode-container', 'style'),
+         Output('manual-mode-active', 'data'),
+         Output('manual-cluster-assignments', 'data', allow_duplicate=True)],
+        [Input('enter-manual-mode-btn', 'n_clicks'),
+         Input('exit-manual-mode-btn', 'n_clicks')],
+        [State('manual-mode-active', 'data')],
+        prevent_initial_call=True
+    )
+    def toggle_manual_mode(enter_clicks, exit_clicks, is_active):
+        """Toggle manual cluster mode on/off."""
+        triggered = ctx.triggered_id
+
+        if triggered == 'enter-manual-mode-btn':
+            return {'width': '95%', 'margin': '10px auto', 'display': 'block'}, True, {}
+        elif triggered == 'exit-manual-mode-btn':
+            return {'width': '95%', 'margin': '10px auto', 'display': 'none'}, False, {}
+
+        raise PreventUpdate
+
+    # Create/update the manual cluster plot
+    @app.callback(
+        Output('manual-cluster-plot', 'figure'),
+        [Input('manual-mode-active', 'data'),
+         Input('manual-cluster-assignments', 'data'),
+         Input('dataset-dropdown', 'value')],
+        prevent_initial_call=True
+    )
+    def update_manual_cluster_plot(is_active, assignments, prefix):
+        """Update the manual cluster plot with current assignments."""
+        if not is_active or not prefix:
+            raise PreventUpdate
+
+        data = loader.load_all(prefix)
+        if data['features'] is None or data['feature_names'] is None:
+            fig = go.Figure()
+            fig.add_annotation(text="No data available", x=0.5, y=0.5, showarrow=False)
+            return fig
+
+        features = data['features']
+        feature_names = list(data['feature_names'])
+
+        # Get phase and amplitude
+        phase_idx = feature_names.index('phase_angle') if 'phase_angle' in feature_names else 0
+        amp_pos_idx = feature_names.index('peak_amplitude_positive') if 'peak_amplitude_positive' in feature_names else 1
+        amp_neg_idx = feature_names.index('peak_amplitude_negative') if 'peak_amplitude_negative' in feature_names else 2
+        polarity_idx = feature_names.index('polarity') if 'polarity' in feature_names else None
+
+        phases = features[:, phase_idx]
+        amp_pos = features[:, amp_pos_idx]
+        amp_neg = features[:, amp_neg_idx]
+
+        if polarity_idx is not None:
+            polarity = features[:, polarity_idx]
+            amplitudes = np.where(polarity > 0, amp_pos, amp_neg)
+        else:
+            amplitudes = np.where(amp_pos >= np.abs(amp_neg), amp_pos, amp_neg)
+
+        fig = go.Figure()
+
+        # Separate points by assignment
+        assignments = assignments or {}
+        cluster_colors = {1: '#1f77b4', 2: '#ff7f0e', 3: '#2ca02c', 4: '#d62728'}
+
+        # Find unassigned points
+        assigned_indices = set(int(k) for k in assignments.keys())
+        unassigned_mask = np.array([i not in assigned_indices for i in range(len(phases))])
+
+        # Plot unassigned points in gray
+        if np.any(unassigned_mask):
+            unassigned_indices = np.where(unassigned_mask)[0].tolist()
+            fig.add_trace(go.Scatter(
+                x=phases[unassigned_mask],
+                y=amplitudes[unassigned_mask],
+                mode='markers',
+                marker=dict(size=4, color='#cccccc', opacity=0.6),
+                name='Unassigned',
+                customdata=unassigned_indices,
+                hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra>Unassigned</extra>'
+            ))
+
+        # Plot assigned points by cluster
+        for cluster_num in sorted(set(assignments.values())):
+            cluster_indices = [int(k) for k, v in assignments.items() if v == cluster_num]
+            if cluster_indices:
+                mask = np.zeros(len(phases), dtype=bool)
+                for idx in cluster_indices:
+                    if 0 <= idx < len(phases):
+                        mask[idx] = True
+
+                if np.any(mask):
+                    cluster_idx_list = np.where(mask)[0].tolist()
+                    fig.add_trace(go.Scatter(
+                        x=phases[mask],
+                        y=amplitudes[mask],
+                        mode='markers',
+                        marker=dict(size=5, color=cluster_colors.get(cluster_num, '#000'), opacity=0.8),
+                        name=f'Cluster {cluster_num}',
+                        customdata=cluster_idx_list,
+                        hovertemplate=f'Phase: %{{x:.1f}}°<br>Amplitude: %{{y:.4f}} V<br>Index: %{{customdata}}<extra>Cluster {cluster_num}</extra>'
+                    ))
+
+        # Add reference lines
+        for phase in [90, 180, 270]:
+            fig.add_vline(x=phase, line_dash="dash", line_color="gray", opacity=0.3)
+        fig.add_hline(y=0, line_color="gray", opacity=0.5)
+
+        fig.update_layout(
+            title="Manual Cluster Definition - Select points and assign to clusters",
+            xaxis_title="Phase (degrees)",
+            yaxis_title="Amplitude (V)",
+            xaxis=dict(range=[0, 360]),
+            showlegend=True,
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.02),
+            margin=dict(r=150),
+            dragmode='lasso'  # Default to lasso for easier selection
+        )
+
+        # Add modebar buttons for selection
+        fig.update_layout(
+            modebar_add=['select2d', 'lasso2d'],
+            modebar_remove=['autoScale2d']
+        )
+
+        return fig
+
+    # Capture selection from manual cluster plot
     @app.callback(
         [Output('current-selection-indices', 'data'),
          Output('manual-selection-count', 'children')],
-        [Input('cluster-prpd', 'selectedData')],
+        [Input('manual-cluster-plot', 'selectedData')],
         prevent_initial_call=True
     )
     def capture_selection(selected_data):
-        """Capture selected points from the PRPD plot."""
+        """Capture selected points from the manual cluster plot."""
         if not selected_data or 'points' not in selected_data:
             return [], "0"
 
@@ -3632,10 +3774,10 @@ def create_app(data_dir=DATA_DIR):
         assignments = assignments or {}
 
         if triggered == 'clear-manual-clusters-btn':
-            return {}, html.Div("All assignments cleared", style={'color': '#6c757d'})
+            return {}, html.Div("All assignments cleared. Start selecting points!", style={'color': '#17a2b8'})
 
         if not current_selection:
-            return assignments, html.Div("No points selected. Use box or lasso select on the plot above.",
+            return assignments, html.Div("No points selected. Use lasso or box select on the plot.",
                                         style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '5px', 'borderRadius': '3px'})
 
         # Determine which cluster was clicked
@@ -3665,15 +3807,15 @@ def create_app(data_dir=DATA_DIR):
                 status_items.append(
                     html.Span([
                         html.Span(f"Cluster {c}: ", style={'fontWeight': 'bold', 'color': colors.get(c, '#000')}),
-                        html.Span(f"{cluster_counts[c]} points", style={'marginRight': '15px'})
+                        html.Span(f"{cluster_counts[c]} pts  ", style={'marginRight': '10px'})
                     ])
                 )
             status = html.Div([
-                html.Span(f"Total assigned: {sum(cluster_counts.values())} points | ", style={'fontWeight': 'bold'}),
+                html.Span(f"Assigned: {sum(cluster_counts.values())} pts | ", style={'fontWeight': 'bold'}),
                 *status_items
             ])
         else:
-            status = html.Div("No points assigned yet", style={'color': '#666'})
+            status = html.Div("No points assigned yet. Select points and click a cluster button.", style={'color': '#666'})
 
         return assignments, status
 
