@@ -45,7 +45,11 @@ from polarity_methods import (
     calculate_polarity, compare_methods, POLARITY_METHODS,
     DEFAULT_POLARITY_METHOD, get_method_description
 )
-from classify_pd_type import PDTypeClassifier, load_cluster_features
+from classify_pd_type import (
+    PDTypeClassifier, load_cluster_features,
+    NOISE_THRESHOLDS, PHASE_CORRELATION_THRESHOLDS,
+    SYMMETRY_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
+)
 
 DATA_DIR = "Rugged Data Files"
 
@@ -1316,36 +1320,129 @@ def create_app(data_dir=DATA_DIR):
                 reasoning_list.append(html.Li(reason, style={'marginBottom': '3px', 'fontSize': '12px'}))
             content.append(html.Ul(reasoning_list, style={'marginLeft': '20px', 'marginTop': '0'}))
 
-            # Key cluster statistics
-            content.append(html.H5("Key Statistics:", style={'marginTop': '15px', 'marginBottom': '10px'}))
-            stats_items = []
-            key_stats = [
-                ('cross_correlation', 'Cross Correlation'),
-                ('discharge_asymmetry', 'Discharge Asymmetry'),
-                ('phase_of_max_activity', 'Phase of Max Activity'),
-                ('phase_spread', 'Phase Spread'),
-                ('weibull_beta', 'Weibull Beta'),
-                ('coefficient_of_variation', 'Coeff. of Variation'),
-            ]
-            for key, label in key_stats:
-                if key in cluster_feats:
-                    val = cluster_feats[key]
-                    if 'phase' in key.lower():
-                        stats_items.append(html.Li(f"{label}: {val:.1f} deg", style={'fontSize': '12px'}))
-                    else:
-                        stats_items.append(html.Li(f"{label}: {val:.4f}", style={'fontSize': '12px'}))
-            content.append(html.Ul(stats_items, style={'marginLeft': '20px', 'marginTop': '0'}))
+            # Feature Values vs Thresholds Table
+            content.append(html.H5("Feature Values vs Decision Tree Thresholds:",
+                                   style={'marginTop': '15px', 'marginBottom': '10px'}))
 
-            # Quadrant distribution
-            content.append(html.H5("Quadrant Distribution:", style={'marginTop': '15px', 'marginBottom': '10px'}))
+            # Build table rows with feature values and thresholds
+            table_header = html.Tr([
+                html.Th("Feature", style={'padding': '6px', 'borderBottom': '2px solid #333', 'textAlign': 'left'}),
+                html.Th("Value", style={'padding': '6px', 'borderBottom': '2px solid #333', 'textAlign': 'right'}),
+                html.Th("Threshold", style={'padding': '6px', 'borderBottom': '2px solid #333', 'textAlign': 'center'}),
+                html.Th("Status", style={'padding': '6px', 'borderBottom': '2px solid #333', 'textAlign': 'center'}),
+            ])
+
+            table_rows = [table_header]
+
+            # Helper to create a row
+            def make_row(feature_name, value, threshold_str, passes, unit=''):
+                status_color = '#28a745' if passes else '#dc3545'
+                status_text = 'PASS' if passes else 'FAIL'
+                val_str = f"{value:.4f}" if isinstance(value, float) and abs(value) < 100 else f"{value:.1f}"
+                return html.Tr([
+                    html.Td(feature_name, style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd'}),
+                    html.Td(f"{val_str}{unit}", style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
+                                                       'fontFamily': 'monospace', 'borderBottom': '1px solid #ddd'}),
+                    html.Td(threshold_str, style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'center',
+                                                  'fontFamily': 'monospace', 'borderBottom': '1px solid #ddd'}),
+                    html.Td(status_text, style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'center',
+                                                'color': status_color, 'fontWeight': 'bold', 'borderBottom': '1px solid #ddd'}),
+                ])
+
+            # Section header helper
+            def section_header(text):
+                return html.Tr([
+                    html.Td(text, colSpan=4, style={'padding': '8px 4px 4px 4px', 'fontSize': '12px',
+                                                    'fontWeight': 'bold', 'backgroundColor': '#e9ecef',
+                                                    'borderBottom': '1px solid #ccc'})
+                ])
+
+            # Branch 1: Noise Detection
+            table_rows.append(section_header("Branch 1: Noise Detection"))
+
+            cv = cluster_feats.get('coefficient_of_variation', 0)
+            cv_thresh = NOISE_THRESHOLDS['max_coefficient_of_variation']
+            table_rows.append(make_row('Coefficient of Variation', cv, f'< {cv_thresh}', cv <= cv_thresh))
+
+            # Branch 2: Phase Correlation
+            table_rows.append(section_header("Branch 2: Phase Correlation"))
+
+            cross_corr = cluster_feats.get('cross_correlation', 0)
+            cc_thresh = PHASE_CORRELATION_THRESHOLDS['min_cross_correlation_symmetric']
+            table_rows.append(make_row('Cross Correlation', cross_corr, f'>= {cc_thresh} (symmetric)', cross_corr >= cc_thresh))
+
+            asymmetry = cluster_feats.get('discharge_asymmetry', 0)
+            asym_thresh = PHASE_CORRELATION_THRESHOLDS['max_asymmetry_symmetric']
+            table_rows.append(make_row('Discharge Asymmetry', abs(asymmetry), f'< {asym_thresh} (symmetric)', abs(asymmetry) < asym_thresh))
+
+            phase_spread = cluster_feats.get('phase_spread', 0)
+            ps_thresh = PHASE_CORRELATION_THRESHOLDS['max_phase_spread_corona']
+            table_rows.append(make_row('Phase Spread', phase_spread, f'< {ps_thresh} (corona)', phase_spread < ps_thresh, ' deg'))
+
+            # Branch 3: Symmetry & Quadrants
+            table_rows.append(section_header("Branch 3: Quadrant Distribution"))
+
             q1 = cluster_feats.get('quadrant_1_percentage', 0)
             q2 = cluster_feats.get('quadrant_2_percentage', 0)
             q3 = cluster_feats.get('quadrant_3_percentage', 0)
             q4 = cluster_feats.get('quadrant_4_percentage', 0)
-            content.append(html.Div([
-                html.Span(f"Q1: {q1:.1f}% | Q2: {q2:.1f}% | Q3: {q3:.1f}% | Q4: {q4:.1f}%",
-                         style={'fontFamily': 'monospace', 'fontSize': '12px'})
-            ]))
+            positive_half = q1 + q2
+            negative_half = q3 + q4
+
+            single_half_thresh = QUADRANT_THRESHOLDS['single_halfcycle_threshold']
+            table_rows.append(make_row('Q1 (0-90 deg)', q1, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
+                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q1 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
+            table_rows.append(make_row('Q2 (90-180 deg)', q2, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
+                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q2 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
+            table_rows.append(make_row('Q3 (180-270 deg)', q3, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
+                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q3 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
+            table_rows.append(make_row('Q4 (270-360 deg)', q4, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
+                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q4 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
+            table_rows.append(make_row('Positive Half (Q1+Q2)', positive_half, f'< {single_half_thresh}% (not corona)', positive_half < single_half_thresh, '%'))
+            table_rows.append(make_row('Negative Half (Q3+Q4)', negative_half, f'< {single_half_thresh}% (not corona)', negative_half < single_half_thresh, '%'))
+
+            # Branch 4: Phase Location
+            table_rows.append(section_header("Branch 4: Phase Location"))
+
+            phase_max = cluster_feats.get('phase_of_max_activity', 0)
+            surface_tol = SYMMETRY_THRESHOLDS['surface_phase_tolerance']
+            near_zero = phase_max < surface_tol or abs(phase_max - 180) < surface_tol or phase_max > (360 - surface_tol)
+            table_rows.append(make_row('Phase of Max Activity', phase_max, f'Near 0/180/360 deg +/-{surface_tol} (surface)', near_zero, ' deg'))
+
+            inception = cluster_feats.get('inception_phase', 0)
+            extinction = cluster_feats.get('extinction_phase', 0)
+            table_rows.append(make_row('Inception Phase', inception, 'Info only', True, ' deg'))
+            table_rows.append(make_row('Extinction Phase', extinction, 'Info only', True, ' deg'))
+
+            # Branch 5: Amplitude Characteristics
+            table_rows.append(section_header("Branch 5: Amplitude Characteristics"))
+
+            weibull_beta = cluster_feats.get('weibull_beta', 0)
+            wb_min = AMPLITUDE_THRESHOLDS['internal_weibull_beta_min']
+            wb_max = AMPLITUDE_THRESHOLDS['internal_weibull_beta_max']
+            table_rows.append(make_row('Weibull Beta', weibull_beta, f'{wb_min}-{wb_max} (internal)', wb_min <= weibull_beta <= wb_max))
+
+            mean_amp_pos = cluster_feats.get('mean_amplitude_positive', 0)
+            mean_amp_neg = cluster_feats.get('mean_amplitude_negative', 0)
+            max_amp_pos = cluster_feats.get('max_amplitude_positive', 0)
+            max_amp_neg = cluster_feats.get('max_amplitude_negative', 0)
+            mean_amp = max(mean_amp_pos, abs(mean_amp_neg)) if max(mean_amp_pos, abs(mean_amp_neg)) > 0 else 1e-10
+            max_amp = max(max_amp_pos, abs(max_amp_neg))
+            amp_ratio = max_amp / mean_amp if mean_amp > 0 else 0
+            ar_thresh = AMPLITUDE_THRESHOLDS['corona_amplitude_ratio_threshold']
+            table_rows.append(make_row('Amplitude Ratio (max/mean)', amp_ratio, f'> {ar_thresh} (corona)', amp_ratio > ar_thresh))
+
+            # Create the table
+            feature_table = html.Table(
+                table_rows,
+                style={
+                    'width': '100%',
+                    'borderCollapse': 'collapse',
+                    'fontSize': '11px',
+                    'backgroundColor': '#fff'
+                }
+            )
+            content.append(html.Div(feature_table, style={'maxHeight': '300px', 'overflowY': 'auto', 'border': '1px solid #ddd', 'borderRadius': '4px'}))
 
             # Warnings
             if result['warnings']:
