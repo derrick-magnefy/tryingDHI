@@ -162,9 +162,23 @@ class PDTypeClassifier:
         - Amplitude ratios
     """
 
-    def __init__(self, verbose=True):
+    def __init__(self, verbose=True, selected_features=None):
         self.verbose = verbose
         self.classification_log = []
+        # If selected_features is None, use all features
+        self.selected_features = selected_features
+
+    def _is_feature_enabled(self, feature_name):
+        """Check if a feature should be used in classification."""
+        if self.selected_features is None:
+            return True
+        return feature_name in self.selected_features
+
+    def _get_feature(self, cluster_features, feature_name, default=0):
+        """Get a feature value if enabled, otherwise return default."""
+        if not self._is_feature_enabled(feature_name):
+            return default
+        return cluster_features.get(feature_name, default)
 
     def classify(self, cluster_features, cluster_label, pulse_features=None):
         """
@@ -187,9 +201,9 @@ class PDTypeClassifier:
             'warnings': [],
         }
 
-        # Extract key features
-        n_pulses = cluster_features.get('pulses_per_positive_halfcycle', 0) + \
-                   cluster_features.get('pulses_per_negative_halfcycle', 0)
+        # Extract key features using helper to respect feature selection
+        n_pulses = self._get_feature(cluster_features, 'pulses_per_positive_halfcycle', 0) + \
+                   self._get_feature(cluster_features, 'pulses_per_negative_halfcycle', 0)
 
         # =====================================================================
         # BRANCH 1: NOISE DETECTION
@@ -215,7 +229,7 @@ class PDTypeClassifier:
             return result
 
         # Check coefficient of variation
-        cv = cluster_features.get('coefficient_of_variation', 0)
+        cv = self._get_feature(cluster_features, 'coefficient_of_variation', 0)
         if cv > NOISE_THRESHOLDS['max_coefficient_of_variation']:
             result['warnings'].append(
                 f"High amplitude variability (CV={cv:.2f}) - possible noise contamination"
@@ -228,9 +242,9 @@ class PDTypeClassifier:
         # =====================================================================
         result['branch_path'].append('Branch 2: Phase Correlation')
 
-        cross_corr = cluster_features.get('cross_correlation', 0)
-        asymmetry = cluster_features.get('discharge_asymmetry', 0)
-        phase_spread = cluster_features.get('phase_spread', 0)
+        cross_corr = self._get_feature(cluster_features, 'cross_correlation', 0)
+        asymmetry = self._get_feature(cluster_features, 'discharge_asymmetry', 0)
+        phase_spread = self._get_feature(cluster_features, 'phase_spread', 0)
 
         is_symmetric = (
             cross_corr > PHASE_CORRELATION_THRESHOLDS['min_cross_correlation_symmetric'] and
@@ -252,10 +266,10 @@ class PDTypeClassifier:
         # =====================================================================
         result['branch_path'].append('Branch 3: Quadrant Distribution')
 
-        q1 = cluster_features.get('quadrant_1_percentage', 0)
-        q2 = cluster_features.get('quadrant_2_percentage', 0)
-        q3 = cluster_features.get('quadrant_3_percentage', 0)
-        q4 = cluster_features.get('quadrant_4_percentage', 0)
+        q1 = self._get_feature(cluster_features, 'quadrant_1_percentage', 0)
+        q2 = self._get_feature(cluster_features, 'quadrant_2_percentage', 0)
+        q3 = self._get_feature(cluster_features, 'quadrant_3_percentage', 0)
+        q4 = self._get_feature(cluster_features, 'quadrant_4_percentage', 0)
 
         positive_half = q1 + q2  # 0-180deg
         negative_half = q3 + q4  # 180-360deg
@@ -272,9 +286,9 @@ class PDTypeClassifier:
         # =====================================================================
         result['branch_path'].append('Branch 4: Phase Location')
 
-        phase_max = cluster_features.get('phase_of_max_activity', 0)
-        inception = cluster_features.get('inception_phase', 0)
-        extinction = cluster_features.get('extinction_phase', 0)
+        phase_max = self._get_feature(cluster_features, 'phase_of_max_activity', 0)
+        inception = self._get_feature(cluster_features, 'inception_phase', 0)
+        extinction = self._get_feature(cluster_features, 'extinction_phase', 0)
 
         # Check if near zero-crossings (0deg, 180deg, 360deg)
         near_zero_crossing = (
@@ -297,11 +311,11 @@ class PDTypeClassifier:
         # =====================================================================
         result['branch_path'].append('Branch 5: Amplitude Analysis')
 
-        weibull_beta = cluster_features.get('weibull_beta', 0)
-        mean_amp_pos = cluster_features.get('mean_amplitude_positive', 0)
-        mean_amp_neg = cluster_features.get('mean_amplitude_negative', 0)
-        max_amp_pos = cluster_features.get('max_amplitude_positive', 0)
-        max_amp_neg = cluster_features.get('max_amplitude_negative', 0)
+        weibull_beta = self._get_feature(cluster_features, 'weibull_beta', 0)
+        mean_amp_pos = self._get_feature(cluster_features, 'mean_amplitude_positive', 0)
+        mean_amp_neg = self._get_feature(cluster_features, 'mean_amplitude_negative', 0)
+        max_amp_pos = self._get_feature(cluster_features, 'max_amplitude_positive', 0)
+        max_amp_neg = self._get_feature(cluster_features, 'max_amplitude_negative', 0)
 
         # Amplitude ratio (max/mean) for variability assessment
         mean_amp = max(mean_amp_pos, mean_amp_neg) if max(mean_amp_pos, mean_amp_neg) > 0 else 1e-10
@@ -633,9 +647,15 @@ def load_pulse_features(filepath):
     return np.array(features)
 
 
-def process_dataset(prefix, data_dir, method='dbscan'):
+def process_dataset(prefix, data_dir, method='dbscan', selected_features=None):
     """
     Process a dataset and classify all clusters.
+
+    Args:
+        prefix: Dataset file prefix
+        data_dir: Directory containing data files
+        method: Clustering method used
+        selected_features: List of cluster feature names to use (None = all)
 
     Returns:
         list: Classification results for each cluster
@@ -658,8 +678,14 @@ def process_dataset(prefix, data_dir, method='dbscan'):
     cluster_labels = load_cluster_labels(cluster_labels_file)
     pulse_features = load_pulse_features(pulse_features_file) if os.path.exists(pulse_features_file) else None
 
+    # Print feature selection info
+    if selected_features:
+        print(f"  Using {len(selected_features)} selected cluster features")
+    else:
+        print("  Using all cluster features")
+
     # Classify each cluster
-    classifier = PDTypeClassifier(verbose=True)
+    classifier = PDTypeClassifier(verbose=True, selected_features=selected_features)
     results = []
 
     for label, features in sorted(cluster_features.items()):
@@ -781,13 +807,28 @@ def main():
         default=None,
         help='Process specific file prefix'
     )
+    parser.add_argument(
+        '--cluster-features',
+        type=str,
+        default=None,
+        help='Comma-separated list of cluster features to use for classification (default: all features)'
+    )
     args = parser.parse_args()
+
+    # Parse cluster features list if provided
+    selected_features = None
+    if args.cluster_features:
+        selected_features = [f.strip() for f in args.cluster_features.split(',') if f.strip()]
 
     print("=" * 70)
     print("PD TYPE CLASSIFICATION")
     print("=" * 70)
     print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Clustering method: {args.method}")
+    if selected_features:
+        print(f"Cluster features: {len(selected_features)} selected")
+    else:
+        print("Cluster features: all")
     print("=" * 70)
 
     # Print decision tree structure
@@ -833,7 +874,7 @@ def main():
     all_results = []
     for prefix in sorted(prefixes):
         try:
-            results = process_dataset(prefix, args.input_dir, args.method)
+            results = process_dataset(prefix, args.input_dir, args.method, selected_features)
             all_results.append({'prefix': prefix, 'results': results})
 
             # Save individual results

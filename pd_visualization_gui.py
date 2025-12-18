@@ -914,6 +914,14 @@ def create_app(data_dir=DATA_DIR):
             else:
                 cmd.extend(['--n-clusters', str(kmeans_n_clusters or 5)])
 
+            # Add selected pulse features for clustering
+            if pulse_features:
+                cmd.extend(['--pulse-features', ','.join(pulse_features)])
+
+            # Add selected cluster features for classification
+            if cluster_features:
+                cmd.extend(['--cluster-features', ','.join(cluster_features)])
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -923,9 +931,11 @@ def create_app(data_dir=DATA_DIR):
 
             if result.returncode == 0:
                 # Increment trigger to force data reload
+                feature_info = f"Pulse features: {len(pulse_features)}, Cluster features: {len(cluster_features)}"
                 return html.Div([
                     f"Re-analysis complete! ",
                     f"Polarity: {polarity_method}, Clustering: {clustering_method.upper()}. ",
+                    f"{feature_info}. ",
                     "Data has been updated - select 'Stored' to see new results."
                 ], style={'color': '#155724', 'backgroundColor': '#d4edda', 'padding': '10px', 'borderRadius': '4px'}), \
                     {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger + 1
