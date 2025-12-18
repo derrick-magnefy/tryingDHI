@@ -98,6 +98,7 @@ DEFAULT_CLUSTERING_FEATURES = PULSE_FEATURES.copy()
 CLUSTER_FEATURES = [
     'pulses_per_positive_halfcycle',
     'pulses_per_negative_halfcycle',
+    'pulses_per_cycle',
     'cross_correlation',
     'discharge_asymmetry',
     'skewness_Hn_positive',

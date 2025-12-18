@@ -33,6 +33,7 @@ DATA_DIR = "Rugged Data Files"
 CLUSTER_FEATURE_NAMES = [
     'pulses_per_positive_halfcycle',
     'pulses_per_negative_halfcycle',
+    'pulses_per_cycle',
     'cross_correlation',
     'discharge_asymmetry',
     'skewness_Hn_positive',
@@ -173,6 +174,7 @@ def compute_cluster_features(phases, amplitudes, trigger_times=None, ac_frequenc
     # === PULSE COUNT FEATURES ===
     features['pulses_per_positive_halfcycle'] = len(positive_phases)
     features['pulses_per_negative_halfcycle'] = len(negative_phases)
+    features['pulses_per_cycle'] = len(positive_phases) + len(negative_phases)
 
     # === PHASE DISTRIBUTION (Hn) - Histogram of pulse counts ===
     n_bins = 36  # 10-degree bins
