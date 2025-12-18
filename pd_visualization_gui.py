@@ -890,42 +890,44 @@ def create_app(data_dir=DATA_DIR):
             dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
-        # Third row: Histogram (left) and Waveform+Features (right)
+        # Third row: Waveform (left) and Features panel (right)
         html.Div([
-            # Histogram (Phase Distribution)
+            # Waveform viewer
             html.Div([
-                dcc.Graph(id='histogram', style={'height': '525px'})
+                dcc.Graph(id='waveform-plot', style={'height': '450px'})
             ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
 
-            # Waveform viewer and features
+            # Feature display area
             html.Div([
-                dcc.Graph(id='waveform-plot', style={'height': '400px'}),
-                # Feature display area
                 html.Div([
-                    html.Div([
-                        html.Label("Show Features:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
-                        dcc.Checklist(
-                            id='feature-toggles',
-                            options=[],  # Will be populated by callback
-                            value=DEFAULT_VISIBLE_FEATURES,
-                            inline=True,
-                            style={'fontSize': '11px'},
-                            inputStyle={'marginRight': '3px'},
-                            labelStyle={'marginRight': '12px'}
-                        ),
-                    ], style={'marginBottom': '8px', 'borderBottom': '1px solid #ddd', 'paddingBottom': '5px'}),
-                    html.Div(id='feature-display', style={
-                        'fontSize': '12px',
-                        'fontFamily': 'monospace',
-                        'backgroundColor': '#f8f8f8',
-                        'padding': '8px',
-                        'borderRadius': '4px',
-                        'maxHeight': '120px',
-                        'overflowY': 'auto'
-                    })
-                ], style={'padding': '5px', 'backgroundColor': '#fff', 'border': '1px solid #ddd', 'borderRadius': '4px'})
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+                    html.Label("Show Features:", style={'fontWeight': 'bold', 'marginBottom': '10px', 'display': 'block'}),
+                    dcc.Checklist(
+                        id='feature-toggles',
+                        options=[],  # Will be populated by callback
+                        value=DEFAULT_VISIBLE_FEATURES,
+                        inline=True,
+                        style={'fontSize': '11px'},
+                        inputStyle={'marginRight': '3px'},
+                        labelStyle={'marginRight': '12px'}
+                    ),
+                ], style={'marginBottom': '10px', 'borderBottom': '1px solid #ddd', 'paddingBottom': '10px'}),
+                html.Div(id='feature-display', style={
+                    'fontSize': '12px',
+                    'fontFamily': 'monospace',
+                    'backgroundColor': '#f8f8f8',
+                    'padding': '10px',
+                    'borderRadius': '4px',
+                    'maxHeight': '350px',
+                    'overflowY': 'auto'
+                })
+            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top',
+                      'padding': '10px', 'backgroundColor': '#fff', 'border': '1px solid #ddd', 'borderRadius': '4px'})
         ], style={'width': '95%', 'margin': 'auto'}),
+
+        # Fourth row: Phase Distribution Histogram
+        html.Div([
+            dcc.Graph(id='histogram', style={'height': '450px'})
+        ], style={'width': '95%', 'margin': '20px auto'}),
 
         # PCA Plot (shown only for K-means)
         html.Div([
