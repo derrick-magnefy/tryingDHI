@@ -659,9 +659,25 @@ def create_waveform_plot(waveforms, idx, features, feature_names, cluster_labels
     """Create waveform plot for selected point."""
     fig = go.Figure()
 
-    if waveforms is None or idx is None or idx >= len(waveforms):
+    # Check if we can display a waveform
+    can_display = (
+        waveforms is not None and
+        len(waveforms) > 0 and
+        idx is not None and
+        0 <= idx < len(waveforms)
+    )
+
+    if not can_display:
+        msg = "Click on a point in the PRPD plot to view waveform"
+        if waveforms is None:
+            msg = "Waveforms not loaded for this dataset"
+        elif len(waveforms) == 0:
+            msg = "No waveforms available"
+        elif idx is not None and idx >= len(waveforms):
+            msg = f"Waveform index {idx} out of range (max: {len(waveforms)-1})"
+
         fig.add_annotation(
-            text="Click on a point in the PRPD plot to view waveform",
+            text=msg,
             xref="paper", yref="paper",
             x=0.5, y=0.5, showarrow=False,
             font=dict(size=14)
@@ -2437,13 +2453,27 @@ def create_app(data_dir=DATA_DIR):
                 idx = int(point['pointIndex'])
 
         if prefix and idx is not None:
-            # Reload data for the waveform
-            data = loader.load_all(prefix)
-            return create_waveform_plot(
-                data['waveforms'], idx,
-                data['features'], data['feature_names'],
-                data['cluster_labels'], data['pd_types']
-            ), idx
+            try:
+                # Reload data for the waveform
+                data = loader.load_all(prefix)
+                waveforms = data['waveforms']
+
+                # Debug: check waveform data
+                if waveforms is None:
+                    print(f"DEBUG: Waveforms is None for {prefix}")
+                elif idx >= len(waveforms):
+                    print(f"DEBUG: Index {idx} >= waveform count {len(waveforms)}")
+
+                return create_waveform_plot(
+                    waveforms, idx,
+                    data['features'], data['feature_names'],
+                    data['cluster_labels'], data['pd_types']
+                ), idx
+            except Exception as e:
+                print(f"ERROR in update_waveform: {e}")
+                import traceback
+                traceback.print_exc()
+                return create_waveform_plot(None, None, None, None, None, None), None
         elif prefix:
             # No point clicked yet, show placeholder
             data = loader.load_all(prefix)
