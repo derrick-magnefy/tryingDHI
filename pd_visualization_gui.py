@@ -1751,7 +1751,7 @@ def create_app(data_dir=DATA_DIR):
         Output('pulse-features-checklist', 'value', allow_duplicate=True),
         [Input('dataset-dropdown', 'value')],
         [State('pulse-features-per-dataset', 'data')],
-        prevent_initial_call=True
+        prevent_initial_call='initial_duplicate'
     )
     def load_pulse_features_for_dataset(dataset, stored_data):
         if not dataset:
@@ -1759,15 +1759,15 @@ def create_app(data_dir=DATA_DIR):
         stored_data = stored_data or {}
         if dataset in stored_data:
             return stored_data[dataset]
-        # Return defaults if no saved selection for this dataset
-        return DEFAULT_CLUSTERING_FEATURES
+        # Don't change if no saved selection - keeps current/default selection
+        raise PreventUpdate
 
     # Load cluster features when dataset changes
     @app.callback(
         Output('cluster-features-checklist', 'value', allow_duplicate=True),
         [Input('dataset-dropdown', 'value')],
         [State('cluster-features-per-dataset', 'data')],
-        prevent_initial_call=True
+        prevent_initial_call='initial_duplicate'
     )
     def load_cluster_features_for_dataset(dataset, stored_data):
         if not dataset:
@@ -1775,8 +1775,8 @@ def create_app(data_dir=DATA_DIR):
         stored_data = stored_data or {}
         if dataset in stored_data:
             return stored_data[dataset]
-        # Return defaults if no saved selection for this dataset
-        return DEFAULT_CLASSIFICATION_FEATURES
+        # Don't change if no saved selection - keeps current/default selection
+        raise PreventUpdate
 
     @app.callback(
         [Output('recommended-features-display', 'children'),
