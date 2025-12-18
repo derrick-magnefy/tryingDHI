@@ -1368,9 +1368,7 @@ def create_app(data_dir=DATA_DIR):
                                     inline=True,
                                     style={'fontSize': '12px', 'maxHeight': '150px', 'overflowY': 'auto'},
                                     inputStyle={'marginRight': '5px'},
-                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'},
-                                    persistence=True,
-                                    persistence_type='local'
+                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
                                 ),
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ], style={'marginBottom': '15px'}),
@@ -1410,9 +1408,7 @@ def create_app(data_dir=DATA_DIR):
                                     inline=True,
                                     style={'fontSize': '12px', 'maxHeight': '150px', 'overflowY': 'auto'},
                                     inputStyle={'marginRight': '5px'},
-                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'},
-                                    persistence=True,
-                                    persistence_type='local'
+                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
                                 ),
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ]),
@@ -1659,6 +1655,9 @@ def create_app(data_dir=DATA_DIR):
         dcc.Store(id='reanalysis-trigger', data=0),
         dcc.Store(id='recommended-features-store', data=[]),
         dcc.Store(id='feature-analysis-data-store', data={}),  # Stores PCA data for recalculation
+        # Per-dataset feature selections (persisted in localStorage)
+        dcc.Store(id='pulse-features-per-dataset', storage_type='local', data={}),
+        dcc.Store(id='cluster-features-per-dataset', storage_type='local', data={}),
     ])
 
     # Callbacks for pulse features selection buttons
@@ -1698,6 +1697,68 @@ def create_app(data_dir=DATA_DIR):
         elif triggered == 'cluster-features-reset':
             return DEFAULT_CLASSIFICATION_FEATURES
         return current_value
+
+    # Save pulse features to per-dataset store when they change
+    @app.callback(
+        Output('pulse-features-per-dataset', 'data'),
+        [Input('pulse-features-checklist', 'value')],
+        [State('dataset-dropdown', 'value'),
+         State('pulse-features-per-dataset', 'data')],
+        prevent_initial_call=True
+    )
+    def save_pulse_features_per_dataset(features, dataset, stored_data):
+        if not dataset or features is None:
+            raise PreventUpdate
+        stored_data = stored_data or {}
+        stored_data[dataset] = features
+        return stored_data
+
+    # Save cluster features to per-dataset store when they change
+    @app.callback(
+        Output('cluster-features-per-dataset', 'data'),
+        [Input('cluster-features-checklist', 'value')],
+        [State('dataset-dropdown', 'value'),
+         State('cluster-features-per-dataset', 'data')],
+        prevent_initial_call=True
+    )
+    def save_cluster_features_per_dataset(features, dataset, stored_data):
+        if not dataset or features is None:
+            raise PreventUpdate
+        stored_data = stored_data or {}
+        stored_data[dataset] = features
+        return stored_data
+
+    # Load pulse features when dataset changes
+    @app.callback(
+        Output('pulse-features-checklist', 'value', allow_duplicate=True),
+        [Input('dataset-dropdown', 'value')],
+        [State('pulse-features-per-dataset', 'data')],
+        prevent_initial_call=True
+    )
+    def load_pulse_features_for_dataset(dataset, stored_data):
+        if not dataset:
+            raise PreventUpdate
+        stored_data = stored_data or {}
+        if dataset in stored_data:
+            return stored_data[dataset]
+        # Return defaults if no saved selection for this dataset
+        return DEFAULT_CLUSTERING_FEATURES
+
+    # Load cluster features when dataset changes
+    @app.callback(
+        Output('cluster-features-checklist', 'value', allow_duplicate=True),
+        [Input('dataset-dropdown', 'value')],
+        [State('cluster-features-per-dataset', 'data')],
+        prevent_initial_call=True
+    )
+    def load_cluster_features_for_dataset(dataset, stored_data):
+        if not dataset:
+            raise PreventUpdate
+        stored_data = stored_data or {}
+        if dataset in stored_data:
+            return stored_data[dataset]
+        # Return defaults if no saved selection for this dataset
+        return DEFAULT_CLASSIFICATION_FEATURES
 
     @app.callback(
         [Output('recommended-features-display', 'children'),
