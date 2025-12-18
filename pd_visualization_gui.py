@@ -771,6 +771,118 @@ def create_correlation_matrix(features, feature_names, selected_features=None):
     return fig
 
 
+def create_pca_loadings(features, feature_names, selected_features=None, n_components=10):
+    """Create PCA loadings heatmap showing feature contributions to each PC.
+
+    Args:
+        features: Feature matrix (n_samples x n_features)
+        feature_names: List of all feature names
+        selected_features: List of feature names to include (None = all)
+        n_components: Number of principal components to show
+
+    Returns:
+        Plotly figure with PCA loadings heatmap
+    """
+    if features is None or feature_names is None or not PCA_AVAILABLE:
+        fig = go.Figure()
+        fig.update_layout(
+            title="PCA Loadings",
+            annotations=[{
+                'text': 'PCA not available' if not PCA_AVAILABLE else 'No data available',
+                'xref': 'paper', 'yref': 'paper',
+                'x': 0.5, 'y': 0.5, 'showarrow': False,
+                'font': {'size': 16, 'color': 'gray'}
+            }]
+        )
+        return fig
+
+    # Filter to selected features
+    if selected_features and len(selected_features) > 0:
+        indices = []
+        labels = []
+        for feat in selected_features:
+            if feat in feature_names:
+                indices.append(feature_names.index(feat))
+                labels.append(feat)
+
+        if len(indices) < 2:
+            fig = go.Figure()
+            fig.update_layout(
+                title="PCA Loadings",
+                annotations=[{
+                    'text': 'Select at least 2 features',
+                    'xref': 'paper', 'yref': 'paper',
+                    'x': 0.5, 'y': 0.5, 'showarrow': False,
+                    'font': {'size': 16, 'color': 'gray'}
+                }]
+            )
+            return fig
+
+        feature_subset = features[:, indices]
+    else:
+        feature_subset = features
+        labels = list(feature_names)
+
+    # Handle NaN/Inf values
+    feature_subset = np.nan_to_num(feature_subset, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Scale features
+    scaler = StandardScaler()
+    features_scaled = scaler.fit_transform(feature_subset)
+
+    # Perform PCA
+    n_components_actual = min(n_components, len(labels), features_scaled.shape[0])
+    pca = PCA(n_components=n_components_actual)
+    pca.fit(features_scaled)
+
+    # Get loadings (components_ is n_components x n_features)
+    loadings = pca.components_.T  # Transpose to n_features x n_components
+
+    # Get explained variance for column labels
+    var_explained = pca.explained_variance_ratio_ * 100
+    pc_labels = [f'PC{i+1}\n({var_explained[i]:.1f}%)' for i in range(n_components_actual)]
+
+    # Create text annotations
+    text_annotations = [[f'{loadings[i, j]:.2f}' for j in range(n_components_actual)] for i in range(len(labels))]
+
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=loadings,
+        x=pc_labels,
+        y=labels,
+        text=text_annotations,
+        texttemplate='%{text}',
+        textfont={'size': 10},
+        colorscale='RdBu_r',
+        zmid=0,
+        colorbar=dict(
+            title='Loading',
+            titleside='right'
+        ),
+        hovertemplate='%{y}<br>%{x}<br>Loading = %{z:.3f}<extra></extra>'
+    ))
+
+    # Calculate total variance explained
+    total_var = sum(var_explained)
+
+    fig.update_layout(
+        title=f'PCA Loadings ({n_components_actual} components, {total_var:.1f}% total variance explained)',
+        xaxis=dict(
+            title='Principal Components',
+            tickfont=dict(size=10)
+        ),
+        yaxis=dict(
+            title='Features',
+            tickfont=dict(size=10),
+            autorange='reversed'
+        ),
+        width=max(500, n_components_actual * 80 + 200),
+        height=max(600, len(labels) * 25 + 150),
+    )
+
+    return fig
+
+
 def create_app(data_dir=DATA_DIR):
     """Create the Dash application."""
     app = Dash(__name__)
@@ -1049,6 +1161,23 @@ def create_app(data_dir=DATA_DIR):
             ], id='correlation-matrix-container', style={'display': 'none'})
         ], style={'width': '95%', 'margin': '20px auto'}),
 
+        # PCA Loadings Table (toggleable)
+        html.Div([
+            html.Div([
+                dcc.Checklist(
+                    id='show-pca-loadings-checkbox',
+                    options=[{'label': ' Show PCA Loadings Table', 'value': 'show'}],
+                    value=[],
+                    style={'display': 'inline-block', 'marginRight': '20px', 'fontWeight': 'bold'}
+                ),
+                html.Span("(Shows how much each feature contributes to each principal component)",
+                         style={'color': '#666', 'fontSize': '12px', 'fontStyle': 'italic'})
+            ], style={'marginBottom': '10px'}),
+            html.Div([
+                dcc.Graph(id='pca-loadings', style={'height': '700px'})
+            ], id='pca-loadings-container', style={'display': 'none'})
+        ], style={'width': '95%', 'margin': '20px auto'}),
+
         # PCA Plot (shown only for K-means)
         html.Div([
             html.Div([
@@ -1317,6 +1446,38 @@ def create_app(data_dir=DATA_DIR):
         )
 
         return corr_fig, {'display': 'block'}
+
+    @app.callback(
+        [Output('pca-loadings', 'figure'),
+         Output('pca-loadings-container', 'style')],
+        [Input('show-pca-loadings-checkbox', 'value'),
+         Input('dataset-dropdown', 'value'),
+         Input('pulse-features-checklist', 'value'),
+         Input('reanalysis-trigger', 'data')]
+    )
+    def update_pca_loadings(show_loadings, prefix, selected_features, reanalysis_trigger):
+        """Update PCA loadings table based on checkbox and selected features."""
+        # Check if enabled
+        if not show_loadings or 'show' not in show_loadings:
+            empty_fig = go.Figure()
+            return empty_fig, {'display': 'none'}
+
+        if not prefix:
+            empty_fig = go.Figure()
+            empty_fig.update_layout(title="PCA Loadings - No data")
+            return empty_fig, {'display': 'none'}
+
+        # Load data
+        data = loader.load_all(prefix)
+
+        # Create PCA loadings with selected features
+        loadings_fig = create_pca_loadings(
+            data['features'],
+            data['feature_names'],
+            selected_features
+        )
+
+        return loadings_fig, {'display': 'block'}
 
     @app.callback(
         [Output('waveform-plot', 'figure'),
