@@ -37,6 +37,7 @@ from polarity_methods import (
     calculate_polarity, compare_methods, POLARITY_METHODS,
     DEFAULT_POLARITY_METHOD, get_method_description
 )
+from classify_pd_type import PDTypeClassifier, load_cluster_features
 
 DATA_DIR = "Rugged Data Files"
 
@@ -770,6 +771,29 @@ def create_app(data_dir=DATA_DIR):
             dcc.Graph(id='cluster-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
+        # Cluster details toggle and display
+        html.Div([
+            html.Div([
+                dcc.Checklist(
+                    id='show-cluster-details-checkbox',
+                    options=[{'label': ' Show cluster details on click', 'value': 'show'}],
+                    value=[],
+                    style={'display': 'inline-block', 'marginRight': '20px'}
+                ),
+                html.Span("(Click on any point in the PRPD plot above to see cluster statistics and classification details)",
+                         style={'color': '#666', 'fontSize': '12px', 'fontStyle': 'italic'})
+            ], style={'marginBottom': '10px'}),
+            html.Div(id='cluster-details-display', style={
+                'display': 'none',
+                'padding': '15px',
+                'backgroundColor': '#f8f9fa',
+                'border': '1px solid #dee2e6',
+                'borderRadius': '5px',
+                'maxHeight': '400px',
+                'overflowY': 'auto'
+            })
+        ], style={'width': '95%', 'margin': '10px auto'}),
+
         # PD Type PRPD - full row
         html.Div([
             dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
@@ -1059,6 +1083,169 @@ def create_app(data_dir=DATA_DIR):
             ), None
 
         return create_waveform_plot(None, None, None, None, None, None), None
+
+    @app.callback(
+        [Output('cluster-details-display', 'children'),
+         Output('cluster-details-display', 'style')],
+        [Input('cluster-prpd', 'clickData'),
+         Input('pdtype-prpd', 'clickData')],
+        [State('show-cluster-details-checkbox', 'value'),
+         State('current-data-store', 'data'),
+         State('clustering-method-radio', 'value')],
+        prevent_initial_call=True
+    )
+    def update_cluster_details(cluster_click, pdtype_click, show_details, prefix, clustering_method):
+        """Show cluster statistics and decision tree details when clicking on PRPD."""
+        # Check if feature is enabled
+        if not show_details or 'show' not in show_details:
+            return "", {'display': 'none'}
+
+        if not prefix:
+            return "", {'display': 'none'}
+
+        # Determine which click triggered the callback
+        triggered_id = ctx.triggered_id
+        if triggered_id == 'cluster-prpd' and cluster_click:
+            click_data = cluster_click
+        elif triggered_id == 'pdtype-prpd' and pdtype_click:
+            click_data = pdtype_click
+        else:
+            click_data = cluster_click or pdtype_click
+
+        if not click_data or 'points' not in click_data or len(click_data['points']) == 0:
+            return "", {'display': 'none'}
+
+        # Get the clicked point index
+        point = click_data['points'][0]
+        if 'customdata' in point:
+            idx = int(point['customdata'])
+        elif 'pointIndex' in point:
+            idx = int(point['pointIndex'])
+        else:
+            return "", {'display': 'none'}
+
+        try:
+            # Load data to get cluster label for this point
+            data = loader.load_all(prefix)
+            cluster_labels = data['cluster_labels']
+            cluster_label = cluster_labels[idx]
+
+            # Load cluster features
+            method = clustering_method or 'dbscan'
+            cluster_features_file = os.path.join(data_dir, f"{prefix}-cluster-features-{method}.csv")
+
+            if not os.path.exists(cluster_features_file):
+                return html.Div([
+                    html.P(f"Cluster features file not found for method '{method}'",
+                          style={'color': '#721c24'})
+                ]), {'display': 'block', 'padding': '15px', 'backgroundColor': '#f8d7da',
+                     'border': '1px solid #f5c6cb', 'borderRadius': '5px'}
+
+            # Load cluster features
+            all_cluster_features = load_cluster_features(cluster_features_file)
+
+            if cluster_label not in all_cluster_features:
+                return html.Div([
+                    html.P(f"No features found for cluster {cluster_label}",
+                          style={'color': '#721c24'})
+                ]), {'display': 'block', 'padding': '15px', 'backgroundColor': '#f8d7da',
+                     'border': '1px solid #f5c6cb', 'borderRadius': '5px'}
+
+            cluster_feats = all_cluster_features[cluster_label]
+
+            # Run classification to get decision tree details
+            classifier = PDTypeClassifier(verbose=False)
+            result = classifier.classify(cluster_feats, cluster_label)
+
+            # Build display content
+            label_str = "Noise" if cluster_label == -1 else f"Cluster {cluster_label}"
+            n_pulses = int(cluster_feats.get('pulses_per_positive_halfcycle', 0) +
+                         cluster_feats.get('pulses_per_negative_halfcycle', 0))
+
+            content = []
+
+            # Header
+            content.append(html.H4(f"{label_str} Details", style={'marginTop': '0', 'color': '#333'}))
+
+            # Classification result
+            content.append(html.Div([
+                html.Span("Classification: ", style={'fontWeight': 'bold'}),
+                html.Span(f"{result['pd_type']} ", style={'color': PD_TYPE_COLORS.get(result['pd_type'], '#000'),
+                                                          'fontWeight': 'bold', 'fontSize': '16px'}),
+                html.Span(f"({result['confidence']:.1%} confidence)", style={'color': '#666'})
+            ], style={'marginBottom': '15px', 'fontSize': '14px'}))
+
+            # Pulse count
+            content.append(html.P(f"Total pulses: {n_pulses}", style={'margin': '5px 0'}))
+
+            # Decision tree branch path
+            content.append(html.H5("Decision Tree Path:", style={'marginTop': '15px', 'marginBottom': '10px'}))
+            branch_list = []
+            for branch in result['branch_path']:
+                branch_list.append(html.Li(branch, style={'marginBottom': '3px'}))
+            content.append(html.Ol(branch_list, style={'marginLeft': '20px', 'marginTop': '0'}))
+
+            # Reasoning
+            content.append(html.H5("Feature Analysis:", style={'marginTop': '15px', 'marginBottom': '10px'}))
+            reasoning_list = []
+            for reason in result['reasoning']:
+                reasoning_list.append(html.Li(reason, style={'marginBottom': '3px', 'fontSize': '12px'}))
+            content.append(html.Ul(reasoning_list, style={'marginLeft': '20px', 'marginTop': '0'}))
+
+            # Key cluster statistics
+            content.append(html.H5("Key Statistics:", style={'marginTop': '15px', 'marginBottom': '10px'}))
+            stats_items = []
+            key_stats = [
+                ('cross_correlation', 'Cross Correlation'),
+                ('discharge_asymmetry', 'Discharge Asymmetry'),
+                ('phase_of_max_activity', 'Phase of Max Activity'),
+                ('phase_spread', 'Phase Spread'),
+                ('weibull_beta', 'Weibull Beta'),
+                ('coefficient_of_variation', 'Coeff. of Variation'),
+            ]
+            for key, label in key_stats:
+                if key in cluster_feats:
+                    val = cluster_feats[key]
+                    if 'phase' in key.lower():
+                        stats_items.append(html.Li(f"{label}: {val:.1f} deg", style={'fontSize': '12px'}))
+                    else:
+                        stats_items.append(html.Li(f"{label}: {val:.4f}", style={'fontSize': '12px'}))
+            content.append(html.Ul(stats_items, style={'marginLeft': '20px', 'marginTop': '0'}))
+
+            # Quadrant distribution
+            content.append(html.H5("Quadrant Distribution:", style={'marginTop': '15px', 'marginBottom': '10px'}))
+            q1 = cluster_feats.get('quadrant_1_percentage', 0)
+            q2 = cluster_feats.get('quadrant_2_percentage', 0)
+            q3 = cluster_feats.get('quadrant_3_percentage', 0)
+            q4 = cluster_feats.get('quadrant_4_percentage', 0)
+            content.append(html.Div([
+                html.Span(f"Q1: {q1:.1f}% | Q2: {q2:.1f}% | Q3: {q3:.1f}% | Q4: {q4:.1f}%",
+                         style={'fontFamily': 'monospace', 'fontSize': '12px'})
+            ]))
+
+            # Warnings
+            if result['warnings']:
+                content.append(html.H5("Warnings:", style={'marginTop': '15px', 'marginBottom': '10px', 'color': '#856404'}))
+                warning_list = []
+                for warning in result['warnings']:
+                    warning_list.append(html.Li(warning, style={'fontSize': '12px', 'color': '#856404'}))
+                content.append(html.Ul(warning_list, style={'marginLeft': '20px', 'marginTop': '0'}))
+
+            return html.Div(content), {
+                'display': 'block',
+                'padding': '15px',
+                'backgroundColor': '#f8f9fa',
+                'border': '1px solid #dee2e6',
+                'borderRadius': '5px',
+                'maxHeight': '400px',
+                'overflowY': 'auto'
+            }
+
+        except Exception as e:
+            return html.Div([
+                html.P(f"Error loading cluster details: {str(e)}", style={'color': '#721c24'})
+            ]), {'display': 'block', 'padding': '15px', 'backgroundColor': '#f8d7da',
+                 'border': '1px solid #f5c6cb', 'borderRadius': '5px'}
 
     @app.callback(
         Output('feature-toggles', 'options'),
