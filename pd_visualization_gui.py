@@ -1407,6 +1407,7 @@ def create_app(data_dir=DATA_DIR):
         dcc.Store(id='feature-toggle-store', data=DEFAULT_VISIBLE_FEATURES),
         dcc.Store(id='reanalysis-trigger', data=0),
         dcc.Store(id='recommended-features-store', data=[]),
+        dcc.Store(id='feature-analysis-data-store', data={}),  # Stores PCA data for recalculation
     ])
 
     # Callbacks for pulse features selection buttons
@@ -1452,7 +1453,8 @@ def create_app(data_dir=DATA_DIR):
          Output('recommended-features-display', 'style'),
          Output('recommended-features-store', 'data'),
          Output('apply-recommended-features-btn', 'style'),
-         Output('apply-recommended-features-btn', 'disabled')],
+         Output('apply-recommended-features-btn', 'disabled'),
+         Output('feature-analysis-data-store', 'data')],
         [Input('calc-best-features-btn', 'n_clicks')],
         [State('dataset-dropdown', 'value'),
          State('n-features-input', 'value'),
@@ -1464,16 +1466,17 @@ def create_app(data_dir=DATA_DIR):
         """Calculate and display recommended features based on PCA and correlation analysis."""
         hidden_style = {'display': 'none'}
         btn_hidden = {'display': 'none'}
+        empty_data = {}
 
         if not n_clicks or not prefix:
-            return [], hidden_style, [], btn_hidden, True
+            return [], hidden_style, [], btn_hidden, True, empty_data
 
         # Load data
         data = loader.load_all(prefix)
         if data['features'] is None or data['feature_names'] is None:
             return html.Div("No feature data available", style={'color': 'red'}), \
                    {'padding': '15px', 'backgroundColor': '#ffebee', 'borderRadius': '4px',
-                    'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True
+                    'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True, empty_data
 
         # Get subset of features based on current selection
         if current_features and len(current_features) > 0:
@@ -1486,7 +1489,7 @@ def create_app(data_dir=DATA_DIR):
             if len(indices) < 2:
                 return html.Div("Select at least 2 features to analyze", style={'color': 'orange'}), \
                        {'padding': '15px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px',
-                        'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True
+                        'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True, empty_data
             features_subset = data['features'][:, indices]
             feature_names = names
         else:
@@ -1504,49 +1507,89 @@ def create_app(data_dir=DATA_DIR):
         if result.get('error'):
             return html.Div(f"Error: {result['error']}", style={'color': 'red'}), \
                    {'padding': '15px', 'backgroundColor': '#ffebee', 'borderRadius': '4px',
-                    'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True
+                    'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True, empty_data
 
         # Build display
         recommended = result['recommended']
         scores = result['scores']
         details = result['details']
         variance = result['variance_explained']
-        removed = result['removed_correlations']
 
-        # Create detailed table
-        table_rows = [
-            html.Tr([
-                html.Th("Feature", style={'textAlign': 'left', 'padding': '8px', 'borderBottom': '2px solid #ddd'}),
-                html.Th("Importance", style={'textAlign': 'center', 'padding': '8px', 'borderBottom': '2px solid #ddd'}),
-                html.Th("Status", style={'textAlign': 'left', 'padding': '8px', 'borderBottom': '2px solid #ddd'})
-            ])
-        ]
-
+        # Create checklist options for manual selection (sorted by importance)
+        checklist_options = []
         for feat, score, reason in details:
-            is_selected = 'Selected' in reason or 'Added' in reason
-            row_style = {'backgroundColor': '#e8f5e9' if is_selected else '#fff'}
-            status_color = '#2e7d32' if is_selected else ('#f57c00' if 'Redundant' in reason else '#757575')
+            label = f"{feat} (importance: {score:.1f})"
+            if 'Redundant' in reason:
+                # Extract correlation info
+                label += f" - {reason}"
+            checklist_options.append({'label': label, 'value': feat})
 
-            table_rows.append(html.Tr([
-                html.Td(feat, style={'padding': '6px 8px', 'fontWeight': 'bold' if is_selected else 'normal'}),
-                html.Td(f"{score:.1f}", style={'padding': '6px 8px', 'textAlign': 'center'}),
-                html.Td(reason, style={'padding': '6px 8px', 'color': status_color, 'fontSize': '12px'})
-            ], style=row_style))
+        # Store analysis data for recalculation
+        analysis_data = {
+            'scores': scores,
+            'details': [[f, s, r] for f, s, r in details],  # Convert tuples to lists for JSON
+            'feature_names': feature_names,
+            'prefix': prefix
+        }
 
         display_content = html.Div([
-            html.H5(f"Recommended Features ({len(recommended)} selected)", style={'marginBottom': '10px'}),
+            html.H5("Feature Analysis Results", style={'marginBottom': '10px'}),
+
+            # Initial variance display
             html.Div([
-                html.Span("Estimated Variance Coverage: ", style={'fontWeight': 'bold'}),
+                html.Span("Algorithm-Recommended Variance Coverage: ", style={'fontWeight': 'bold'}),
                 html.Span(f"{variance:.1f}%", style={'color': '#1976d2', 'fontWeight': 'bold', 'fontSize': '16px'}),
-                html.Span(f" (using top {len(recommended)} principal components)", style={'color': '#666', 'fontSize': '12px', 'marginLeft': '10px'})
-            ], style={'marginBottom': '15px'}),
+                html.Span(f" ({len(recommended)} features)", style={'color': '#666', 'fontSize': '12px', 'marginLeft': '10px'})
+            ], style={'marginBottom': '15px', 'padding': '10px', 'backgroundColor': '#e3f2fd', 'borderRadius': '4px'}),
+
+            # Manual selection section
             html.Div([
-                html.Span("Selected: ", style={'fontWeight': 'bold'}),
-                html.Span(", ".join(recommended), style={'color': '#2e7d32', 'fontFamily': 'monospace'})
-            ], style={'marginBottom': '15px', 'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'}),
+                html.H6("Manual Feature Selection", style={'marginBottom': '10px'}),
+                html.P("Select/deselect features below, then click 'Recalculate Variance' to see updated coverage.",
+                       style={'color': '#666', 'fontSize': '12px', 'marginBottom': '10px'}),
+
+                # Checklist for manual selection
+                dcc.Checklist(
+                    id='manual-feature-selection',
+                    options=checklist_options,
+                    value=recommended,  # Pre-select recommended features
+                    style={'columns': '2', 'columnGap': '20px'},
+                    inputStyle={'marginRight': '8px'},
+                    labelStyle={'display': 'block', 'marginBottom': '8px', 'fontSize': '12px'}
+                ),
+
+                # Recalculate button and result
+                html.Div([
+                    html.Button("Recalculate Variance", id='recalc-variance-btn',
+                               style={'backgroundColor': '#ff9800', 'color': 'white',
+                                      'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
+                                      'cursor': 'pointer', 'fontWeight': 'bold', 'marginTop': '15px'}),
+                    html.Div(id='recalc-variance-result', style={'marginTop': '10px'})
+                ]),
+            ], style={'padding': '15px', 'backgroundColor': '#fff', 'borderRadius': '4px',
+                      'border': '1px solid #ddd', 'marginBottom': '15px'}),
+
+            # Show correlation info for reference
             html.Details([
-                html.Summary("Show All Features Ranked by Importance", style={'cursor': 'pointer', 'fontWeight': 'bold', 'marginBottom': '10px'}),
-                html.Table(table_rows, style={'width': '100%', 'borderCollapse': 'collapse', 'fontSize': '13px'})
+                html.Summary("Feature Importance & Correlation Notes", style={'cursor': 'pointer', 'fontWeight': 'bold', 'marginBottom': '10px'}),
+                html.Div([
+                    html.P("Features marked 'Redundant' are highly correlated with higher-ranked features. "
+                           "Including both may not improve results significantly.", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Table([
+                        html.Tr([
+                            html.Th("Feature", style={'textAlign': 'left', 'padding': '6px', 'borderBottom': '1px solid #ddd'}),
+                            html.Th("Score", style={'textAlign': 'center', 'padding': '6px', 'borderBottom': '1px solid #ddd'}),
+                            html.Th("Note", style={'textAlign': 'left', 'padding': '6px', 'borderBottom': '1px solid #ddd'})
+                        ])
+                    ] + [
+                        html.Tr([
+                            html.Td(feat, style={'padding': '4px 6px', 'fontSize': '12px'}),
+                            html.Td(f"{score:.1f}", style={'padding': '4px 6px', 'textAlign': 'center', 'fontSize': '12px'}),
+                            html.Td(reason, style={'padding': '4px 6px', 'fontSize': '11px',
+                                                   'color': '#2e7d32' if 'Selected' in reason else '#f57c00' if 'Redundant' in reason else '#757575'})
+                        ]) for feat, score, reason in details
+                    ], style={'width': '100%', 'borderCollapse': 'collapse', 'marginTop': '10px'})
+                ])
             ], open=False)
         ])
 
@@ -1558,19 +1601,128 @@ def create_app(data_dir=DATA_DIR):
                      'cursor': 'pointer', 'fontWeight': 'bold', 'marginLeft': '10px',
                      'display': 'inline-block'}
 
-        return display_content, show_style, recommended, btn_style, False
+        return display_content, show_style, recommended, btn_style, False, analysis_data
 
     @app.callback(
         Output('pulse-features-checklist', 'value', allow_duplicate=True),
         [Input('apply-recommended-features-btn', 'n_clicks')],
-        [State('recommended-features-store', 'data')],
+        [State('manual-feature-selection', 'value')],
         prevent_initial_call=True
     )
-    def apply_recommended_features(n_clicks, recommended):
-        """Apply recommended features to the pulse features checklist."""
-        if not n_clicks or not recommended:
+    def apply_recommended_features(n_clicks, manual_selection):
+        """Apply manually selected features to the pulse features checklist."""
+        if not n_clicks or not manual_selection:
             raise PreventUpdate
-        return recommended
+        return manual_selection
+
+    @app.callback(
+        [Output('recalc-variance-result', 'children'),
+         Output('recommended-features-store', 'data', allow_duplicate=True)],
+        [Input('recalc-variance-btn', 'n_clicks')],
+        [State('manual-feature-selection', 'value'),
+         State('feature-analysis-data-store', 'data'),
+         State('dataset-dropdown', 'value'),
+         State('pulse-features-checklist', 'value')],
+        prevent_initial_call=True
+    )
+    def recalculate_variance(n_clicks, manual_selection, analysis_data, prefix, current_features):
+        """Recalculate variance coverage for manually selected features."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not manual_selection:
+            return html.Div("Please select at least one feature", style={'color': 'orange'}), []
+
+        if not prefix or not analysis_data:
+            return html.Div("No analysis data available. Click 'Calculate Best Features' first.",
+                          style={'color': 'red'}), []
+
+        # Load data
+        data = loader.load_all(prefix)
+        if data['features'] is None or data['feature_names'] is None:
+            return html.Div("No feature data available", style={'color': 'red'}), []
+
+        # Get subset of features based on current pulse features selection
+        if current_features and len(current_features) > 0:
+            indices = []
+            names = []
+            for feat in current_features:
+                if feat in data['feature_names']:
+                    indices.append(data['feature_names'].index(feat))
+                    names.append(feat)
+            if len(indices) < 2:
+                return html.Div("Too few features available", style={'color': 'red'}), []
+            features_subset = data['features'][:, indices]
+            feature_names = names
+        else:
+            features_subset = data['features']
+            feature_names = list(data['feature_names'])
+
+        # Get indices for manually selected features
+        selected_indices = []
+        selected_names = []
+        for feat in manual_selection:
+            if feat in feature_names:
+                selected_indices.append(feature_names.index(feat))
+                selected_names.append(feat)
+
+        if len(selected_indices) < 1:
+            return html.Div("No valid features selected", style={'color': 'orange'}), []
+
+        # Compute variance explained by selected features using PCA
+        if not PCA_AVAILABLE:
+            return html.Div("PCA not available", style={'color': 'red'}), []
+
+        try:
+            # Get selected feature data
+            selected_features = features_subset[:, selected_indices]
+            selected_features = np.nan_to_num(selected_features, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Check for constant features
+            feature_stds = np.std(selected_features, axis=0)
+            valid_mask = feature_stds > 1e-10
+            if not np.any(valid_mask):
+                return html.Div("All selected features are constant", style={'color': 'orange'}), manual_selection
+
+            valid_features = selected_features[:, valid_mask]
+            valid_names = [selected_names[i] for i in range(len(selected_names)) if valid_mask[i]]
+
+            # Scale and run PCA
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(valid_features)
+
+            n_components = min(len(valid_names), features_scaled.shape[0])
+            pca = PCA(n_components=n_components)
+            pca.fit(features_scaled)
+
+            # Get variance explained
+            var_explained = pca.explained_variance_ratio_
+            total_variance = sum(var_explained) * 100
+
+            # Build result display
+            result_content = html.Div([
+                html.Div([
+                    html.Span("Your Selection Variance Coverage: ", style={'fontWeight': 'bold'}),
+                    html.Span(f"{total_variance:.1f}%", style={'color': '#2e7d32' if total_variance >= 70 else '#f57c00',
+                                                               'fontWeight': 'bold', 'fontSize': '18px'}),
+                    html.Span(f" ({len(valid_names)} features)", style={'color': '#666', 'marginLeft': '10px'})
+                ], style={'padding': '10px', 'backgroundColor': '#e8f5e9' if total_variance >= 70 else '#fff3e0',
+                          'borderRadius': '4px', 'marginBottom': '10px'}),
+                html.Div([
+                    html.Span("Selected: ", style={'fontWeight': 'bold', 'fontSize': '12px'}),
+                    html.Span(", ".join(valid_names), style={'fontFamily': 'monospace', 'fontSize': '12px'})
+                ]),
+                html.Div([
+                    html.Span("Variance per PC: ", style={'fontSize': '11px', 'color': '#666'}),
+                    html.Span(", ".join([f"PC{i+1}: {v*100:.1f}%" for i, v in enumerate(var_explained[:5])]),
+                             style={'fontSize': '11px', 'color': '#666'})
+                ], style={'marginTop': '5px'}) if len(var_explained) > 0 else None
+            ])
+
+            return result_content, manual_selection
+
+        except Exception as e:
+            return html.Div(f"Error calculating variance: {str(e)}", style={'color': 'red'}), manual_selection
 
     @app.callback(
         [Output('all-datasets-analysis-display', 'children'),
