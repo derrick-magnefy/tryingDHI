@@ -1403,8 +1403,13 @@ def create_app(data_dir=DATA_DIR):
                                     html.Button("Select None", id='cluster-features-select-none', n_clicks=0,
                                                style={'marginRight': '10px', 'padding': '5px 10px'}),
                                     html.Button("Reset Defaults", id='cluster-features-reset', n_clicks=0,
-                                               style={'padding': '5px 10px'}),
+                                               style={'marginRight': '20px', 'padding': '5px 10px'}),
+                                    html.Button("Reclassify with Selected", id='reclassify-btn',
+                                               style={'backgroundColor': '#9c27b0', 'color': 'white',
+                                                      'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold'}),
                                 ], style={'marginBottom': '10px'}),
+                                html.Div(id='reclassify-result', style={'marginBottom': '10px'}),
                                 dcc.Checklist(
                                     id='cluster-features-checklist',
                                     options=[{'label': f, 'value': f} for f in CLUSTER_FEATURES],
@@ -2031,6 +2036,72 @@ def create_app(data_dir=DATA_DIR):
 
         except subprocess.TimeoutExpired:
             return html.Div("Clustering timed out (>120s)", style={'color': 'red', 'padding': '10px'})
+        except Exception as e:
+            return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
+
+    @app.callback(
+        Output('reclassify-result', 'children'),
+        [Input('reclassify-btn', 'n_clicks')],
+        [State('cluster-features-checklist', 'value'),
+         State('dataset-dropdown', 'value'),
+         State('clustering-method-radio', 'value')],
+        prevent_initial_call=True
+    )
+    def reclassify_with_features(n_clicks, selected_features, prefix, clustering_method):
+        """Run classification with the selected cluster features."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not selected_features or len(selected_features) < 1:
+            return html.Div("Please select at least 1 feature for classification",
+                          style={'color': 'orange', 'padding': '10px'})
+
+        if not prefix:
+            return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
+
+        # Get dataset info
+        data_path = loader.get_dataset_path(prefix)
+        clean_prefix = loader.get_clean_prefix(prefix)
+
+        if not data_path or not clean_prefix:
+            return html.Div("Could not determine dataset path", style={'color': 'red', 'padding': '10px'})
+
+        # Build the classification command
+        features_str = ','.join(selected_features)
+        method = clustering_method or 'dbscan'
+
+        import subprocess
+        import sys
+
+        try:
+            # Run classification with selected features
+            cmd = [
+                sys.executable, 'classify_pd_type.py',
+                '--input-dir', data_path,
+                '--method', method,
+                '--file', clean_prefix,
+                '--cluster-features', features_str
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if result.returncode == 0:
+                return html.Div([
+                    html.Div("✓ Reclassification complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
+                    html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div(f"Features used: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div("Refresh the page or change dataset and back to see updated results.",
+                            style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
+                ], style={'padding': '10px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'})
+            else:
+                error_msg = result.stderr[:500] if result.stderr else "Unknown error"
+                return html.Div([
+                    html.Div("✗ Classification failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
+                    html.Pre(error_msg, style={'fontSize': '10px', 'color': '#666', 'whiteSpace': 'pre-wrap'})
+                ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
+
+        except subprocess.TimeoutExpired:
+            return html.Div("Classification timed out (>60s)", style={'color': 'red', 'padding': '10px'})
         except Exception as e:
             return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
 
