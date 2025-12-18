@@ -1838,20 +1838,48 @@ def create_app(data_dir=DATA_DIR):
                                                                  'fontFamily': 'monospace', 'fontSize': '12px'})
                 ]))
 
-        # Build feature frequency summary
+        # Build feature frequency summary table
         sorted_features = sorted(feature_counts.items(), key=lambda x: x[1], reverse=True)
         total_datasets = len([r for r in results if not r['error']])
 
-        frequency_items = []
+        # Create feature summary table
+        feature_summary_rows = [
+            html.Tr([
+                html.Th("Feature", style={'textAlign': 'left', 'padding': '10px', 'borderBottom': '2px solid #666', 'backgroundColor': '#e8f5e9'}),
+                html.Th("Datasets", style={'textAlign': 'center', 'padding': '10px', 'borderBottom': '2px solid #666', 'backgroundColor': '#e8f5e9'}),
+                html.Th("Percentage", style={'textAlign': 'center', 'padding': '10px', 'borderBottom': '2px solid #666', 'backgroundColor': '#e8f5e9'}),
+                html.Th("Recommendation", style={'textAlign': 'center', 'padding': '10px', 'borderBottom': '2px solid #666', 'backgroundColor': '#e8f5e9'})
+            ])
+        ]
+
         for feat, count in sorted_features:
             pct = (count / total_datasets * 100) if total_datasets > 0 else 0
-            color = '#2e7d32' if pct >= 80 else ('#1976d2' if pct >= 50 else '#757575')
-            frequency_items.append(
-                html.Span([
-                    html.Span(feat, style={'fontWeight': 'bold', 'fontFamily': 'monospace'}),
-                    html.Span(f" ({count}/{total_datasets}, {pct:.0f}%)", style={'color': color, 'fontSize': '11px'})
-                ], style={'marginRight': '15px', 'display': 'inline-block', 'marginBottom': '5px'})
-            )
+            # Determine recommendation level
+            if pct >= 80:
+                rec_text = "Strongly Recommended"
+                rec_color = '#2e7d32'
+                rec_bg = '#e8f5e9'
+            elif pct >= 50:
+                rec_text = "Recommended"
+                rec_color = '#1976d2'
+                rec_bg = '#e3f2fd'
+            elif pct >= 25:
+                rec_text = "Consider"
+                rec_color = '#f57c00'
+                rec_bg = '#fff3e0'
+            else:
+                rec_text = "Dataset-Specific"
+                rec_color = '#757575'
+                rec_bg = '#fafafa'
+
+            feature_summary_rows.append(html.Tr([
+                html.Td(feat, style={'padding': '8px', 'borderBottom': '1px solid #ddd', 'fontFamily': 'monospace', 'fontWeight': 'bold'}),
+                html.Td(f"{count} / {total_datasets}", style={'padding': '8px', 'textAlign': 'center', 'borderBottom': '1px solid #ddd'}),
+                html.Td(f"{pct:.0f}%", style={'padding': '8px', 'textAlign': 'center', 'borderBottom': '1px solid #ddd',
+                                               'fontWeight': 'bold', 'color': rec_color}),
+                html.Td(rec_text, style={'padding': '8px', 'textAlign': 'center', 'borderBottom': '1px solid #ddd',
+                                          'backgroundColor': rec_bg, 'color': rec_color, 'fontWeight': 'bold', 'fontSize': '12px'})
+            ]))
 
         # Calculate average variance
         valid_variances = [r['variance'] for r in results if not r['error'] and r['variance'] > 0]
@@ -1867,17 +1895,19 @@ def create_app(data_dir=DATA_DIR):
                 html.Span(f" | Datasets analyzed: {total_datasets}/{len(datasets)}", style={'marginLeft': '20px', 'color': '#666'})
             ], style={'marginBottom': '15px', 'padding': '10px', 'backgroundColor': '#e3f2fd', 'borderRadius': '4px'}),
 
-            # Feature frequency
+            # Feature frequency summary table
             html.Div([
-                html.H6("Feature Selection Frequency:", style={'marginBottom': '10px'}),
-                html.Div(frequency_items, style={'lineHeight': '2'})
-            ], style={'marginBottom': '15px', 'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'border': '1px solid #ddd'}),
+                html.H6("Feature Recommendation Summary", style={'marginBottom': '10px'}),
+                html.P("Features ranked by how often they were selected across all datasets:",
+                       style={'color': '#666', 'fontSize': '12px', 'marginBottom': '10px'}),
+                html.Table(feature_summary_rows, style={'width': '100%', 'borderCollapse': 'collapse'})
+            ], style={'marginBottom': '15px', 'padding': '15px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'border': '1px solid #ddd'}),
 
             # Per-dataset table
             html.Details([
                 html.Summary("Per-Dataset Details", style={'cursor': 'pointer', 'fontWeight': 'bold', 'marginBottom': '10px'}),
                 html.Table(table_rows, style={'width': '100%', 'borderCollapse': 'collapse', 'marginTop': '10px'})
-            ], open=True)
+            ], open=False)
         ])
 
         show_style = {'padding': '15px', 'backgroundColor': '#f0f0ff', 'borderRadius': '4px',
