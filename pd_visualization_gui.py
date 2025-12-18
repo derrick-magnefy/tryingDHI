@@ -277,7 +277,23 @@ class PDDataLoader:
                                     )
                                 }
 
-            # Find raw datasets in external dirs (have .wfm or -WFMs.txt but no features yet)
+            # Find unprocessed Rugged format datasets (have -WFMs.txt but no -features.csv)
+            wfm_txt_files = glob.glob(os.path.join(data_dir, "*-WFMs.txt"))
+            for f in sorted(wfm_txt_files):
+                basename = os.path.basename(f)
+                prefix = basename.replace("-WFMs.txt", "")
+                features_file = os.path.join(data_dir, f"{prefix}-features.csv")
+                if prefix not in self.dataset_info and not os.path.exists(features_file):
+                    dataset_name = f"[RAW] {prefix}"
+                    self.datasets.append(dataset_name)
+                    self.dataset_info[dataset_name] = {
+                        'path': data_dir,
+                        'format': self.FORMAT_RUGGED,
+                        'has_features': False,
+                        'raw_file': f
+                    }
+
+            # Find raw single .wfm files (ASCII format)
             raw_wfm_files = glob.glob(os.path.join(data_dir, "*.wfm"))
             for f in raw_wfm_files:
                 basename = os.path.basename(f)
@@ -2209,6 +2225,43 @@ def create_app(data_dir=DATA_DIR):
         if not prefix:
             empty_fig = go.Figure()
             return empty_fig, empty_fig, empty_fig, "No dataset selected", None
+
+        # Check if this is an unprocessed dataset
+        dataset_info = loader.dataset_info.get(prefix, {})
+        has_features = dataset_info.get('has_features', True)
+
+        if not has_features:
+            empty_fig = go.Figure()
+            empty_fig.add_annotation(
+                text="Dataset not processed yet",
+                xref="paper", yref="paper",
+                x=0.5, y=0.6, showarrow=False,
+                font=dict(size=20, color="orange")
+            )
+            empty_fig.add_annotation(
+                text="Run the analysis pipeline to extract features:",
+                xref="paper", yref="paper",
+                x=0.5, y=0.45, showarrow=False,
+                font=dict(size=14, color="gray")
+            )
+            clean_prefix = loader.get_clean_prefix(prefix)
+            data_path = dataset_info.get('path', 'Rugged Data Files')
+            cmd = f"python run_analysis_pipeline.py --data-dir \"{data_path}\" --prefix \"{clean_prefix}\""
+            empty_fig.add_annotation(
+                text=cmd,
+                xref="paper", yref="paper",
+                x=0.5, y=0.35, showarrow=False,
+                font=dict(size=11, color="blue", family="monospace")
+            )
+            empty_fig.update_layout(
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False)
+            )
+
+            fmt = dataset_info.get('format', 'unknown')
+            stats_msg = f"Dataset: {prefix}\nFormat: {fmt}\nStatus: Not processed\n\nRun the analysis pipeline to extract features and generate PRPD plots."
+
+            return empty_fig, empty_fig, empty_fig, stats_msg, prefix
 
         data = loader.load_all(prefix)
 
