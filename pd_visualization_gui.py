@@ -78,11 +78,8 @@ PULSE_FEATURES = [
     'energy_charge_ratio',
 ]
 
-# Default pulse features for clustering
-DEFAULT_CLUSTERING_FEATURES = [
-    'phase_angle', 'peak_amplitude_positive', 'peak_amplitude_negative',
-    'rise_time', 'energy', 'dominant_frequency'
-]
+# Default pulse features for clustering (all features selected by default)
+DEFAULT_CLUSTERING_FEATURES = PULSE_FEATURES.copy()
 
 # Cluster-level aggregated features (from aggregate_cluster_features.py)
 CLUSTER_FEATURES = [
@@ -120,12 +117,8 @@ CLUSTER_FEATURES = [
     'repetition_rate',
 ]
 
-# Default cluster features for classification
-DEFAULT_CLASSIFICATION_FEATURES = [
-    'cross_correlation', 'discharge_asymmetry', 'phase_of_max_activity',
-    'phase_spread', 'quadrant_1_percentage', 'quadrant_2_percentage',
-    'quadrant_3_percentage', 'quadrant_4_percentage', 'weibull_beta'
-]
+# Default cluster features for classification (all features selected by default)
+DEFAULT_CLASSIFICATION_FEATURES = CLUSTER_FEATURES.copy()
 
 # Color schemes
 PD_TYPE_COLORS = {
