@@ -34,7 +34,7 @@ POLARITY_METHODS = [
 ]
 
 # Default method
-DEFAULT_POLARITY_METHOD = 'peak'
+DEFAULT_POLARITY_METHOD = 'first_peak'
 
 
 def calculate_polarity(waveform, method='peak', sample_interval=4e-9, baseline_samples=50):
