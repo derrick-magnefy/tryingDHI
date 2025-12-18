@@ -42,6 +42,7 @@ FEATURE_NAMES = [
     'pulse_width',
     'slew_rate',
     'energy',
+    'charge',
     'equivalent_time',
     'equivalent_bandwidth',
     'cumulative_energy_peak',
@@ -254,12 +255,12 @@ class PDFeatureExtractor:
         # Total energy (integral of squared signal)
         features['energy'] = np.sum(wfm**2) * self.sample_interval
 
-        # Charge (integral of absolute signal)
-        charge = np.sum(np.abs(wfm)) * self.sample_interval
+        # Charge (integral of absolute signal - apparent charge proxy)
+        features['charge'] = np.sum(np.abs(wfm)) * self.sample_interval
 
         # Energy/Charge ratio
-        if charge > 0:
-            features['energy_charge_ratio'] = features['energy'] / charge
+        if features['charge'] > 0:
+            features['energy_charge_ratio'] = features['energy'] / features['charge']
         else:
             features['energy_charge_ratio'] = 0.0
 

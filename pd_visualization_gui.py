@@ -68,6 +68,7 @@ PULSE_FEATURES = [
     'pulse_width',
     'slew_rate',
     'energy',
+    'charge',
     'equivalent_time',
     'equivalent_bandwidth',
     'cumulative_energy_peak',
