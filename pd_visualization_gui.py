@@ -26,6 +26,7 @@ import sys
 try:
     from dash import Dash, html, dcc, callback, Output, Input, State
     from dash import ctx  # For callback context
+    from dash.exceptions import PreventUpdate
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     DASH_AVAILABLE = True
@@ -881,6 +882,150 @@ def create_pca_loadings(features, feature_names, selected_features=None, n_compo
     return fig
 
 
+def compute_recommended_features(features, feature_names, n_features=5, correlation_threshold=0.85):
+    """Compute recommended features based on PCA importance and correlation analysis.
+
+    Algorithm:
+    1. Compute PCA to get feature importance (sum of |loadings| * variance_explained)
+    2. Rank features by importance
+    3. Select top features while avoiding highly correlated ones
+
+    Args:
+        features: Feature matrix (n_samples x n_features)
+        feature_names: List of all feature names
+        n_features: Number of features to recommend
+        correlation_threshold: Threshold above which features are considered redundant (0-1)
+
+    Returns:
+        dict with:
+            - 'recommended': List of recommended feature names
+            - 'scores': Dict of feature_name -> importance score
+            - 'removed_correlations': Dict of removed feature -> correlated with
+            - 'variance_explained': Total variance explained by top PCs
+            - 'details': List of (feature, score, reason) tuples for all features
+    """
+    if not PCA_AVAILABLE or features is None or feature_names is None:
+        return {
+            'recommended': [],
+            'scores': {},
+            'removed_correlations': {},
+            'variance_explained': 0,
+            'details': [],
+            'error': 'PCA not available or no data'
+        }
+
+    # Handle NaN/Inf values
+    features_clean = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Remove constant features
+    feature_stds = np.std(features_clean, axis=0)
+    valid_indices = np.where(feature_stds > 1e-10)[0]
+
+    if len(valid_indices) < 2:
+        return {
+            'recommended': list(feature_names)[:n_features],
+            'scores': {f: 1.0 for f in feature_names[:n_features]},
+            'removed_correlations': {},
+            'variance_explained': 100,
+            'details': [(f, 1.0, 'Only valid feature') for f in feature_names[:n_features]],
+            'error': None
+        }
+
+    valid_features = features_clean[:, valid_indices]
+    valid_names = [feature_names[i] for i in valid_indices]
+
+    # Scale features
+    scaler = StandardScaler()
+    features_scaled = scaler.fit_transform(valid_features)
+
+    # Compute PCA
+    n_components = min(len(valid_names), features_scaled.shape[0])
+    pca = PCA(n_components=n_components)
+    pca.fit(features_scaled)
+
+    # Get loadings and variance explained
+    loadings = np.abs(pca.components_.T)  # n_features x n_components
+    var_explained = pca.explained_variance_ratio_
+
+    # Compute feature importance: weighted sum of absolute loadings
+    # Weight by variance explained for each component
+    importance_scores = np.sum(loadings * var_explained, axis=1)
+
+    # Normalize to 0-100 scale
+    if importance_scores.max() > 0:
+        importance_scores = 100 * importance_scores / importance_scores.max()
+
+    # Create score dictionary
+    scores = {name: float(importance_scores[i]) for i, name in enumerate(valid_names)}
+
+    # Compute correlation matrix
+    corr_matrix = np.corrcoef(features_scaled.T)
+
+    # Rank features by importance
+    ranked_indices = np.argsort(importance_scores)[::-1]
+
+    # Select features avoiding high correlation
+    selected = []
+    selected_indices = []
+    removed_correlations = {}
+    details = []
+
+    for idx in ranked_indices:
+        feat_name = valid_names[idx]
+        feat_score = importance_scores[idx]
+
+        if len(selected) >= n_features:
+            details.append((feat_name, feat_score, 'Not needed (have enough)'))
+            continue
+
+        # Check correlation with already selected features
+        is_redundant = False
+        correlated_with = None
+        for sel_idx in selected_indices:
+            corr = abs(corr_matrix[idx, sel_idx])
+            if corr > correlation_threshold:
+                is_redundant = True
+                correlated_with = valid_names[sel_idx]
+                break
+
+        if is_redundant:
+            removed_correlations[feat_name] = correlated_with
+            details.append((feat_name, feat_score, f'Redundant (r={corr:.2f} with {correlated_with})'))
+        else:
+            selected.append(feat_name)
+            selected_indices.append(idx)
+            details.append((feat_name, feat_score, 'Selected'))
+
+    # If we couldn't get enough features due to correlation, add some back
+    if len(selected) < n_features:
+        for idx in ranked_indices:
+            if len(selected) >= n_features:
+                break
+            feat_name = valid_names[idx]
+            if feat_name not in selected:
+                selected.append(feat_name)
+                # Update details
+                for i, (name, score, reason) in enumerate(details):
+                    if name == feat_name and 'Redundant' in reason:
+                        details[i] = (name, score, 'Added (needed more features)')
+                        if feat_name in removed_correlations:
+                            del removed_correlations[feat_name]
+                        break
+
+    # Calculate total variance that could be explained
+    # Using as many PCs as we have selected features
+    total_var = sum(var_explained[:min(len(selected), len(var_explained))]) * 100
+
+    return {
+        'recommended': selected,
+        'scores': scores,
+        'removed_correlations': removed_correlations,
+        'variance_explained': total_var,
+        'details': details,
+        'error': None
+    }
+
+
 def create_app(data_dir=DATA_DIR):
     """Create the Dash application."""
     app = Dash(__name__)
@@ -1142,39 +1287,101 @@ def create_app(data_dir=DATA_DIR):
             dcc.Graph(id='histogram', style={'height': '450px'})
         ], style={'width': '95%', 'margin': '20px auto'}),
 
-        # Correlation Matrix (toggleable)
+        # Feature Analysis Section (unified)
         html.Div([
-            html.Div([
-                dcc.Checklist(
-                    id='show-correlation-matrix-checkbox',
-                    options=[{'label': ' Show Feature Correlation Matrix', 'value': 'show'}],
-                    value=[],
-                    style={'display': 'inline-block', 'marginRight': '20px', 'fontWeight': 'bold'}
-                ),
-                html.Span("(Computes Pearson R values between selected pulse features)",
-                         style={'color': '#666', 'fontSize': '12px', 'fontStyle': 'italic'})
-            ], style={'marginBottom': '10px'}),
-            html.Div([
-                dcc.Graph(id='correlation-matrix', style={'height': '700px'})
-            ], id='correlation-matrix-container', style={'display': 'none'})
-        ], style={'width': '95%', 'margin': '20px auto'}),
+            html.Details([
+                html.Summary("Feature Analysis", style={
+                    'fontWeight': 'bold', 'fontSize': '16px', 'cursor': 'pointer',
+                    'padding': '10px', 'backgroundColor': '#e8f4f8', 'borderRadius': '4px'
+                }),
+                html.Div([
+                    # Feature Recommendation Controls
+                    html.Div([
+                        html.H4("Optimal Feature Selection", style={'marginTop': '15px', 'marginBottom': '10px'}),
+                        html.P("Select optimal features based on PCA importance while avoiding redundant correlated features.",
+                               style={'color': '#666', 'fontSize': '12px', 'marginBottom': '15px'}),
+                        html.Div([
+                            html.Div([
+                                html.Label("Number of Features:", style={'fontWeight': 'bold'}),
+                                dcc.Input(
+                                    id='n-features-input',
+                                    type='number',
+                                    value=5,
+                                    min=1,
+                                    max=20,
+                                    step=1,
+                                    style={'width': '80px', 'marginLeft': '10px'}
+                                ),
+                            ], style={'display': 'inline-block', 'marginRight': '30px'}),
+                            html.Div([
+                                html.Label("Correlation Threshold:", style={'fontWeight': 'bold'}),
+                                dcc.Input(
+                                    id='correlation-threshold-input',
+                                    type='number',
+                                    value=0.85,
+                                    min=0.5,
+                                    max=0.99,
+                                    step=0.05,
+                                    style={'width': '80px', 'marginLeft': '10px'}
+                                ),
+                                html.Span(" (features above this |r| are considered redundant)",
+                                         style={'color': '#666', 'fontSize': '11px', 'marginLeft': '5px'})
+                            ], style={'display': 'inline-block', 'marginRight': '30px'}),
+                            html.Button("Calculate Best Features", id='calc-best-features-btn',
+                                       style={'backgroundColor': '#4CAF50', 'color': 'white',
+                                              'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
+                                              'cursor': 'pointer', 'fontWeight': 'bold'}),
+                            html.Button("Apply to Clustering", id='apply-recommended-features-btn',
+                                       style={'backgroundColor': '#2196F3', 'color': 'white',
+                                              'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
+                                              'cursor': 'pointer', 'fontWeight': 'bold', 'marginLeft': '10px',
+                                              'display': 'none'},
+                                       disabled=True),
+                        ], style={'marginBottom': '15px'}),
 
-        # PCA Loadings Table (toggleable)
-        html.Div([
-            html.Div([
-                dcc.Checklist(
-                    id='show-pca-loadings-checkbox',
-                    options=[{'label': ' Show PCA Loadings Table', 'value': 'show'}],
-                    value=[],
-                    style={'display': 'inline-block', 'marginRight': '20px', 'fontWeight': 'bold'}
-                ),
-                html.Span("(Shows how much each feature contributes to each principal component)",
-                         style={'color': '#666', 'fontSize': '12px', 'fontStyle': 'italic'})
-            ], style={'marginBottom': '10px'}),
-            html.Div([
-                dcc.Graph(id='pca-loadings', style={'height': '700px'})
-            ], id='pca-loadings-container', style={'display': 'none'})
-        ], style={'width': '95%', 'margin': '20px auto'}),
+                        # Recommended Features Display
+                        html.Div(id='recommended-features-display', style={
+                            'padding': '15px', 'backgroundColor': '#f5f5f5', 'borderRadius': '4px',
+                            'marginBottom': '20px', 'display': 'none'
+                        }),
+                    ], style={'padding': '10px', 'borderBottom': '1px solid #ddd'}),
+
+                    # Visualization Toggles
+                    html.Div([
+                        html.H4("Visualizations", style={'marginTop': '15px', 'marginBottom': '10px'}),
+                        html.Div([
+                            dcc.Checklist(
+                                id='show-correlation-matrix-checkbox',
+                                options=[{'label': ' Correlation Matrix', 'value': 'show'}],
+                                value=[],
+                                style={'display': 'inline-block', 'marginRight': '30px', 'fontWeight': 'bold'}
+                            ),
+                            dcc.Checklist(
+                                id='show-pca-loadings-checkbox',
+                                options=[{'label': ' PCA Loadings Table', 'value': 'show'}],
+                                value=[],
+                                style={'display': 'inline-block', 'fontWeight': 'bold'}
+                            ),
+                        ], style={'marginBottom': '10px'}),
+                        html.Span("Correlation Matrix: Pearson R values | PCA Loadings: Feature contributions to principal components",
+                                 style={'color': '#666', 'fontSize': '11px', 'fontStyle': 'italic'}),
+                    ], style={'padding': '10px'}),
+
+                    # Side-by-side visualization containers
+                    html.Div([
+                        html.Div([
+                            dcc.Graph(id='correlation-matrix', style={'height': '600px'})
+                        ], id='correlation-matrix-container', style={'display': 'none', 'width': '49%',
+                                                                      'verticalAlign': 'top'}),
+                        html.Div([
+                            dcc.Graph(id='pca-loadings', style={'height': '600px'})
+                        ], id='pca-loadings-container', style={'display': 'none', 'width': '49%',
+                                                               'verticalAlign': 'top'}),
+                    ], style={'marginTop': '10px'}),
+
+                ], style={'padding': '10px'})
+            ], open=False)
+        ], style={'width': '95%', 'margin': '20px auto', 'border': '1px solid #ddd', 'borderRadius': '4px'}),
 
         # PCA Plot (shown only for K-means)
         html.Div([
@@ -1189,6 +1396,7 @@ def create_app(data_dir=DATA_DIR):
         dcc.Store(id='selected-waveform-idx'),
         dcc.Store(id='feature-toggle-store', data=DEFAULT_VISIBLE_FEATURES),
         dcc.Store(id='reanalysis-trigger', data=0),
+        dcc.Store(id='recommended-features-store', data=[]),
     ])
 
     # Callbacks for pulse features selection buttons
@@ -1228,6 +1436,131 @@ def create_app(data_dir=DATA_DIR):
         elif triggered == 'cluster-features-reset':
             return DEFAULT_CLASSIFICATION_FEATURES
         return current_value
+
+    @app.callback(
+        [Output('recommended-features-display', 'children'),
+         Output('recommended-features-display', 'style'),
+         Output('recommended-features-store', 'data'),
+         Output('apply-recommended-features-btn', 'style'),
+         Output('apply-recommended-features-btn', 'disabled')],
+        [Input('calc-best-features-btn', 'n_clicks')],
+        [State('dataset-dropdown', 'value'),
+         State('n-features-input', 'value'),
+         State('correlation-threshold-input', 'value'),
+         State('pulse-features-checklist', 'value')],
+        prevent_initial_call=True
+    )
+    def calculate_recommended_features(n_clicks, prefix, n_features, corr_threshold, current_features):
+        """Calculate and display recommended features based on PCA and correlation analysis."""
+        hidden_style = {'display': 'none'}
+        btn_hidden = {'display': 'none'}
+
+        if not n_clicks or not prefix:
+            return [], hidden_style, [], btn_hidden, True
+
+        # Load data
+        data = loader.load_all(prefix)
+        if data['features'] is None or data['feature_names'] is None:
+            return html.Div("No feature data available", style={'color': 'red'}), \
+                   {'padding': '15px', 'backgroundColor': '#ffebee', 'borderRadius': '4px',
+                    'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True
+
+        # Get subset of features based on current selection
+        if current_features and len(current_features) > 0:
+            indices = []
+            names = []
+            for feat in current_features:
+                if feat in data['feature_names']:
+                    indices.append(data['feature_names'].index(feat))
+                    names.append(feat)
+            if len(indices) < 2:
+                return html.Div("Select at least 2 features to analyze", style={'color': 'orange'}), \
+                       {'padding': '15px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px',
+                        'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True
+            features_subset = data['features'][:, indices]
+            feature_names = names
+        else:
+            features_subset = data['features']
+            feature_names = list(data['feature_names'])
+
+        # Compute recommendations
+        n_features = min(n_features or 5, len(feature_names))
+        corr_threshold = corr_threshold or 0.85
+
+        result = compute_recommended_features(
+            features_subset, feature_names, n_features, corr_threshold
+        )
+
+        if result.get('error'):
+            return html.Div(f"Error: {result['error']}", style={'color': 'red'}), \
+                   {'padding': '15px', 'backgroundColor': '#ffebee', 'borderRadius': '4px',
+                    'marginBottom': '20px', 'display': 'block'}, [], btn_hidden, True
+
+        # Build display
+        recommended = result['recommended']
+        scores = result['scores']
+        details = result['details']
+        variance = result['variance_explained']
+        removed = result['removed_correlations']
+
+        # Create detailed table
+        table_rows = [
+            html.Tr([
+                html.Th("Feature", style={'textAlign': 'left', 'padding': '8px', 'borderBottom': '2px solid #ddd'}),
+                html.Th("Importance", style={'textAlign': 'center', 'padding': '8px', 'borderBottom': '2px solid #ddd'}),
+                html.Th("Status", style={'textAlign': 'left', 'padding': '8px', 'borderBottom': '2px solid #ddd'})
+            ])
+        ]
+
+        for feat, score, reason in details:
+            is_selected = 'Selected' in reason or 'Added' in reason
+            row_style = {'backgroundColor': '#e8f5e9' if is_selected else '#fff'}
+            status_color = '#2e7d32' if is_selected else ('#f57c00' if 'Redundant' in reason else '#757575')
+
+            table_rows.append(html.Tr([
+                html.Td(feat, style={'padding': '6px 8px', 'fontWeight': 'bold' if is_selected else 'normal'}),
+                html.Td(f"{score:.1f}", style={'padding': '6px 8px', 'textAlign': 'center'}),
+                html.Td(reason, style={'padding': '6px 8px', 'color': status_color, 'fontSize': '12px'})
+            ], style=row_style))
+
+        display_content = html.Div([
+            html.H5(f"Recommended Features ({len(recommended)} selected)", style={'marginBottom': '10px'}),
+            html.Div([
+                html.Span("Estimated Variance Coverage: ", style={'fontWeight': 'bold'}),
+                html.Span(f"{variance:.1f}%", style={'color': '#1976d2', 'fontWeight': 'bold', 'fontSize': '16px'}),
+                html.Span(f" (using top {len(recommended)} principal components)", style={'color': '#666', 'fontSize': '12px', 'marginLeft': '10px'})
+            ], style={'marginBottom': '15px'}),
+            html.Div([
+                html.Span("Selected: ", style={'fontWeight': 'bold'}),
+                html.Span(", ".join(recommended), style={'color': '#2e7d32', 'fontFamily': 'monospace'})
+            ], style={'marginBottom': '15px', 'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'}),
+            html.Details([
+                html.Summary("Show All Features Ranked by Importance", style={'cursor': 'pointer', 'fontWeight': 'bold', 'marginBottom': '10px'}),
+                html.Table(table_rows, style={'width': '100%', 'borderCollapse': 'collapse', 'fontSize': '13px'})
+            ], open=False)
+        ])
+
+        show_style = {'padding': '15px', 'backgroundColor': '#f5f5f5', 'borderRadius': '4px',
+                      'marginBottom': '20px', 'display': 'block'}
+
+        btn_style = {'backgroundColor': '#2196F3', 'color': 'white',
+                     'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
+                     'cursor': 'pointer', 'fontWeight': 'bold', 'marginLeft': '10px',
+                     'display': 'inline-block'}
+
+        return display_content, show_style, recommended, btn_style, False
+
+    @app.callback(
+        Output('pulse-features-checklist', 'value', allow_duplicate=True),
+        [Input('apply-recommended-features-btn', 'n_clicks')],
+        [State('recommended-features-store', 'data')],
+        prevent_initial_call=True
+    )
+    def apply_recommended_features(n_clicks, recommended):
+        """Apply recommended features to the pulse features checklist."""
+        if not n_clicks or not recommended:
+            raise PreventUpdate
+        return recommended
 
     @app.callback(
         [Output('reanalysis-status', 'children'),
@@ -1423,15 +1756,18 @@ def create_app(data_dir=DATA_DIR):
     )
     def update_correlation_matrix(show_corr, prefix, selected_features, reanalysis_trigger):
         """Update correlation matrix based on checkbox and selected features."""
+        hidden_style = {'display': 'none', 'width': '49%', 'verticalAlign': 'top'}
+        visible_style = {'display': 'inline-block', 'width': '49%', 'verticalAlign': 'top'}
+
         # Check if enabled
         if not show_corr or 'show' not in show_corr:
             empty_fig = go.Figure()
-            return empty_fig, {'display': 'none'}
+            return empty_fig, hidden_style
 
         if not prefix:
             empty_fig = go.Figure()
             empty_fig.update_layout(title="Correlation Matrix - No data")
-            return empty_fig, {'display': 'none'}
+            return empty_fig, hidden_style
 
         # Load data
         data = loader.load_all(prefix)
@@ -1443,7 +1779,7 @@ def create_app(data_dir=DATA_DIR):
             selected_features
         )
 
-        return corr_fig, {'display': 'block'}
+        return corr_fig, visible_style
 
     @app.callback(
         [Output('pca-loadings', 'figure'),
@@ -1455,15 +1791,18 @@ def create_app(data_dir=DATA_DIR):
     )
     def update_pca_loadings(show_loadings, prefix, selected_features, reanalysis_trigger):
         """Update PCA loadings table based on checkbox and selected features."""
+        hidden_style = {'display': 'none', 'width': '49%', 'verticalAlign': 'top'}
+        visible_style = {'display': 'inline-block', 'width': '49%', 'verticalAlign': 'top'}
+
         # Check if enabled
         if not show_loadings or 'show' not in show_loadings:
             empty_fig = go.Figure()
-            return empty_fig, {'display': 'none'}
+            return empty_fig, hidden_style
 
         if not prefix:
             empty_fig = go.Figure()
             empty_fig.update_layout(title="PCA Loadings - No data")
-            return empty_fig, {'display': 'none'}
+            return empty_fig, hidden_style
 
         # Load data
         data = loader.load_all(prefix)
@@ -1475,7 +1814,7 @@ def create_app(data_dir=DATA_DIR):
             selected_features
         )
 
-        return loadings_fig, {'display': 'block'}
+        return loadings_fig, visible_style
 
     @app.callback(
         [Output('waveform-plot', 'figure'),
