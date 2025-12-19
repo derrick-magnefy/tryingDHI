@@ -2697,6 +2697,7 @@ def create_app(data_dir=DATA_DIR):
 
         success_count = 0
         fail_count = 0
+        skip_count = 0
         results_details = []
 
         # Write initial progress
@@ -2715,17 +2716,43 @@ def create_app(data_dir=DATA_DIR):
                     results_details.append(f"✗ {dataset}: Could not determine path")
                     continue
 
+                # Check if features file exists
+                input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+                if not os.path.exists(input_file):
+                    skip_count += 1
+                    results_details.append(f"⊘ {dataset}: No features file (run feature extraction first)")
+                    continue
+
+                # Check which selected features exist in the file
+                try:
+                    with open(input_file, 'r') as f:
+                        header = f.readline().strip().split(',')
+                        available_features = set(header[1:])  # Skip waveform_index
+
+                    missing_features = [f for f in selected_features if f not in available_features]
+                    valid_features = [f for f in selected_features if f in available_features]
+
+                    if len(valid_features) < 2:
+                        skip_count += 1
+                        results_details.append(f"⊘ {dataset}: Only {len(valid_features)} valid features (need 2+). Missing: {', '.join(missing_features[:3])}{'...' if len(missing_features) > 3 else ''}")
+                        continue
+
+                    if missing_features:
+                        # Some features missing but enough to cluster
+                        results_details.append(f"⚠ {dataset}: Missing {len(missing_features)} features, using {len(valid_features)}")
+                except Exception as e:
+                    fail_count += 1
+                    results_details.append(f"✗ {dataset}: Error reading features file: {str(e)[:30]}")
+                    continue
+
                 # Run clustering
                 cmd = [
                     sys.executable, 'cluster_pulses.py',
                     '--input-dir', data_path,
                     '--method', method,
-                    '--features', features_str
+                    '--features', features_str,
+                    '--input', input_file
                 ]
-
-                input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
-                if os.path.exists(input_file):
-                    cmd.extend(['--input', input_file])
 
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
@@ -2748,14 +2775,27 @@ def create_app(data_dir=DATA_DIR):
                     subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
                     success_count += 1
-                    results_details.append(f"✓ {dataset}")
+                    if not any(dataset in d for d in results_details):
+                        results_details.append(f"✓ {dataset}")
+                    else:
+                        # Update the warning entry to show success
+                        for j, d in enumerate(results_details):
+                            if dataset in d and d.startswith("⚠"):
+                                results_details[j] = d.replace("⚠", "✓")
+                                break
                 else:
                     fail_count += 1
-                    results_details.append(f"✗ {dataset}: Clustering failed")
+                    error_hint = ""
+                    if result.stderr:
+                        if "No valid features" in result.stderr:
+                            error_hint = " (no valid features found)"
+                        elif "not found" in result.stderr.lower():
+                            error_hint = " (features not in file)"
+                    results_details.append(f"✗ {dataset}: Clustering failed{error_hint}")
 
             except subprocess.TimeoutExpired:
                 fail_count += 1
-                results_details.append(f"✗ {dataset}: Timeout")
+                results_details.append(f"✗ {dataset}: Timeout (>120s)")
             except Exception as e:
                 fail_count += 1
                 results_details.append(f"✗ {dataset}: {str(e)[:50]}")
@@ -2763,17 +2803,26 @@ def create_app(data_dir=DATA_DIR):
         # Clear progress when done
         clear_progress()
 
+        # Summary message
+        total_processed = success_count + fail_count + skip_count
+        if skip_count > 0:
+            summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets ({skip_count} skipped, {fail_count} failed)"
+        else:
+            summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets"
+
         return html.Div([
-            html.Div(f"Reclustered {success_count}/{len(datasets)} datasets",
-                    style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
+            html.Div(summary_msg,
+                    style={'color': '#2e7d32' if fail_count == 0 and skip_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
             html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
             html.Details([
                 html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
                 html.Div([html.Div(d, style={'fontSize': '11px'}) for d in results_details],
-                        style={'maxHeight': '100px', 'overflowY': 'auto', 'marginTop': '5px'})
+                        style={'maxHeight': '150px', 'overflowY': 'auto', 'marginTop': '5px'})
             ]) if results_details else None,
             html.Div("Refresh the page to see updated results.",
-                    style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
+                    style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'}),
+            html.Div("Tip: Datasets showing 'missing features' need feature re-extraction.",
+                    style={'fontSize': '11px', 'color': '#666', 'marginTop': '3px'}) if skip_count > 0 else None
         ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
 
     @app.callback(
