@@ -1557,6 +1557,48 @@ def create_app(data_dir=DATA_DIR):
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ], style={'marginBottom': '15px'}),
 
+                        # Cluster Decision Explanation Section
+                        html.Details([
+                            html.Summary("Cluster Decision Explanation", style={
+                                'cursor': 'pointer',
+                                'fontWeight': 'bold',
+                                'padding': '8px',
+                                'backgroundColor': '#e3f2fd',
+                                'borderRadius': '4px'
+                            }),
+                            html.Div([
+                                html.Div([
+                                    dcc.Checklist(
+                                        id='show-cluster-explanation-checkbox',
+                                        options=[{'label': ' Enable cluster decision explanation', 'value': 'show'}],
+                                        value=[],
+                                        style={'display': 'inline-block', 'marginRight': '20px'}
+                                    ),
+                                    html.Button("Generate Explanation", id='generate-cluster-explanation-btn',
+                                               style={'backgroundColor': '#1976d2', 'color': 'white',
+                                                      'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold'}),
+                                ], style={'marginBottom': '10px'}),
+                                html.P("Uses a decision tree to explain how clusters were assigned based on the selected features. "
+                                       "Shows interpretable rules like 'if phase_angle > 45° and rise_time < 10ns → Cluster 0'.",
+                                       style={'color': '#666', 'fontSize': '12px', 'marginBottom': '10px', 'fontStyle': 'italic'}),
+                                dcc.Loading(
+                                    id='cluster-explanation-loading',
+                                    type='circle',
+                                    children=html.Div(id='cluster-explanation-display', style={
+                                        'fontSize': '12px',
+                                        'fontFamily': 'monospace',
+                                        'backgroundColor': '#f8f9fa',
+                                        'padding': '10px',
+                                        'borderRadius': '4px',
+                                        'maxHeight': '400px',
+                                        'overflowY': 'auto',
+                                        'whiteSpace': 'pre-wrap'
+                                    })
+                                ),
+                            ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+                        ], style={'marginBottom': '15px'}),
+
                         # Row 3: Cluster Features for Classification
                         html.Details([
                             html.Summary("Cluster Features (for classification)", style={
@@ -2647,6 +2689,241 @@ def create_app(data_dir=DATA_DIR):
             return html.Div("Classification timed out (>60s)", style={'color': 'red', 'padding': '10px'})
         except Exception as e:
             return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
+
+    @app.callback(
+        Output('cluster-explanation-display', 'children'),
+        [Input('generate-cluster-explanation-btn', 'n_clicks')],
+        [State('show-cluster-explanation-checkbox', 'value'),
+         State('dataset-dropdown', 'value'),
+         State('clustering-method-radio', 'value'),
+         State('pulse-features-checklist', 'value')],
+        prevent_initial_call=True
+    )
+    def generate_cluster_explanation(n_clicks, show_explanation, dataset, clustering_method, selected_features):
+        """Generate a decision tree explanation of how clusters were assigned."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not show_explanation or 'show' not in show_explanation:
+            return html.Div("Enable the checkbox above to generate cluster explanations.",
+                          style={'color': '#666', 'fontStyle': 'italic'})
+
+        if not dataset:
+            return html.Div("No dataset selected", style={'color': 'red'})
+
+        # Get dataset paths
+        data_path = loader.get_dataset_path(dataset)
+        clean_prefix = loader.get_clean_prefix(dataset)
+
+        if not data_path or not clean_prefix:
+            return html.Div("Could not determine dataset path", style={'color': 'red'})
+
+        method = clustering_method or 'dbscan'
+
+        # Load features file
+        features_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+        cluster_file = os.path.join(data_path, f"{clean_prefix}-clusters-{method}.csv")
+
+        if not os.path.exists(features_file):
+            return html.Div(f"Features file not found: {features_file}", style={'color': 'red'})
+
+        if not os.path.exists(cluster_file):
+            return html.Div(f"Cluster file not found: {cluster_file}", style={'color': 'red'})
+
+        try:
+            from sklearn.tree import DecisionTreeClassifier
+            from sklearn.preprocessing import StandardScaler
+            import numpy as np
+
+            # Load features
+            features_data = []
+            feature_names = None
+            with open(features_file, 'r') as f:
+                header = f.readline().strip()
+                feature_names = header.split(',')[1:]  # Skip waveform_index
+                for line in f:
+                    parts = line.strip().split(',')
+                    if len(parts) > 1:
+                        values = [float(v) if v else 0.0 for v in parts[1:]]
+                        features_data.append(values)
+
+            features_array = np.array(features_data)
+
+            # Filter to selected features if specified
+            if selected_features:
+                feature_indices = []
+                used_feature_names = []
+                for feat in selected_features:
+                    if feat in feature_names:
+                        feature_indices.append(feature_names.index(feat))
+                        used_feature_names.append(feat)
+                if feature_indices:
+                    features_array = features_array[:, feature_indices]
+                    feature_names = used_feature_names
+
+            # Handle NaN/Inf
+            features_array = np.nan_to_num(features_array, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Load cluster labels
+            cluster_labels = []
+            with open(cluster_file, 'r') as f:
+                for line in f:
+                    if line.startswith('#') or line.startswith('waveform'):
+                        continue
+                    parts = line.strip().split(',')
+                    if len(parts) >= 2:
+                        cluster_labels.append(int(parts[1]))
+
+            cluster_labels = np.array(cluster_labels)
+
+            if len(features_array) != len(cluster_labels):
+                return html.Div(f"Mismatch: {len(features_array)} features vs {len(cluster_labels)} labels",
+                              style={'color': 'red'})
+
+            # Scale features for consistency with original clustering
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(features_array)
+
+            # Train decision tree to explain clusters
+            # Use max_depth to keep it interpretable
+            dt = DecisionTreeClassifier(max_depth=5, min_samples_leaf=max(5, len(cluster_labels) // 100), random_state=42)
+            dt.fit(features_scaled, cluster_labels)
+
+            # Calculate accuracy
+            accuracy = dt.score(features_scaled, cluster_labels)
+
+            # Get unique clusters
+            unique_clusters = sorted(set(cluster_labels))
+            n_clusters = len([c for c in unique_clusters if c != -1])
+            n_noise = np.sum(cluster_labels == -1) if -1 in cluster_labels else 0
+
+            # Extract rules from decision tree
+            def get_rules(tree, feature_names, scaler):
+                """Extract human-readable rules from a decision tree."""
+                tree_ = tree.tree_
+                feature_name = [
+                    feature_names[i] if i != -2 else "undefined!"
+                    for i in tree_.feature
+                ]
+
+                rules_by_class = {}
+
+                def recurse(node, depth, rule_parts):
+                    if tree_.feature[node] != -2:  # Not a leaf
+                        name = feature_name[node]
+                        threshold_scaled = tree_.threshold[node]
+
+                        # Get the feature index to unscale
+                        feat_idx = tree_.feature[node]
+                        # Unscale threshold: threshold_original = threshold_scaled * std + mean
+                        threshold_original = threshold_scaled * scaler.scale_[feat_idx] + scaler.mean_[feat_idx]
+
+                        # Left branch: <= threshold
+                        left_rule = f"{name} ≤ {threshold_original:.4g}"
+                        recurse(tree_.children_left[node], depth + 1, rule_parts + [left_rule])
+
+                        # Right branch: > threshold
+                        right_rule = f"{name} > {threshold_original:.4g}"
+                        recurse(tree_.children_right[node], depth + 1, rule_parts + [right_rule])
+                    else:
+                        # Leaf node - get class
+                        class_counts = tree_.value[node][0]
+                        predicted_class = int(np.argmax(class_counts))
+                        # Map back to actual cluster label
+                        actual_class = dt.classes_[predicted_class]
+                        n_samples = int(np.sum(class_counts))
+                        confidence = class_counts[predicted_class] / n_samples if n_samples > 0 else 0
+
+                        if actual_class not in rules_by_class:
+                            rules_by_class[actual_class] = []
+
+                        rules_by_class[actual_class].append({
+                            'conditions': rule_parts.copy(),
+                            'samples': n_samples,
+                            'confidence': confidence
+                        })
+
+                recurse(0, 0, [])
+                return rules_by_class
+
+            rules = get_rules(dt, feature_names, scaler)
+
+            # Build output
+            output_parts = []
+
+            # Summary
+            output_parts.append(html.Div([
+                html.H4("Cluster Decision Explanation", style={'marginBottom': '10px', 'color': '#1976d2'}),
+                html.Div(f"Dataset: {dataset}", style={'fontSize': '11px', 'color': '#666'}),
+                html.Div(f"Method: {method.upper()} | Clusters: {n_clusters}" +
+                        (f" | Noise points: {n_noise}" if n_noise > 0 else ""),
+                        style={'fontSize': '11px', 'color': '#666'}),
+                html.Div(f"Decision tree accuracy: {accuracy:.1%} (how well the tree approximates the clustering)",
+                        style={'fontSize': '11px', 'color': '#666', 'marginBottom': '15px'}),
+            ]))
+
+            # Rules for each cluster
+            for cluster_id in sorted(rules.keys()):
+                cluster_rules = rules[cluster_id]
+                cluster_name = "Noise" if cluster_id == -1 else f"Cluster {cluster_id}"
+                total_samples = sum(r['samples'] for r in cluster_rules)
+
+                cluster_section = [
+                    html.Div(f"━━━ {cluster_name} ({total_samples} pulses) ━━━",
+                            style={'fontWeight': 'bold', 'marginTop': '10px', 'marginBottom': '5px',
+                                   'color': '#d32f2f' if cluster_id == -1 else '#2e7d32'})
+                ]
+
+                # Sort rules by sample count
+                cluster_rules_sorted = sorted(cluster_rules, key=lambda x: -x['samples'])
+
+                for i, rule in enumerate(cluster_rules_sorted[:5]):  # Show top 5 rules per cluster
+                    if rule['conditions']:
+                        rule_text = " AND ".join(rule['conditions'])
+                    else:
+                        rule_text = "(default path)"
+
+                    cluster_section.append(
+                        html.Div([
+                            html.Span(f"Rule {i+1}: ", style={'fontWeight': 'bold'}),
+                            html.Span(f"IF {rule_text}"),
+                            html.Br(),
+                            html.Span(f"         → {rule['samples']} pulses ({rule['confidence']:.0%} confidence)",
+                                     style={'color': '#666', 'fontSize': '11px'})
+                        ], style={'marginBottom': '8px', 'paddingLeft': '10px'})
+                    )
+
+                if len(cluster_rules_sorted) > 5:
+                    cluster_section.append(
+                        html.Div(f"         ... and {len(cluster_rules_sorted) - 5} more rules",
+                                style={'color': '#999', 'fontSize': '11px', 'paddingLeft': '10px'})
+                    )
+
+                output_parts.append(html.Div(cluster_section))
+
+            # Feature importance
+            importances = dt.feature_importances_
+            importance_pairs = sorted(zip(feature_names, importances), key=lambda x: -x[1])
+            top_features = [(name, imp) for name, imp in importance_pairs if imp > 0.01][:10]
+
+            if top_features:
+                output_parts.append(html.Div([
+                    html.Div("━━━ Feature Importance ━━━",
+                            style={'fontWeight': 'bold', 'marginTop': '15px', 'marginBottom': '5px', 'color': '#1565c0'}),
+                    html.Div([
+                        html.Div(f"  {name}: {imp:.1%}", style={'fontSize': '11px'})
+                        for name, imp in top_features
+                    ])
+                ]))
+
+            return html.Div(output_parts)
+
+        except Exception as e:
+            import traceback
+            return html.Div([
+                html.Div(f"Error generating explanation: {str(e)}", style={'color': 'red'}),
+                html.Pre(traceback.format_exc(), style={'fontSize': '10px', 'color': '#666'})
+            ])
 
     def write_progress(operation, current, total, dataset):
         """Write progress to file for polling."""
