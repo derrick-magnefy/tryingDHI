@@ -97,6 +97,7 @@ FEATURE_NAMES = [
     'norm_equivalent_time',          # normalized by waveform duration
     'norm_equivalent_bandwidth',     # normalized by waveform duration
     'norm_cumulative_energy_rise_time',  # normalized by pulse_width
+    'norm_pulse_width',              # normalized by waveform duration
     'norm_dominant_frequency',       # normalized by Nyquist frequency
     'norm_center_frequency',         # normalized by Nyquist frequency
     'norm_bandwidth_3db',            # normalized by Nyquist frequency
@@ -660,6 +661,7 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
         # Normalized time features (by waveform duration)
         features['norm_equivalent_time'] = features['equivalent_time'] / waveform_duration if waveform_duration > 0 else 0.0
         features['norm_equivalent_bandwidth'] = features['equivalent_bandwidth'] / waveform_duration if waveform_duration > 0 else 0.0
+        features['norm_pulse_width'] = features['pulse_width'] / waveform_duration if waveform_duration > 0 else 0.0
 
         # Normalized frequency features (by Nyquist frequency)
         features['norm_dominant_frequency'] = features['dominant_frequency'] / nyquist_freq if nyquist_freq > 0 else 0.0

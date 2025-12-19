@@ -125,6 +125,7 @@ PULSE_FEATURES = [
     'norm_equivalent_time',
     'norm_equivalent_bandwidth',
     'norm_cumulative_energy_rise_time',
+    'norm_pulse_width',
     'norm_dominant_frequency',
     'norm_center_frequency',
     'norm_bandwidth_3db',
