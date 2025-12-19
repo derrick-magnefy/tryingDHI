@@ -2699,7 +2699,6 @@ def create_app(data_dir=DATA_DIR):
 
         success_count = 0
         fail_count = 0
-        skip_count = 0
         results_details = []
 
         # Write initial progress
@@ -2718,34 +2717,54 @@ def create_app(data_dir=DATA_DIR):
                     results_details.append(f"✗ {dataset}: Could not determine path")
                     continue
 
-                # Check if features file exists
+                # Check if features file exists and has all required features
                 input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+                needs_extraction = False
+                missing_features = []
+
                 if not os.path.exists(input_file):
-                    skip_count += 1
-                    results_details.append(f"⊘ {dataset}: No features file (run feature extraction first)")
-                    continue
+                    needs_extraction = True
+                else:
+                    # Check which selected features exist in the file
+                    try:
+                        with open(input_file, 'r') as f:
+                            header = f.readline().strip().split(',')
+                            available_features = set(header[1:])  # Skip waveform_index
 
-                # Check which selected features exist in the file
-                try:
-                    with open(input_file, 'r') as f:
-                        header = f.readline().strip().split(',')
-                        available_features = set(header[1:])  # Skip waveform_index
-
-                    missing_features = [f for f in selected_features if f not in available_features]
-                    valid_features = [f for f in selected_features if f in available_features]
-
-                    if len(valid_features) < 2:
-                        skip_count += 1
-                        results_details.append(f"⊘ {dataset}: Only {len(valid_features)} valid features (need 2+). Missing: {', '.join(missing_features[:3])}{'...' if len(missing_features) > 3 else ''}")
+                        missing_features = [f for f in selected_features if f not in available_features]
+                        if missing_features:
+                            needs_extraction = True
+                    except Exception as e:
+                        fail_count += 1
+                        results_details.append(f"✗ {dataset}: Error reading features file: {str(e)[:30]}")
                         continue
 
-                    if missing_features:
-                        # Some features missing but enough to cluster
-                        results_details.append(f"⚠ {dataset}: Missing {len(missing_features)} features, using {len(valid_features)}")
-                except Exception as e:
-                    fail_count += 1
-                    results_details.append(f"✗ {dataset}: Error reading features file: {str(e)[:30]}")
-                    continue
+                # Re-extract features if needed
+                if needs_extraction:
+                    write_progress('recluster', i + 1, len(datasets), f"{dataset} (extracting features...)")
+                    try:
+                        extract_cmd = [
+                            sys.executable, 'extract_features.py',
+                            '--input-dir', data_path,
+                            '--file', clean_prefix
+                        ]
+                        extract_result = subprocess.run(extract_cmd, capture_output=True, text=True, timeout=300)
+
+                        if extract_result.returncode != 0:
+                            fail_count += 1
+                            error_msg = extract_result.stderr[:100] if extract_result.stderr else "Unknown error"
+                            results_details.append(f"✗ {dataset}: Feature extraction failed - {error_msg}")
+                            continue
+
+                        results_details.append(f"↻ {dataset}: Re-extracted features ({len(missing_features)} were missing)")
+                    except subprocess.TimeoutExpired:
+                        fail_count += 1
+                        results_details.append(f"✗ {dataset}: Feature extraction timeout (>300s)")
+                        continue
+                    except Exception as e:
+                        fail_count += 1
+                        results_details.append(f"✗ {dataset}: Feature extraction error: {str(e)[:50]}")
+                        continue
 
                 # Run clustering
                 cmd = [
@@ -2777,14 +2796,15 @@ def create_app(data_dir=DATA_DIR):
                     subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
                     success_count += 1
-                    if not any(dataset in d for d in results_details):
+                    # Update re-extraction entry to show success, or add new success entry
+                    updated = False
+                    for j, d in enumerate(results_details):
+                        if dataset in d and (d.startswith("↻") or d.startswith("⚠")):
+                            results_details[j] = f"✓ {dataset}" + (" (re-extracted)" if d.startswith("↻") else "")
+                            updated = True
+                            break
+                    if not updated:
                         results_details.append(f"✓ {dataset}")
-                    else:
-                        # Update the warning entry to show success
-                        for j, d in enumerate(results_details):
-                            if dataset in d and d.startswith("⚠"):
-                                results_details[j] = d.replace("⚠", "✓")
-                                break
                 else:
                     fail_count += 1
                     error_hint = ""
@@ -2806,15 +2826,14 @@ def create_app(data_dir=DATA_DIR):
         clear_progress()
 
         # Summary message
-        total_processed = success_count + fail_count + skip_count
-        if skip_count > 0:
-            summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets ({skip_count} skipped, {fail_count} failed)"
+        if fail_count > 0:
+            summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets ({fail_count} failed)"
         else:
             summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets"
 
         return html.Div([
             html.Div(summary_msg,
-                    style={'color': '#2e7d32' if fail_count == 0 and skip_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
+                    style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
             html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
             html.Details([
                 html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
@@ -2822,9 +2841,7 @@ def create_app(data_dir=DATA_DIR):
                         style={'maxHeight': '150px', 'overflowY': 'auto', 'marginTop': '5px'})
             ]) if results_details else None,
             html.Div("Refresh the page to see updated results.",
-                    style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'}),
-            html.Div("Tip: Datasets showing 'missing features' need feature re-extraction.",
-                    style={'fontSize': '11px', 'color': '#666', 'marginTop': '3px'}) if skip_count > 0 else None
+                    style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
         ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
 
     @app.callback(
