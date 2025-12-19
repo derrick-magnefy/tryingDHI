@@ -82,6 +82,8 @@ FEATURE_NAMES = [
     'oscillation_count',
     'energy_charge_ratio',
     'signal_to_noise_ratio',
+    'pulse_count',              # number of distinct PD pulses in waveform
+    'is_multi_pulse',           # 1 if multiple pulses detected, 0 otherwise
     # Normalized features
     'norm_peak_amplitude_positive',  # normalized by noise_floor
     'norm_peak_amplitude_negative',  # normalized by noise_floor
@@ -196,6 +198,59 @@ def load_waveforms_tudelft(prefix, data_dir, channel=1):
     return waveforms, sample_interval, phase_data
 
 
+def detect_pulses(waveform, sample_interval, amplitude_threshold_ratio=0.3, min_pulse_separation_us=0.5):
+    """
+    Detect multiple distinct PD pulses within a single waveform.
+
+    A pulse is defined as a significant peak (above threshold) that is separated
+    from other pulses by a minimum time gap.
+
+    Args:
+        waveform: numpy array of waveform samples (baseline-corrected)
+        sample_interval: time between samples in seconds
+        amplitude_threshold_ratio: minimum peak height as ratio of max amplitude (default: 0.3 = 30%)
+        min_pulse_separation_us: minimum separation between pulses in microseconds (default: 0.5 µs)
+
+    Returns:
+        dict with:
+            - pulse_count: number of distinct pulses detected
+            - pulse_indices: list of peak indices for each pulse
+            - pulse_amplitudes: list of amplitudes for each pulse
+    """
+    from scipy.signal import find_peaks
+
+    # Get absolute waveform for peak detection
+    abs_wfm = np.abs(waveform)
+    max_amplitude = np.max(abs_wfm)
+
+    if max_amplitude == 0:
+        return {'pulse_count': 0, 'pulse_indices': [], 'pulse_amplitudes': []}
+
+    # Minimum height threshold for peaks
+    height_threshold = amplitude_threshold_ratio * max_amplitude
+
+    # Minimum distance between peaks (in samples)
+    min_distance_samples = int(min_pulse_separation_us * 1e-6 / sample_interval)
+    min_distance_samples = max(1, min_distance_samples)  # At least 1 sample
+
+    # Find peaks in absolute waveform
+    peaks, properties = find_peaks(
+        abs_wfm,
+        height=height_threshold,
+        distance=min_distance_samples,
+        prominence=height_threshold * 0.5  # Peaks should be prominent
+    )
+
+    # Get amplitudes at peak locations (use original waveform for signed amplitude)
+    pulse_amplitudes = [waveform[idx] for idx in peaks]
+
+    return {
+        'pulse_count': len(peaks),
+        'pulse_indices': peaks.tolist(),
+        'pulse_amplitudes': pulse_amplitudes
+    }
+
+
 class PDFeatureExtractor:
     """Extract features from partial discharge pulse waveforms."""
 
@@ -271,6 +326,11 @@ class PDFeatureExtractor:
         # === FREQUENCY-DOMAIN FEATURES ===
         spectral = self._extract_spectral_features(wfm)
         features.update(spectral)
+
+        # === MULTI-PULSE DETECTION ===
+        pulse_info = detect_pulses(wfm, self.sample_interval)
+        features['pulse_count'] = pulse_info['pulse_count']
+        features['is_multi_pulse'] = 1.0 if pulse_info['pulse_count'] > 1 else 0.0
 
         return features
 

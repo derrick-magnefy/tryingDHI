@@ -110,6 +110,8 @@ PULSE_FEATURES = [
     'oscillation_count',
     'energy_charge_ratio',
     'signal_to_noise_ratio',
+    'pulse_count',
+    'is_multi_pulse',
     # Normalized features (scale-independent)
     'norm_peak_amplitude_positive',
     'norm_peak_amplitude_negative',
