@@ -109,6 +109,7 @@ PULSE_FEATURES = [
     'zero_crossing_count',
     'oscillation_count',
     'energy_charge_ratio',
+    'signal_to_noise_ratio',
 ]
 
 # Default pulse features for clustering (all features selected by default)

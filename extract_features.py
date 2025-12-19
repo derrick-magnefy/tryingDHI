@@ -42,6 +42,12 @@ DATA_DIR = "Rugged Data Files"
 FORMAT_RUGGED = 'rugged'      # Original format with -WFMs.txt
 FORMAT_TUDELFT = 'tudelft'    # TU Delft format with _Ch1.wfm binary
 
+# ADC configuration for noise floor calculation
+# 12-bit ADC with -2V to +2V range
+ADC_BITS = 12
+ADC_RANGE_V = 4.0  # -2V to +2V = 4V total range
+ADC_STEP_V = ADC_RANGE_V / (2 ** ADC_BITS)  # ~0.977 mV per step
+
 # Feature names in order
 FEATURE_NAMES = [
     'phase_angle',
@@ -75,6 +81,7 @@ FEATURE_NAMES = [
     'zero_crossing_count',
     'oscillation_count',
     'energy_charge_ratio',
+    'signal_to_noise_ratio',
 ]
 
 
@@ -532,6 +539,16 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
         if (i + 1) % 500 == 0:
             print(f"    Processed {i + 1}/{len(waveforms)} waveforms")
 
+    # Calculate noise floor from minimum absolute amplitude across all pulses
+    abs_amplitudes = np.array([f['absolute_amplitude'] for f in all_features])
+    min_amplitude = np.min(abs_amplitudes)
+    noise_floor = max(ADC_STEP_V, min_amplitude - ADC_STEP_V)  # At least one ADC step
+    print(f"  Noise floor: {noise_floor*1000:.3f} mV (min amplitude: {min_amplitude*1000:.3f} mV)")
+
+    # Calculate signal-to-noise ratio for each pulse
+    for i, features in enumerate(all_features):
+        features['signal_to_noise_ratio'] = features['absolute_amplitude'] / noise_floor
+
     # Convert to matrix
     feature_matrix = np.array([[f[name] for name in FEATURE_NAMES] for f in all_features])
 
@@ -544,6 +561,9 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
         'feature_names': FEATURE_NAMES,
         'polarity_method': polarity_method,
         'data_format': data_format,
+        'noise_floor': noise_floor,
+        'min_amplitude': min_amplitude,
+        'adc_step_v': ADC_STEP_V,
     }
 
     return feature_matrix, metadata
