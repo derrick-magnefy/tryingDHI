@@ -789,8 +789,10 @@ def main():
     # Find files to process
     if args.file:
         prefixes = [args.file]
+        subdirs = {args.file: args.input_dir}  # Map prefix to directory
     else:
         prefixes = []
+        subdirs = {}  # Map prefix to directory for TU Delft subdirectories
 
         # Find Rugged format datasets (-WFMs.txt)
         wfm_files = glob.glob(os.path.join(args.input_dir, "*-WFMs.txt"))
@@ -798,8 +800,9 @@ def main():
             prefix = os.path.basename(f).replace("-WFMs.txt", "")
             if prefix not in prefixes:
                 prefixes.append(prefix)
+                subdirs[prefix] = args.input_dir
 
-        # Find TU Delft format datasets (*_Ch1.wfm)
+        # Find TU Delft format datasets (*_Ch1.wfm) in current directory
         tu_delft_files = glob.glob(os.path.join(args.input_dir, "*_Ch1.wfm"))
         for f in tu_delft_files:
             # Extract prefix: "1-Internal_45mm33_Ch1.wfm" -> "1-Internal_45mm33"
@@ -807,29 +810,52 @@ def main():
             prefix = basename.replace("_Ch1.wfm", "")
             if prefix not in prefixes:
                 prefixes.append(prefix)
+                subdirs[prefix] = args.input_dir
+
+        # Also search subdirectories for TU Delft format datasets
+        try:
+            for subdir in os.listdir(args.input_dir):
+                subdir_path = os.path.join(args.input_dir, subdir)
+                if os.path.isdir(subdir_path):
+                    tu_delft_files = glob.glob(os.path.join(subdir_path, "*_Ch1.wfm"))
+                    for f in tu_delft_files:
+                        basename = os.path.basename(f)
+                        prefix = basename.replace("_Ch1.wfm", "")
+                        if prefix not in prefixes:
+                            prefixes.append(prefix)
+                            subdirs[prefix] = subdir_path
+                            print(f"  Found TU Delft dataset in subdirectory: {subdir}/{prefix}")
+        except Exception as e:
+            print(f"  Warning: Could not search subdirectories: {e}")
 
     if not prefixes:
         print("No waveform files found!")
         print("  Looking for: *-WFMs.txt (Rugged format) or *_Ch1.wfm (TU Delft format)")
+        print("  Also searching subdirectories for TU Delft format")
         return
 
     print(f"\nFound {len(prefixes)} dataset(s) to process\n")
 
     # Process each dataset
     for prefix in sorted(prefixes):
+        # Get the correct directory for this dataset
+        data_dir = subdirs.get(prefix, args.input_dir)
+
         print(f"\n{'='*70}")
         print(f"Processing: {prefix}")
+        if data_dir != args.input_dir:
+            print(f"  Directory: {data_dir}")
         print("="*70)
 
         try:
-            feature_matrix, metadata = process_dataset(prefix, args.input_dir, args.polarity_method)
+            feature_matrix, metadata = process_dataset(prefix, data_dir, args.polarity_method)
 
-            # Determine output path
+            # Determine output path - save in the same directory as the source data
             if args.output:
                 output_path = args.output
             else:
                 ext = args.format
-                output_path = os.path.join(args.input_dir, f"{prefix}-features.{ext}")
+                output_path = os.path.join(data_dir, f"{prefix}-features.{ext}")
 
             # Save features
             save_features(feature_matrix, metadata, output_path, args.format)
