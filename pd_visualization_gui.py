@@ -110,6 +110,24 @@ PULSE_FEATURES = [
     'oscillation_count',
     'energy_charge_ratio',
     'signal_to_noise_ratio',
+    # Normalized features (scale-independent)
+    'norm_peak_amplitude_positive',
+    'norm_peak_amplitude_negative',
+    'norm_peak_to_peak_amplitude',
+    'norm_rms_amplitude',
+    'norm_slew_rate',
+    'norm_energy',
+    'norm_charge',
+    'norm_rise_time',
+    'norm_fall_time',
+    'norm_equivalent_time',
+    'norm_equivalent_bandwidth',
+    'norm_cumulative_energy_rise_time',
+    'norm_dominant_frequency',
+    'norm_center_frequency',
+    'norm_bandwidth_3db',
+    'norm_zero_crossing_rate',
+    'norm_oscillation_rate',
 ]
 
 # Default pulse features for clustering (all features selected by default)

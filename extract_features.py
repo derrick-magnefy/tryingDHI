@@ -82,6 +82,24 @@ FEATURE_NAMES = [
     'oscillation_count',
     'energy_charge_ratio',
     'signal_to_noise_ratio',
+    # Normalized features
+    'norm_peak_amplitude_positive',  # normalized by noise_floor
+    'norm_peak_amplitude_negative',  # normalized by noise_floor
+    'norm_peak_to_peak_amplitude',   # normalized by noise_floor
+    'norm_rms_amplitude',            # normalized by noise_floor
+    'norm_slew_rate',                # normalized by noise_floor/sample_interval
+    'norm_energy',                   # normalized by noise_floor^2 * duration
+    'norm_charge',                   # normalized by noise_floor * duration
+    'norm_rise_time',                # normalized by pulse_width
+    'norm_fall_time',                # normalized by pulse_width
+    'norm_equivalent_time',          # normalized by waveform duration
+    'norm_equivalent_bandwidth',     # normalized by waveform duration
+    'norm_cumulative_energy_rise_time',  # normalized by pulse_width
+    'norm_dominant_frequency',       # normalized by Nyquist frequency
+    'norm_center_frequency',         # normalized by Nyquist frequency
+    'norm_bandwidth_3db',            # normalized by Nyquist frequency
+    'norm_zero_crossing_rate',       # zero crossings per sample
+    'norm_oscillation_rate',         # oscillations per sample
 ]
 
 
@@ -545,9 +563,52 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
     noise_floor = max(ADC_STEP_V, min_amplitude - ADC_STEP_V)  # At least one ADC step
     print(f"  Noise floor: {noise_floor*1000:.3f} mV (min amplitude: {min_amplitude*1000:.3f} mV)")
 
-    # Calculate signal-to-noise ratio for each pulse
+    # Get normalization constants
+    n_samples = len(waveforms[0]) if waveforms else 1
+    waveform_duration = n_samples * sample_interval
+    nyquist_freq = 1.0 / (2.0 * sample_interval)  # Nyquist frequency
+
+    print(f"  Normalizing features (duration: {waveform_duration*1e6:.2f} µs, Nyquist: {nyquist_freq/1e6:.2f} MHz)")
+
+    # Calculate SNR and normalized features for each pulse
     for i, features in enumerate(all_features):
+        # Signal-to-noise ratio
         features['signal_to_noise_ratio'] = features['absolute_amplitude'] / noise_floor
+
+        # Normalized amplitude features (by noise_floor)
+        features['norm_peak_amplitude_positive'] = features['peak_amplitude_positive'] / noise_floor
+        features['norm_peak_amplitude_negative'] = features['peak_amplitude_negative'] / noise_floor
+        features['norm_peak_to_peak_amplitude'] = features['peak_to_peak_amplitude'] / noise_floor
+        features['norm_rms_amplitude'] = features['rms_amplitude'] / noise_floor
+
+        # Normalized slew rate (by noise_floor / sample_interval)
+        slew_rate_ref = noise_floor / sample_interval
+        features['norm_slew_rate'] = features['slew_rate'] / slew_rate_ref if slew_rate_ref > 0 else 0.0
+
+        # Normalized energy features
+        energy_ref = noise_floor**2 * waveform_duration
+        charge_ref = noise_floor * waveform_duration
+        features['norm_energy'] = features['energy'] / energy_ref if energy_ref > 0 else 0.0
+        features['norm_charge'] = features['charge'] / charge_ref if charge_ref > 0 else 0.0
+
+        # Normalized time features (by pulse_width, fallback to waveform duration)
+        time_ref = features['pulse_width'] if features['pulse_width'] > 0 else waveform_duration
+        features['norm_rise_time'] = features['rise_time'] / time_ref if time_ref > 0 else 0.0
+        features['norm_fall_time'] = features['fall_time'] / time_ref if time_ref > 0 else 0.0
+        features['norm_cumulative_energy_rise_time'] = features['cumulative_energy_rise_time'] / time_ref if time_ref > 0 else 0.0
+
+        # Normalized time features (by waveform duration)
+        features['norm_equivalent_time'] = features['equivalent_time'] / waveform_duration if waveform_duration > 0 else 0.0
+        features['norm_equivalent_bandwidth'] = features['equivalent_bandwidth'] / waveform_duration if waveform_duration > 0 else 0.0
+
+        # Normalized frequency features (by Nyquist frequency)
+        features['norm_dominant_frequency'] = features['dominant_frequency'] / nyquist_freq if nyquist_freq > 0 else 0.0
+        features['norm_center_frequency'] = features['center_frequency'] / nyquist_freq if nyquist_freq > 0 else 0.0
+        features['norm_bandwidth_3db'] = features['bandwidth_3db'] / nyquist_freq if nyquist_freq > 0 else 0.0
+
+        # Normalized count features (rate per sample)
+        features['norm_zero_crossing_rate'] = features['zero_crossing_count'] / n_samples
+        features['norm_oscillation_rate'] = features['oscillation_count'] / n_samples
 
     # Convert to matrix
     feature_matrix = np.array([[f[name] for name in FEATURE_NAMES] for f in all_features])
