@@ -81,6 +81,7 @@ PULSE_FEATURES = [
     'phase_angle',
     'peak_amplitude_positive',
     'peak_amplitude_negative',
+    'absolute_amplitude',
     'polarity',
     'rise_time',
     'fall_time',

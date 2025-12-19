@@ -47,6 +47,7 @@ FEATURE_NAMES = [
     'phase_angle',
     'peak_amplitude_positive',
     'peak_amplitude_negative',
+    'absolute_amplitude',
     'polarity',
     'rise_time',
     'fall_time',
@@ -214,6 +215,7 @@ class PDFeatureExtractor:
         features['phase_angle'] = phase_angle if phase_angle is not None else 0.0
         features['peak_amplitude_positive'] = np.max(wfm)
         features['peak_amplitude_negative'] = np.min(wfm)
+        features['absolute_amplitude'] = max(abs(features['peak_amplitude_positive']), abs(features['peak_amplitude_negative']))
         features['peak_to_peak_amplitude'] = features['peak_amplitude_positive'] - features['peak_amplitude_negative']
 
         # Polarity: calculated using the configured polarity method
