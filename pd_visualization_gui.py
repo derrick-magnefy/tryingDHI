@@ -154,6 +154,110 @@ CLUSTER_FEATURES = [
 # Default cluster features for classification (all features selected by default)
 DEFAULT_CLASSIFICATION_FEATURES = CLUSTER_FEATURES.copy()
 
+# ADC configuration for noise threshold calculation
+# 12-bit ADC with -2V to +2V range
+ADC_BITS = 12
+ADC_RANGE_V = 4.0  # -2V to +2V = 4V total range
+ADC_STEP_V = ADC_RANGE_V / (2 ** ADC_BITS)  # ~0.977 mV per step
+
+
+def calculate_noise_threshold(features, feature_names):
+    """Calculate noise threshold from dataset features.
+
+    The noise threshold is the minimum absolute peak amplitude minus one ADC step.
+    This represents the smallest signal that can be reliably distinguished from noise.
+
+    Args:
+        features: Feature matrix (n_samples x n_features)
+        feature_names: List of feature names
+
+    Returns:
+        dict with noise threshold info, or None if features not available
+    """
+    if features is None or feature_names is None:
+        return None
+
+    # Get absolute amplitude or calculate from peak amplitudes
+    if 'absolute_amplitude' in feature_names:
+        amp_idx = feature_names.index('absolute_amplitude')
+        abs_amplitudes = features[:, amp_idx]
+    else:
+        # Fall back to calculating from positive/negative peaks
+        pos_idx = feature_names.index('peak_amplitude_positive') if 'peak_amplitude_positive' in feature_names else None
+        neg_idx = feature_names.index('peak_amplitude_negative') if 'peak_amplitude_negative' in feature_names else None
+
+        if pos_idx is None or neg_idx is None:
+            return None
+
+        pos_amps = features[:, pos_idx]
+        neg_amps = features[:, neg_idx]
+        abs_amplitudes = np.maximum(np.abs(pos_amps), np.abs(neg_amps))
+
+    # Calculate statistics
+    min_amplitude = float(np.min(abs_amplitudes))
+    noise_threshold = max(0, min_amplitude - ADC_STEP_V)
+
+    return {
+        'min_absolute_amplitude': min_amplitude,
+        'adc_step_v': ADC_STEP_V,
+        'noise_threshold': noise_threshold,
+        'adc_bits': ADC_BITS,
+        'adc_range_v': ADC_RANGE_V,
+        'n_samples': len(abs_amplitudes),
+        'mean_amplitude': float(np.mean(abs_amplitudes)),
+        'std_amplitude': float(np.std(abs_amplitudes)),
+    }
+
+
+def save_dataset_metadata(data_path, prefix, metadata):
+    """Save dataset metadata to JSON file.
+
+    Args:
+        data_path: Directory containing dataset files
+        prefix: Dataset prefix (clean name)
+        metadata: Dict of metadata to save
+    """
+    metadata_file = os.path.join(data_path, f"{prefix}-metadata.json")
+
+    # Load existing metadata if present
+    existing = {}
+    if os.path.exists(metadata_file):
+        try:
+            with open(metadata_file, 'r') as f:
+                existing = json.load(f)
+        except Exception:
+            pass
+
+    # Merge with new metadata
+    existing.update(metadata)
+
+    # Save
+    with open(metadata_file, 'w') as f:
+        json.dump(existing, f, indent=2)
+
+
+def load_dataset_metadata(data_path, prefix):
+    """Load dataset metadata from JSON file.
+
+    Args:
+        data_path: Directory containing dataset files
+        prefix: Dataset prefix (clean name)
+
+    Returns:
+        Dict of metadata, or empty dict if not found
+    """
+    metadata_file = os.path.join(data_path, f"{prefix}-metadata.json")
+
+    if os.path.exists(metadata_file):
+        try:
+            with open(metadata_file, 'r') as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return {}
+
+
 # Color schemes
 PD_TYPE_COLORS = {
     'NOISE': '#808080',      # Gray
@@ -1304,6 +1408,17 @@ def create_app(data_dir=DATA_DIR):
                     persistence_type='local'
                 ),
             ], style={'width': '60%', 'display': 'inline-block', 'marginRight': '2%'}),
+
+            # Noise Threshold Display
+            html.Div([
+                html.Div([
+                    html.Label("Noise Threshold:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                    html.Span(id='noise-threshold-display', style={'marginRight': '10px'}),
+                    html.Button("Calculate", id='calc-noise-threshold-btn', n_clicks=0,
+                               style={'padding': '2px 8px', 'fontSize': '12px', 'cursor': 'pointer'}),
+                ], style={'display': 'flex', 'alignItems': 'center'}),
+                html.Div(id='noise-threshold-details', style={'fontSize': '11px', 'color': '#666', 'marginTop': '3px'}),
+            ], style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
 
         # Advanced Options (collapsible)
@@ -1917,6 +2032,77 @@ def create_app(data_dir=DATA_DIR):
             return stored_data[dataset]
         # Don't change if no saved selection - keeps current/default selection
         raise PreventUpdate
+
+    # Load noise threshold when dataset changes
+    @app.callback(
+        [Output('noise-threshold-display', 'children'),
+         Output('noise-threshold-details', 'children')],
+        [Input('dataset-dropdown', 'value')]
+    )
+    def load_noise_threshold(dataset):
+        if not dataset:
+            return "N/A", ""
+
+        data_path = loader.get_dataset_path(dataset)
+        clean_prefix = loader.get_clean_prefix(dataset)
+
+        if not data_path or not clean_prefix:
+            return "N/A", ""
+
+        # Try to load from metadata file
+        metadata = load_dataset_metadata(data_path, clean_prefix)
+
+        if 'noise_threshold' in metadata:
+            threshold = metadata['noise_threshold']
+            min_amp = metadata.get('min_absolute_amplitude', 0)
+            n_samples = metadata.get('n_samples', 0)
+            return (
+                f"{threshold*1000:.3f} mV",
+                f"Min amplitude: {min_amp*1000:.3f} mV | Samples: {n_samples} | ADC step: {ADC_STEP_V*1000:.3f} mV"
+            )
+
+        return "Not calculated", "Click Calculate to compute"
+
+    # Calculate noise threshold when button is clicked
+    @app.callback(
+        [Output('noise-threshold-display', 'children', allow_duplicate=True),
+         Output('noise-threshold-details', 'children', allow_duplicate=True)],
+        [Input('calc-noise-threshold-btn', 'n_clicks')],
+        [State('dataset-dropdown', 'value')],
+        prevent_initial_call=True
+    )
+    def calculate_and_save_noise_threshold(n_clicks, dataset):
+        if not n_clicks or not dataset:
+            raise PreventUpdate
+
+        data_path = loader.get_dataset_path(dataset)
+        clean_prefix = loader.get_clean_prefix(dataset)
+
+        if not data_path or not clean_prefix:
+            return "Error", "Could not determine dataset path"
+
+        # Load features
+        data = loader.load_all(dataset)
+        if data['features'] is None or data['feature_names'] is None:
+            return "Error", "No feature data available"
+
+        # Calculate noise threshold
+        threshold_info = calculate_noise_threshold(data['features'], data['feature_names'])
+
+        if threshold_info is None:
+            return "Error", "Could not calculate threshold (missing amplitude features)"
+
+        # Save to metadata file
+        save_dataset_metadata(data_path, clean_prefix, threshold_info)
+
+        threshold = threshold_info['noise_threshold']
+        min_amp = threshold_info['min_absolute_amplitude']
+        n_samples = threshold_info['n_samples']
+
+        return (
+            f"{threshold*1000:.3f} mV",
+            f"Min amplitude: {min_amp*1000:.3f} mV | Samples: {n_samples} | ADC step: {ADC_STEP_V*1000:.3f} mV"
+        )
 
     @app.callback(
         [Output('recommended-features-display', 'children'),
