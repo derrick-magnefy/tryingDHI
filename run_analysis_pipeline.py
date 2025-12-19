@@ -376,6 +376,18 @@ def main():
         default=None,
         help='Process specific file prefix only'
     )
+    parser.add_argument(
+        '--pulse-features',
+        type=str,
+        default=None,
+        help='Comma-separated list of pulse features to use for clustering (default: all)'
+    )
+    parser.add_argument(
+        '--cluster-features',
+        type=str,
+        default=None,
+        help='Comma-separated list of cluster features to use for classification (default: all)'
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -429,6 +441,10 @@ def main():
                 if args.eps is not None:
                     cmd.extend(['--eps', str(args.eps)])
 
+            # Add pulse features selection if specified
+            if args.pulse_features:
+                cmd.extend(['--features', args.pulse_features])
+
             if args.file:
                 # Need to specify input file with features suffix
                 input_file = os.path.join(args.input_dir, f"{args.file}-features.csv")
@@ -475,6 +491,10 @@ def main():
 
             if args.file:
                 cmd.extend(['--file', args.file])
+
+            # Add cluster features selection if specified
+            if args.cluster_features:
+                cmd.extend(['--cluster-features', args.cluster_features])
 
             success = run_command(cmd, f"PD Type Classification ({method.upper()})")
             if success:

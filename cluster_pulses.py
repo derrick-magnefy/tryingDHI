@@ -13,6 +13,7 @@ Options:
     --n-clusters N  Number of clusters for K-means (default: 5)
     --eps EPS       DBSCAN epsilon parameter (default: auto)
     --min-samples N DBSCAN min_samples parameter (default: 5)
+    --features      Comma-separated list of features to use (default: all)
 """
 
 import numpy as np
@@ -145,7 +146,7 @@ def run_kmeans(X_scaled, n_clusters=5):
     return labels, info
 
 
-def save_cluster_labels(labels, output_path, feature_file, info):
+def save_cluster_labels(labels, output_path, feature_file, info, used_features=None):
     """Save cluster labels and metadata to file."""
     with open(output_path, 'w') as f:
         # Write header with metadata
@@ -163,6 +164,10 @@ def save_cluster_labels(labels, output_path, feature_file, info):
         if 'silhouette_score' in info and info['silhouette_score'] is not None:
             f.write(f"# Silhouette_score: {info['silhouette_score']:.4f}\n")
 
+        # Save features used for clustering
+        if used_features:
+            f.write(f"# Features_used: {','.join(used_features)}\n")
+
         f.write("#\n")
         f.write("waveform_index,cluster_label\n")
 
@@ -170,7 +175,7 @@ def save_cluster_labels(labels, output_path, feature_file, info):
             f.write(f"{i},{label}\n")
 
 
-def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=5):
+def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=5, selected_features=None):
     """
     Process a single features file and perform clustering.
 
@@ -180,6 +185,7 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
         n_clusters: Number of clusters for K-means
         eps: DBSCAN epsilon (auto if None)
         min_samples: DBSCAN min_samples
+        selected_features: List of feature names to use (None = all)
 
     Returns:
         tuple: (labels, info, output_path)
@@ -190,6 +196,28 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
     print("  Loading features...")
     features, feature_names = load_features(filepath)
     print(f"  Loaded {features.shape[0]} samples with {features.shape[1]} features")
+
+    # Filter to selected features if specified
+    used_features = None
+    if selected_features:
+        # Find indices of selected features
+        feature_indices = []
+        used_features = []
+        for feat in selected_features:
+            if feat in feature_names:
+                feature_indices.append(feature_names.index(feat))
+                used_features.append(feat)
+            else:
+                print(f"  Warning: Feature '{feat}' not found, skipping")
+
+        if not feature_indices:
+            raise ValueError("No valid features selected for clustering")
+
+        features = features[:, feature_indices]
+        print(f"  Using {len(used_features)} selected features: {', '.join(used_features[:5])}{'...' if len(used_features) > 5 else ''}")
+    else:
+        used_features = feature_names.copy()  # All features used
+        print(f"  Using all {len(feature_names)} features")
 
     # Handle infinite values
     features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
@@ -224,7 +252,7 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
 
     # Save results
     output_path = filepath.replace('-features.csv', f'-clusters-{method}.csv')
-    save_cluster_labels(labels, output_path, filepath, info)
+    save_cluster_labels(labels, output_path, filepath, info, used_features)
     print(f"  Saved to: {output_path}")
 
     return labels, info, output_path
@@ -271,7 +299,18 @@ def main():
         default=5,
         help='DBSCAN min_samples parameter (default: 5)'
     )
+    parser.add_argument(
+        '--features',
+        type=str,
+        default=None,
+        help='Comma-separated list of features to use for clustering (default: all features)'
+    )
     args = parser.parse_args()
+
+    # Parse features list if provided
+    selected_features = None
+    if args.features:
+        selected_features = [f.strip() for f in args.features.split(',') if f.strip()]
 
     print("=" * 70)
     print("PD PULSE CLUSTERING")
@@ -283,6 +322,10 @@ def main():
     else:
         print(f"DBSCAN min_samples: {args.min_samples}")
         print(f"DBSCAN eps: {'auto' if args.eps is None else args.eps}")
+    if selected_features:
+        print(f"Features: {len(selected_features)} selected")
+    else:
+        print("Features: all")
     print("=" * 70)
 
     # Find files to process
@@ -306,7 +349,8 @@ def main():
                 method=args.method,
                 n_clusters=args.n_clusters,
                 eps=args.eps,
-                min_samples=args.min_samples
+                min_samples=args.min_samples,
+                selected_features=selected_features
             )
             results.append({
                 'file': filepath,

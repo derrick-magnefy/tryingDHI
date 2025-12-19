@@ -50,11 +50,11 @@ SYMMETRY_THRESHOLDS = {
     'min_asymmetry_corona': 0.4,              # |asymmetry| > 0.4 = corona (was 0.6 - too strict)
     'min_halfcycle_dominance_corona': 65.0,   # >65% in one half-cycle suggests corona
 
-    # Internal: symmetric, peaks at 90° and 270°
+    # Internal: symmetric, peaks at 90deg and 270deg
     'internal_phase_q1_range': (45, 135),     # Quadrant 1 peak region
     'internal_phase_q3_range': (225, 315),    # Quadrant 3 peak region
 
-    # Surface: near zero-crossings (0°, 180°, 360°)
+    # Surface: near zero-crossings (0deg, 180deg, 360deg)
     'surface_phase_tolerance': 45,            # Degrees from zero-crossing
 }
 
@@ -93,7 +93,7 @@ PD_TYPES = {
         'description': 'Corona discharge (surface ionization in gas/air)',
         'characteristics': [
             'Highly asymmetric - predominantly in one half-cycle',
-            'Phase concentrated near voltage peaks (0-180° or 180-360°)',
+            'Phase concentrated near voltage peaks (0-180deg or 180-360deg)',
             'Fast rise times (<20ns typical)',
             'Higher amplitude variability',
             '"Rabbit ear" or "wing" pattern in PRPD',
@@ -105,8 +105,8 @@ PD_TYPES = {
         'characteristics': [
             'Symmetric discharge in both half-cycles',
             'High cross-correlation between half-cycles (>0.7)',
-            'Phase peaks near 90° and 270° (voltage peaks)',
-            'Uniform amplitude distribution (Weibull β > 2)',
+            'Phase peaks near 90deg and 270deg (voltage peaks)',
+            'Uniform amplitude distribution (Weibull beta > 2)',
             'Moderate rise times',
         ]
     },
@@ -114,7 +114,7 @@ PD_TYPES = {
         'code': 3,
         'description': 'Surface discharge (tracking/creeping discharge)',
         'characteristics': [
-            'Activity near zero-crossings (0°, 180°)',
+            'Activity near zero-crossings (0deg, 180deg)',
             'Moderate asymmetry',
             'May show tracking patterns',
             'Variable rise times',
@@ -162,9 +162,23 @@ class PDTypeClassifier:
         - Amplitude ratios
     """
 
-    def __init__(self, verbose=True):
+    def __init__(self, verbose=True, selected_features=None):
         self.verbose = verbose
         self.classification_log = []
+        # If selected_features is None, use all features
+        self.selected_features = selected_features
+
+    def _is_feature_enabled(self, feature_name):
+        """Check if a feature should be used in classification."""
+        if self.selected_features is None:
+            return True
+        return feature_name in self.selected_features
+
+    def _get_feature(self, cluster_features, feature_name, default=0):
+        """Get a feature value if enabled, otherwise return default."""
+        if not self._is_feature_enabled(feature_name):
+            return default
+        return cluster_features.get(feature_name, default)
 
     def classify(self, cluster_features, cluster_label, pulse_features=None):
         """
@@ -187,9 +201,9 @@ class PDTypeClassifier:
             'warnings': [],
         }
 
-        # Extract key features
-        n_pulses = cluster_features.get('pulses_per_positive_halfcycle', 0) + \
-                   cluster_features.get('pulses_per_negative_halfcycle', 0)
+        # Extract key features using helper to respect feature selection
+        n_pulses = self._get_feature(cluster_features, 'pulses_per_positive_halfcycle', 0) + \
+                   self._get_feature(cluster_features, 'pulses_per_negative_halfcycle', 0)
 
         # =====================================================================
         # BRANCH 1: NOISE DETECTION
@@ -215,7 +229,7 @@ class PDTypeClassifier:
             return result
 
         # Check coefficient of variation
-        cv = cluster_features.get('coefficient_of_variation', 0)
+        cv = self._get_feature(cluster_features, 'coefficient_of_variation', 0)
         if cv > NOISE_THRESHOLDS['max_coefficient_of_variation']:
             result['warnings'].append(
                 f"High amplitude variability (CV={cv:.2f}) - possible noise contamination"
@@ -228,9 +242,9 @@ class PDTypeClassifier:
         # =====================================================================
         result['branch_path'].append('Branch 2: Phase Correlation')
 
-        cross_corr = cluster_features.get('cross_correlation', 0)
-        asymmetry = cluster_features.get('discharge_asymmetry', 0)
-        phase_spread = cluster_features.get('phase_spread', 0)
+        cross_corr = self._get_feature(cluster_features, 'cross_correlation', 0)
+        asymmetry = self._get_feature(cluster_features, 'discharge_asymmetry', 0)
+        phase_spread = self._get_feature(cluster_features, 'phase_spread', 0)
 
         is_symmetric = (
             cross_corr > PHASE_CORRELATION_THRESHOLDS['min_cross_correlation_symmetric'] and
@@ -244,7 +258,7 @@ class PDTypeClassifier:
 
         result['reasoning'].append(
             f"Phase correlation: cross_corr={cross_corr:.3f}, asymmetry={asymmetry:.3f}, "
-            f"spread={phase_spread:.1f}°"
+            f"spread={phase_spread:.1f}deg"
         )
 
         # =====================================================================
@@ -252,13 +266,13 @@ class PDTypeClassifier:
         # =====================================================================
         result['branch_path'].append('Branch 3: Quadrant Distribution')
 
-        q1 = cluster_features.get('quadrant_1_percentage', 0)
-        q2 = cluster_features.get('quadrant_2_percentage', 0)
-        q3 = cluster_features.get('quadrant_3_percentage', 0)
-        q4 = cluster_features.get('quadrant_4_percentage', 0)
+        q1 = self._get_feature(cluster_features, 'quadrant_1_percentage', 0)
+        q2 = self._get_feature(cluster_features, 'quadrant_2_percentage', 0)
+        q3 = self._get_feature(cluster_features, 'quadrant_3_percentage', 0)
+        q4 = self._get_feature(cluster_features, 'quadrant_4_percentage', 0)
 
-        positive_half = q1 + q2  # 0-180°
-        negative_half = q3 + q4  # 180-360°
+        positive_half = q1 + q2  # 0-180deg
+        negative_half = q3 + q4  # 180-360deg
 
         result['reasoning'].append(
             f"Quadrant distribution: Q1={q1:.1f}%, Q2={q2:.1f}%, Q3={q3:.1f}%, Q4={q4:.1f}%"
@@ -272,24 +286,24 @@ class PDTypeClassifier:
         # =====================================================================
         result['branch_path'].append('Branch 4: Phase Location')
 
-        phase_max = cluster_features.get('phase_of_max_activity', 0)
-        inception = cluster_features.get('inception_phase', 0)
-        extinction = cluster_features.get('extinction_phase', 0)
+        phase_max = self._get_feature(cluster_features, 'phase_of_max_activity', 0)
+        inception = self._get_feature(cluster_features, 'inception_phase', 0)
+        extinction = self._get_feature(cluster_features, 'extinction_phase', 0)
 
-        # Check if near zero-crossings (0°, 180°, 360°)
+        # Check if near zero-crossings (0deg, 180deg, 360deg)
         near_zero_crossing = (
             phase_max < SYMMETRY_THRESHOLDS['surface_phase_tolerance'] or
             abs(phase_max - 180) < SYMMETRY_THRESHOLDS['surface_phase_tolerance'] or
             phase_max > (360 - SYMMETRY_THRESHOLDS['surface_phase_tolerance'])
         )
 
-        # Check if at voltage peaks (90°, 270°)
+        # Check if at voltage peaks (90deg, 270deg)
         near_positive_peak = 45 < phase_max < 135
         near_negative_peak = 225 < phase_max < 315
 
         result['reasoning'].append(
-            f"Phase location: max_activity={phase_max:.1f}°, "
-            f"inception={inception:.1f}°, extinction={extinction:.1f}°"
+            f"Phase location: max_activity={phase_max:.1f}deg, "
+            f"inception={inception:.1f}deg, extinction={extinction:.1f}deg"
         )
 
         # =====================================================================
@@ -297,11 +311,11 @@ class PDTypeClassifier:
         # =====================================================================
         result['branch_path'].append('Branch 5: Amplitude Analysis')
 
-        weibull_beta = cluster_features.get('weibull_beta', 0)
-        mean_amp_pos = cluster_features.get('mean_amplitude_positive', 0)
-        mean_amp_neg = cluster_features.get('mean_amplitude_negative', 0)
-        max_amp_pos = cluster_features.get('max_amplitude_positive', 0)
-        max_amp_neg = cluster_features.get('max_amplitude_negative', 0)
+        weibull_beta = self._get_feature(cluster_features, 'weibull_beta', 0)
+        mean_amp_pos = self._get_feature(cluster_features, 'mean_amplitude_positive', 0)
+        mean_amp_neg = self._get_feature(cluster_features, 'mean_amplitude_negative', 0)
+        max_amp_pos = self._get_feature(cluster_features, 'max_amplitude_positive', 0)
+        max_amp_neg = self._get_feature(cluster_features, 'max_amplitude_negative', 0)
 
         # Amplitude ratio (max/mean) for variability assessment
         mean_amp = max(mean_amp_pos, mean_amp_neg) if max(mean_amp_pos, mean_amp_neg) > 0 else 1e-10
@@ -309,7 +323,7 @@ class PDTypeClassifier:
         amplitude_ratio = max_amp / mean_amp if mean_amp > 0 else 0
 
         result['reasoning'].append(
-            f"Amplitude: Weibull_β={weibull_beta:.2f}, amp_ratio={amplitude_ratio:.2f}"
+            f"Amplitude: Weibull_beta={weibull_beta:.2f}, amp_ratio={amplitude_ratio:.2f}"
         )
 
         # =====================================================================
@@ -355,7 +369,7 @@ class PDTypeClassifier:
             # Factor 4: Phase concentration (low spread)
             if phase_spread < PHASE_CORRELATION_THRESHOLDS['max_phase_spread_corona']:
                 corona_confidence += 0.10
-                confidence_factors.append(f"concentrated_phase={phase_spread:.1f}°")
+                confidence_factors.append(f"concentrated_phase={phase_spread:.1f}deg")
 
             # Factor 5: Near voltage peak
             if near_positive_peak or near_negative_peak:
@@ -404,7 +418,7 @@ class PDTypeClassifier:
             if AMPLITUDE_THRESHOLDS['internal_weibull_beta_min'] < weibull_beta < \
                AMPLITUDE_THRESHOLDS['internal_weibull_beta_max']:
                 internal_confidence += 0.15
-                confidence_factors.append(f"weibull_β={weibull_beta:.2f}")
+                confidence_factors.append(f"weibull_beta={weibull_beta:.2f}")
 
             # Factor 5: Phase at voltage peaks
             if near_positive_peak or near_negative_peak:
@@ -436,7 +450,7 @@ class PDTypeClassifier:
             # Factor 3: Phase spread
             if phase_spread > 30:
                 surface_confidence += 0.15
-                confidence_factors.append(f"phase_spread={phase_spread:.1f}°")
+                confidence_factors.append(f"phase_spread={phase_spread:.1f}deg")
 
             # Factor 4: Concentrated in adjacent quadrants
             if (q1 + q4 > 50) or (q2 + q3 > 50):
@@ -633,9 +647,15 @@ def load_pulse_features(filepath):
     return np.array(features)
 
 
-def process_dataset(prefix, data_dir, method='dbscan'):
+def process_dataset(prefix, data_dir, method='dbscan', selected_features=None):
     """
     Process a dataset and classify all clusters.
+
+    Args:
+        prefix: Dataset file prefix
+        data_dir: Directory containing data files
+        method: Clustering method used
+        selected_features: List of cluster feature names to use (None = all)
 
     Returns:
         list: Classification results for each cluster
@@ -658,8 +678,14 @@ def process_dataset(prefix, data_dir, method='dbscan'):
     cluster_labels = load_cluster_labels(cluster_labels_file)
     pulse_features = load_pulse_features(pulse_features_file) if os.path.exists(pulse_features_file) else None
 
+    # Print feature selection info
+    if selected_features:
+        print(f"  Using {len(selected_features)} selected cluster features")
+    else:
+        print("  Using all cluster features")
+
     # Classify each cluster
-    classifier = PDTypeClassifier(verbose=True)
+    classifier = PDTypeClassifier(verbose=True, selected_features=selected_features)
     results = []
 
     for label, features in sorted(cluster_features.items()):
@@ -781,34 +807,49 @@ def main():
         default=None,
         help='Process specific file prefix'
     )
+    parser.add_argument(
+        '--cluster-features',
+        type=str,
+        default=None,
+        help='Comma-separated list of cluster features to use for classification (default: all features)'
+    )
     args = parser.parse_args()
+
+    # Parse cluster features list if provided
+    selected_features = None
+    if args.cluster_features:
+        selected_features = [f.strip() for f in args.cluster_features.split(',') if f.strip()]
 
     print("=" * 70)
     print("PD TYPE CLASSIFICATION")
     print("=" * 70)
     print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Clustering method: {args.method}")
+    if selected_features:
+        print(f"Cluster features: {len(selected_features)} selected")
+    else:
+        print("Cluster features: all")
     print("=" * 70)
 
     # Print decision tree structure
     print("\nDECISION TREE STRUCTURE:")
     print("-" * 40)
     print("  Branch 1: Noise Detection")
-    print("    ├─ DBSCAN noise label (-1)?")
-    print("    ├─ Pulse count < 10?")
-    print("    └─ Coefficient of variation > 2.0?")
+    print("    |- DBSCAN noise label (-1)?")
+    print("    |- Pulse count < 10?")
+    print("    \\- Coefficient of variation > 2.0?")
     print("  Branch 2: Phase Correlation")
-    print("    ├─ Cross-correlation > 0.7? (symmetric)")
-    print("    └─ |Asymmetry| < 0.35? (symmetric)")
+    print("    |- Cross-correlation > 0.7? (symmetric)")
+    print("    \\- |Asymmetry| < 0.35? (symmetric)")
     print("  Branch 3: Quadrant Distribution")
-    print("    ├─ Single half-cycle > 80%? (corona)")
-    print("    └─ All quadrants 15-35%? (internal)")
+    print("    |- Single half-cycle > 80%? (corona)")
+    print("    \\- All quadrants 15-35%? (internal)")
     print("  Branch 4: Phase Location")
-    print("    ├─ Near zero-crossing? (surface)")
-    print("    └─ Near voltage peak? (corona/internal)")
+    print("    |- Near zero-crossing? (surface)")
+    print("    \\- Near voltage peak? (corona/internal)")
     print("  Branch 5: Amplitude Analysis")
-    print("    ├─ Weibull β: 2-15? (internal)")
-    print("    └─ Amplitude ratio > 3? (corona)")
+    print("    |- Weibull beta: 2-15? (internal)")
+    print("    \\- Amplitude ratio > 3? (corona)")
     print("-" * 40)
 
     # Find files to process
@@ -833,7 +874,7 @@ def main():
     all_results = []
     for prefix in sorted(prefixes):
         try:
-            results = process_dataset(prefix, args.input_dir, args.method)
+            results = process_dataset(prefix, args.input_dir, args.method, selected_features)
             all_results.append({'prefix': prefix, 'results': results})
 
             # Save individual results

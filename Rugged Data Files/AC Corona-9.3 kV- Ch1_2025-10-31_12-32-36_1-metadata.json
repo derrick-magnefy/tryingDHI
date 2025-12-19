@@ -1,0 +1,10 @@
+{
+  "min_absolute_amplitude": 0.003886903,
+  "adc_step_v": 0.0009765625,
+  "noise_threshold": 0.0029103405,
+  "adc_bits": 12,
+  "adc_range_v": 4.0,
+  "n_samples": 2000,
+  "mean_amplitude": 0.032022205079000006,
+  "std_amplitude": 0.018385761143394498
+}

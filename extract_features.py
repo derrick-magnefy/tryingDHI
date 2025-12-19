@@ -29,19 +29,38 @@ import json
 from datetime import datetime
 from polarity_methods import calculate_polarity, POLARITY_METHODS, DEFAULT_POLARITY_METHOD
 
+# Import TU Delft format parser
+try:
+    from wfm_parser import TektronixWFMParser, load_tu_delft_timing, convert_timing_to_phase
+    HAS_WFM_PARSER = True
+except ImportError:
+    HAS_WFM_PARSER = False
+
 DATA_DIR = "Rugged Data Files"
+
+# Format constants
+FORMAT_RUGGED = 'rugged'      # Original format with -WFMs.txt
+FORMAT_TUDELFT = 'tudelft'    # TU Delft format with _Ch1.wfm binary
+
+# ADC configuration for noise floor calculation
+# 12-bit ADC with -2V to +2V range
+ADC_BITS = 12
+ADC_RANGE_V = 4.0  # -2V to +2V = 4V total range
+ADC_STEP_V = ADC_RANGE_V / (2 ** ADC_BITS)  # ~0.977 mV per step
 
 # Feature names in order
 FEATURE_NAMES = [
     'phase_angle',
     'peak_amplitude_positive',
     'peak_amplitude_negative',
+    'absolute_amplitude',
     'polarity',
     'rise_time',
     'fall_time',
     'pulse_width',
     'slew_rate',
     'energy',
+    'charge',
     'equivalent_time',
     'equivalent_bandwidth',
     'cumulative_energy_peak',
@@ -62,6 +81,29 @@ FEATURE_NAMES = [
     'zero_crossing_count',
     'oscillation_count',
     'energy_charge_ratio',
+    'signal_to_noise_ratio',
+    'pulse_count',              # number of distinct PD pulses in waveform
+    'is_multi_pulse',           # 1 if multiple pulses detected, 0 otherwise
+    # Normalized features
+    'norm_absolute_amplitude',       # normalized by noise_floor (same as SNR)
+    'norm_peak_amplitude_positive',  # normalized by noise_floor
+    'norm_peak_amplitude_negative',  # normalized by noise_floor
+    'norm_peak_to_peak_amplitude',   # normalized by noise_floor
+    'norm_rms_amplitude',            # normalized by noise_floor
+    'norm_slew_rate',                # normalized by noise_floor/sample_interval
+    'norm_energy',                   # normalized by noise_floor^2 * duration
+    'norm_charge',                   # normalized by noise_floor * duration
+    'norm_rise_time',                # normalized by pulse_width
+    'norm_fall_time',                # normalized by pulse_width
+    'norm_equivalent_time',          # normalized by waveform duration
+    'norm_equivalent_bandwidth',     # normalized by waveform duration
+    'norm_cumulative_energy_rise_time',  # normalized by pulse_width
+    'norm_pulse_width',              # normalized by waveform duration
+    'norm_dominant_frequency',       # normalized by Nyquist frequency
+    'norm_center_frequency',         # normalized by Nyquist frequency
+    'norm_bandwidth_3db',            # normalized by Nyquist frequency
+    'norm_zero_crossing_rate',       # zero crossings per sample
+    'norm_oscillation_rate',         # oscillations per sample
 ]
 
 
@@ -91,6 +133,124 @@ def load_settings(filepath):
         content = f.read().strip()
         values = [float(v) for v in content.split('\t') if v.strip()]
     return values
+
+
+def detect_format(prefix, data_dir):
+    """
+    Detect the format of a dataset.
+
+    Args:
+        prefix: Dataset prefix/name
+        data_dir: Directory containing the data files
+
+    Returns:
+        str: FORMAT_RUGGED or FORMAT_TUDELFT
+    """
+    # Check for TU Delft format: _Ch1.wfm file
+    ch1_file = os.path.join(data_dir, f"{prefix}_Ch1.wfm")
+    if os.path.exists(ch1_file):
+        return FORMAT_TUDELFT
+
+    # Check for Rugged format: -WFMs.txt file
+    wfm_file = os.path.join(data_dir, f"{prefix}-WFMs.txt")
+    if os.path.exists(wfm_file):
+        return FORMAT_RUGGED
+
+    # Default to rugged
+    return FORMAT_RUGGED
+
+
+def load_waveforms_tudelft(prefix, data_dir, channel=1):
+    """
+    Load waveform data from TU Delft binary .wfm files.
+
+    Args:
+        prefix: Dataset prefix/name
+        data_dir: Directory containing the data files
+        channel: Channel number (1 or 2)
+
+    Returns:
+        tuple: (waveforms, sample_interval, phase_data)
+    """
+    if not HAS_WFM_PARSER:
+        raise ImportError("wfm_parser module not available for TU Delft format")
+
+    # Load binary waveform file
+    wfm_file = os.path.join(data_dir, f"{prefix}_Ch{channel}.wfm")
+    if not os.path.exists(wfm_file):
+        raise FileNotFoundError(f"TU Delft waveform file not found: {wfm_file}")
+
+    print(f"  Parsing TU Delft binary file: {wfm_file}")
+    parser = TektronixWFMParser(wfm_file)
+
+    waveforms = parser.get_waveforms()
+    sample_interval = parser.get_sample_interval()
+
+    # Load timing information and convert to phase
+    timing_file = os.path.join(data_dir, f"{prefix}.txt")
+    phase_data = None
+    if os.path.exists(timing_file):
+        print(f"  Loading timing data from: {timing_file}")
+        timing = load_tu_delft_timing(timing_file)
+        if timing:
+            # TU Delft typically uses 50Hz AC
+            phase_data = convert_timing_to_phase(timing, ac_frequency=50.0)
+            print(f"  Converted {len(phase_data)} timestamps to phase angles")
+
+    return waveforms, sample_interval, phase_data
+
+
+def detect_pulses(waveform, sample_interval, amplitude_threshold_ratio=0.3, min_pulse_separation_us=0.5):
+    """
+    Detect multiple distinct PD pulses within a single waveform.
+
+    A pulse is defined as a significant peak (above threshold) that is separated
+    from other pulses by a minimum time gap.
+
+    Args:
+        waveform: numpy array of waveform samples (baseline-corrected)
+        sample_interval: time between samples in seconds
+        amplitude_threshold_ratio: minimum peak height as ratio of max amplitude (default: 0.3 = 30%)
+        min_pulse_separation_us: minimum separation between pulses in microseconds (default: 0.5 µs)
+
+    Returns:
+        dict with:
+            - pulse_count: number of distinct pulses detected
+            - pulse_indices: list of peak indices for each pulse
+            - pulse_amplitudes: list of amplitudes for each pulse
+    """
+    from scipy.signal import find_peaks
+
+    # Get absolute waveform for peak detection
+    abs_wfm = np.abs(waveform)
+    max_amplitude = np.max(abs_wfm)
+
+    if max_amplitude == 0:
+        return {'pulse_count': 0, 'pulse_indices': [], 'pulse_amplitudes': []}
+
+    # Minimum height threshold for peaks
+    height_threshold = amplitude_threshold_ratio * max_amplitude
+
+    # Minimum distance between peaks (in samples)
+    min_distance_samples = int(min_pulse_separation_us * 1e-6 / sample_interval)
+    min_distance_samples = max(1, min_distance_samples)  # At least 1 sample
+
+    # Find peaks in absolute waveform
+    peaks, properties = find_peaks(
+        abs_wfm,
+        height=height_threshold,
+        distance=min_distance_samples,
+        prominence=height_threshold * 0.5  # Peaks should be prominent
+    )
+
+    # Get amplitudes at peak locations (use original waveform for signed amplitude)
+    pulse_amplitudes = [waveform[idx] for idx in peaks]
+
+    return {
+        'pulse_count': len(peaks),
+        'pulse_indices': peaks.tolist(),
+        'pulse_amplitudes': pulse_amplitudes
+    }
 
 
 class PDFeatureExtractor:
@@ -137,6 +297,7 @@ class PDFeatureExtractor:
         features['phase_angle'] = phase_angle if phase_angle is not None else 0.0
         features['peak_amplitude_positive'] = np.max(wfm)
         features['peak_amplitude_negative'] = np.min(wfm)
+        features['absolute_amplitude'] = max(abs(features['peak_amplitude_positive']), abs(features['peak_amplitude_negative']))
         features['peak_to_peak_amplitude'] = features['peak_amplitude_positive'] - features['peak_amplitude_negative']
 
         # Polarity: calculated using the configured polarity method
@@ -167,6 +328,11 @@ class PDFeatureExtractor:
         # === FREQUENCY-DOMAIN FEATURES ===
         spectral = self._extract_spectral_features(wfm)
         features.update(spectral)
+
+        # === MULTI-PULSE DETECTION ===
+        pulse_info = detect_pulses(wfm, self.sample_interval)
+        features['pulse_count'] = pulse_info['pulse_count']
+        features['is_multi_pulse'] = 1.0 if pulse_info['pulse_count'] > 1 else 0.0
 
         return features
 
@@ -254,12 +420,12 @@ class PDFeatureExtractor:
         # Total energy (integral of squared signal)
         features['energy'] = np.sum(wfm**2) * self.sample_interval
 
-        # Charge (integral of absolute signal)
-        charge = np.sum(np.abs(wfm)) * self.sample_interval
+        # Charge (integral of absolute signal - apparent charge proxy)
+        features['charge'] = np.sum(np.abs(wfm)) * self.sample_interval
 
         # Energy/Charge ratio
-        if charge > 0:
-            features['energy_charge_ratio'] = features['energy'] / charge
+        if features['charge'] > 0:
+            features['energy_charge_ratio'] = features['energy'] / features['charge']
         else:
             features['energy_charge_ratio'] = 0.0
 
@@ -404,23 +570,35 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
     Returns:
         tuple: (feature_matrix, metadata_dict)
     """
-    wfm_file = os.path.join(data_dir, f"{prefix}-WFMs.txt")
-    sg_file = os.path.join(data_dir, f"{prefix}-SG.txt")
-    p_file = os.path.join(data_dir, f"{prefix}-P.txt")
-    ti_file = os.path.join(data_dir, f"{prefix}-Ti.txt")
-
-    # Load waveforms
+    # Detect format
+    data_format = detect_format(prefix, data_dir)
     print(f"Loading waveforms from {prefix}...")
-    waveforms = load_waveforms(wfm_file)
-    print(f"  Loaded {len(waveforms)} waveforms")
+    print(f"  Detected format: {data_format}")
 
-    # Load settings
-    settings = load_settings(sg_file) if os.path.exists(sg_file) else None
-    sample_interval = settings[10] if settings and len(settings) > 10 else 4e-9
-    ac_frequency = settings[9] if settings and len(settings) > 9 else 60.0
+    if data_format == FORMAT_TUDELFT:
+        # TU Delft binary format
+        waveforms_raw, sample_interval, phase_data = load_waveforms_tudelft(prefix, data_dir)
+        # Convert to numpy arrays
+        waveforms = [np.array(w) for w in waveforms_raw]
+        ac_frequency = 50.0  # TU Delft uses 50Hz
+        print(f"  Loaded {len(waveforms)} waveforms from TU Delft binary format")
+    else:
+        # Original Rugged format
+        wfm_file = os.path.join(data_dir, f"{prefix}-WFMs.txt")
+        sg_file = os.path.join(data_dir, f"{prefix}-SG.txt")
+        p_file = os.path.join(data_dir, f"{prefix}-P.txt")
 
-    # Load phase data
-    phase_data = load_single_line_data(p_file) if os.path.exists(p_file) else None
+        # Load waveforms
+        waveforms = load_waveforms(wfm_file)
+        print(f"  Loaded {len(waveforms)} waveforms from Rugged format")
+
+        # Load settings
+        settings = load_settings(sg_file) if os.path.exists(sg_file) else None
+        sample_interval = settings[10] if settings and len(settings) > 10 else 4e-9
+        ac_frequency = settings[9] if settings and len(settings) > 9 else 60.0
+
+        # Load phase data
+        phase_data = load_single_line_data(p_file) if os.path.exists(p_file) else None
 
     # Initialize feature extractor
     extractor = PDFeatureExtractor(
@@ -441,6 +619,61 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
         if (i + 1) % 500 == 0:
             print(f"    Processed {i + 1}/{len(waveforms)} waveforms")
 
+    # Calculate noise floor from minimum absolute amplitude across all pulses
+    abs_amplitudes = np.array([f['absolute_amplitude'] for f in all_features])
+    min_amplitude = np.min(abs_amplitudes)
+    noise_floor = max(ADC_STEP_V, min_amplitude - ADC_STEP_V)  # At least one ADC step
+    print(f"  Noise floor: {noise_floor*1000:.3f} mV (min amplitude: {min_amplitude*1000:.3f} mV)")
+
+    # Get normalization constants
+    n_samples = len(waveforms[0]) if waveforms else 1
+    waveform_duration = n_samples * sample_interval
+    nyquist_freq = 1.0 / (2.0 * sample_interval)  # Nyquist frequency
+
+    print(f"  Normalizing features (duration: {waveform_duration*1e6:.2f} µs, Nyquist: {nyquist_freq/1e6:.2f} MHz)")
+
+    # Calculate SNR and normalized features for each pulse
+    for i, features in enumerate(all_features):
+        # Signal-to-noise ratio
+        features['signal_to_noise_ratio'] = features['absolute_amplitude'] / noise_floor
+
+        # Normalized amplitude features (by noise_floor)
+        features['norm_absolute_amplitude'] = features['absolute_amplitude'] / noise_floor  # Same as SNR
+        features['norm_peak_amplitude_positive'] = features['peak_amplitude_positive'] / noise_floor
+        features['norm_peak_amplitude_negative'] = features['peak_amplitude_negative'] / noise_floor
+        features['norm_peak_to_peak_amplitude'] = features['peak_to_peak_amplitude'] / noise_floor
+        features['norm_rms_amplitude'] = features['rms_amplitude'] / noise_floor
+
+        # Normalized slew rate (by noise_floor / sample_interval)
+        slew_rate_ref = noise_floor / sample_interval
+        features['norm_slew_rate'] = features['slew_rate'] / slew_rate_ref if slew_rate_ref > 0 else 0.0
+
+        # Normalized energy features
+        energy_ref = noise_floor**2 * waveform_duration
+        charge_ref = noise_floor * waveform_duration
+        features['norm_energy'] = features['energy'] / energy_ref if energy_ref > 0 else 0.0
+        features['norm_charge'] = features['charge'] / charge_ref if charge_ref > 0 else 0.0
+
+        # Normalized time features (by pulse_width, fallback to waveform duration)
+        time_ref = features['pulse_width'] if features['pulse_width'] > 0 else waveform_duration
+        features['norm_rise_time'] = features['rise_time'] / time_ref if time_ref > 0 else 0.0
+        features['norm_fall_time'] = features['fall_time'] / time_ref if time_ref > 0 else 0.0
+        features['norm_cumulative_energy_rise_time'] = features['cumulative_energy_rise_time'] / time_ref if time_ref > 0 else 0.0
+
+        # Normalized time features (by waveform duration)
+        features['norm_equivalent_time'] = features['equivalent_time'] / waveform_duration if waveform_duration > 0 else 0.0
+        features['norm_equivalent_bandwidth'] = features['equivalent_bandwidth'] / waveform_duration if waveform_duration > 0 else 0.0
+        features['norm_pulse_width'] = features['pulse_width'] / waveform_duration if waveform_duration > 0 else 0.0
+
+        # Normalized frequency features (by Nyquist frequency)
+        features['norm_dominant_frequency'] = features['dominant_frequency'] / nyquist_freq if nyquist_freq > 0 else 0.0
+        features['norm_center_frequency'] = features['center_frequency'] / nyquist_freq if nyquist_freq > 0 else 0.0
+        features['norm_bandwidth_3db'] = features['bandwidth_3db'] / nyquist_freq if nyquist_freq > 0 else 0.0
+
+        # Normalized count features (rate per sample)
+        features['norm_zero_crossing_rate'] = features['zero_crossing_count'] / n_samples
+        features['norm_oscillation_rate'] = features['oscillation_count'] / n_samples
+
     # Convert to matrix
     feature_matrix = np.array([[f[name] for name in FEATURE_NAMES] for f in all_features])
 
@@ -452,6 +685,10 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
         'ac_frequency': ac_frequency,
         'feature_names': FEATURE_NAMES,
         'polarity_method': polarity_method,
+        'data_format': data_format,
+        'noise_floor': noise_floor,
+        'min_amplitude': min_amplitude,
+        'adc_step_v': ADC_STEP_V,
     }
 
     return feature_matrix, metadata
@@ -556,31 +793,73 @@ def main():
     # Find files to process
     if args.file:
         prefixes = [args.file]
+        subdirs = {args.file: args.input_dir}  # Map prefix to directory
     else:
+        prefixes = []
+        subdirs = {}  # Map prefix to directory for TU Delft subdirectories
+
+        # Find Rugged format datasets (-WFMs.txt)
         wfm_files = glob.glob(os.path.join(args.input_dir, "*-WFMs.txt"))
-        prefixes = [os.path.basename(f).replace("-WFMs.txt", "") for f in wfm_files]
+        for f in wfm_files:
+            prefix = os.path.basename(f).replace("-WFMs.txt", "")
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+                subdirs[prefix] = args.input_dir
+
+        # Find TU Delft format datasets (*_Ch1.wfm) in current directory
+        tu_delft_files = glob.glob(os.path.join(args.input_dir, "*_Ch1.wfm"))
+        for f in tu_delft_files:
+            # Extract prefix: "1-Internal_45mm33_Ch1.wfm" -> "1-Internal_45mm33"
+            basename = os.path.basename(f)
+            prefix = basename.replace("_Ch1.wfm", "")
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+                subdirs[prefix] = args.input_dir
+
+        # Also search subdirectories for TU Delft format datasets
+        try:
+            for subdir in os.listdir(args.input_dir):
+                subdir_path = os.path.join(args.input_dir, subdir)
+                if os.path.isdir(subdir_path):
+                    tu_delft_files = glob.glob(os.path.join(subdir_path, "*_Ch1.wfm"))
+                    for f in tu_delft_files:
+                        basename = os.path.basename(f)
+                        prefix = basename.replace("_Ch1.wfm", "")
+                        if prefix not in prefixes:
+                            prefixes.append(prefix)
+                            subdirs[prefix] = subdir_path
+                            print(f"  Found TU Delft dataset in subdirectory: {subdir}/{prefix}")
+        except Exception as e:
+            print(f"  Warning: Could not search subdirectories: {e}")
 
     if not prefixes:
         print("No waveform files found!")
+        print("  Looking for: *-WFMs.txt (Rugged format) or *_Ch1.wfm (TU Delft format)")
+        print("  Also searching subdirectories for TU Delft format")
         return
 
     print(f"\nFound {len(prefixes)} dataset(s) to process\n")
 
     # Process each dataset
     for prefix in sorted(prefixes):
+        # Get the correct directory for this dataset
+        data_dir = subdirs.get(prefix, args.input_dir)
+
         print(f"\n{'='*70}")
         print(f"Processing: {prefix}")
+        if data_dir != args.input_dir:
+            print(f"  Directory: {data_dir}")
         print("="*70)
 
         try:
-            feature_matrix, metadata = process_dataset(prefix, args.input_dir, args.polarity_method)
+            feature_matrix, metadata = process_dataset(prefix, data_dir, args.polarity_method)
 
-            # Determine output path
+            # Determine output path - save in the same directory as the source data
             if args.output:
                 output_path = args.output
             else:
                 ext = args.format
-                output_path = os.path.join(args.input_dir, f"{prefix}-features.{ext}")
+                output_path = os.path.join(data_dir, f"{prefix}-features.{ext}")
 
             # Save features
             save_features(feature_matrix, metadata, output_path, args.format)
