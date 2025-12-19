@@ -901,6 +901,33 @@ def create_pca_plot(features, feature_names, cluster_labels):
     return fig
 
 
+def read_features_from_cluster_file(cluster_file_path):
+    """Read the features used for clustering from a cluster file's metadata.
+
+    Args:
+        cluster_file_path: Path to the cluster CSV file
+
+    Returns:
+        List of feature names used for clustering, or None if not found
+    """
+    if not os.path.exists(cluster_file_path):
+        return None
+
+    try:
+        with open(cluster_file_path, 'r') as f:
+            for line in f:
+                if not line.startswith('#'):
+                    break
+                if line.startswith('# Features_used:'):
+                    features_str = line.replace('# Features_used:', '').strip()
+                    if features_str:
+                        return [f.strip() for f in features_str.split(',')]
+    except Exception:
+        pass
+
+    return None
+
+
 def create_correlation_matrix(features, feature_names, selected_features=None):
     """Create correlation matrix heatmap for selected features.
 
@@ -1379,6 +1406,7 @@ def create_app(data_dir=DATA_DIR):
                                     type='circle',
                                     children=html.Div(id='recluster-all-result', style={'marginBottom': '10px'})
                                 ),
+                                html.Div(id='features-source-info', style={'fontSize': '11px', 'color': '#666', 'fontStyle': 'italic', 'marginBottom': '5px'}),
                                 dcc.Checklist(
                                     id='pulse-features-checklist',
                                     options=[{'label': f, 'value': f} for f in PULSE_FEATURES],
@@ -1841,18 +1869,37 @@ def create_app(data_dir=DATA_DIR):
 
     # Load pulse features when dataset changes
     @app.callback(
-        Output('pulse-features-checklist', 'value', allow_duplicate=True),
+        [Output('pulse-features-checklist', 'value', allow_duplicate=True),
+         Output('features-source-info', 'children')],
         [Input('dataset-dropdown', 'value')],
-        [State('pulse-features-per-dataset', 'data')],
+        [State('pulse-features-per-dataset', 'data'),
+         State('clustering-method-radio', 'value')],
         prevent_initial_call='initial_duplicate'
     )
-    def load_pulse_features_for_dataset(dataset, stored_data):
+    def load_pulse_features_for_dataset(dataset, stored_data, clustering_method):
         if not dataset:
             raise PreventUpdate
+
+        # First check if we have saved selections for this dataset
         stored_data = stored_data or {}
         if dataset in stored_data:
-            return stored_data[dataset]
-        # Don't change if no saved selection - keeps current/default selection
+            n_features = len(stored_data[dataset])
+            return stored_data[dataset], f"Loaded {n_features} features from session storage"
+
+        # If no saved selection, try to read from cluster file
+        data_path = loader.get_dataset_path(dataset)
+        clean_prefix = loader.get_clean_prefix(dataset)
+        if data_path and clean_prefix:
+            method = clustering_method or 'dbscan'
+            cluster_file = os.path.join(data_path, f"{clean_prefix}-clusters-{method}.csv")
+            features_from_file = read_features_from_cluster_file(cluster_file)
+            if features_from_file:
+                # Filter to only include features that exist in PULSE_FEATURES
+                valid_features = [f for f in features_from_file if f in PULSE_FEATURES]
+                if valid_features:
+                    return valid_features, f"Loaded {len(valid_features)} features from last {method.upper()} clustering"
+
+        # Don't change if no saved selection and no cluster file - keeps current/default selection
         raise PreventUpdate
 
     # Load cluster features when dataset changes

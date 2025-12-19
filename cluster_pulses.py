@@ -146,7 +146,7 @@ def run_kmeans(X_scaled, n_clusters=5):
     return labels, info
 
 
-def save_cluster_labels(labels, output_path, feature_file, info):
+def save_cluster_labels(labels, output_path, feature_file, info, used_features=None):
     """Save cluster labels and metadata to file."""
     with open(output_path, 'w') as f:
         # Write header with metadata
@@ -163,6 +163,10 @@ def save_cluster_labels(labels, output_path, feature_file, info):
 
         if 'silhouette_score' in info and info['silhouette_score'] is not None:
             f.write(f"# Silhouette_score: {info['silhouette_score']:.4f}\n")
+
+        # Save features used for clustering
+        if used_features:
+            f.write(f"# Features_used: {','.join(used_features)}\n")
 
         f.write("#\n")
         f.write("waveform_index,cluster_label\n")
@@ -194,6 +198,7 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
     print(f"  Loaded {features.shape[0]} samples with {features.shape[1]} features")
 
     # Filter to selected features if specified
+    used_features = None
     if selected_features:
         # Find indices of selected features
         feature_indices = []
@@ -211,6 +216,7 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
         features = features[:, feature_indices]
         print(f"  Using {len(used_features)} selected features: {', '.join(used_features[:5])}{'...' if len(used_features) > 5 else ''}")
     else:
+        used_features = feature_names.copy()  # All features used
         print(f"  Using all {len(feature_names)} features")
 
     # Handle infinite values
@@ -246,7 +252,7 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
 
     # Save results
     output_path = filepath.replace('-features.csv', f'-clusters-{method}.csv')
-    save_cluster_labels(labels, output_path, filepath, info)
+    save_cluster_labels(labels, output_path, filepath, info, used_features)
     print(f"  Saved to: {output_path}")
 
     return labels, info, output_path
