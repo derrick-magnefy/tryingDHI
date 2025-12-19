@@ -26,7 +26,7 @@ import tempfile
 import json
 
 try:
-    from dash import Dash, html, dcc, callback, Output, Input, State
+    from dash import Dash, html, dcc, callback, Output, Input, State, no_update
     from dash import ctx  # For callback context
     from dash.exceptions import PreventUpdate
     import plotly.graph_objects as go
@@ -2671,25 +2671,27 @@ def create_app(data_dir=DATA_DIR):
             pass
 
     @app.callback(
-        Output('recluster-all-result', 'children'),
+        [Output('recluster-all-result', 'children'),
+         Output('pulse-features-per-dataset', 'data', allow_duplicate=True)],
         [Input('recluster-all-btn', 'n_clicks')],
         [State('pulse-features-checklist', 'value'),
-         State('clustering-method-radio', 'value')],
+         State('clustering-method-radio', 'value'),
+         State('pulse-features-per-dataset', 'data')],
         prevent_initial_call=True
     )
-    def recluster_all_datasets(n_clicks, selected_features, clustering_method):
+    def recluster_all_datasets(n_clicks, selected_features, clustering_method, stored_features_data):
         """Run clustering on all datasets with the selected features."""
         if not n_clicks:
             raise PreventUpdate
 
         if not selected_features or len(selected_features) < 2:
-            return html.Div("Please select at least 2 features for clustering",
-                          style={'color': 'orange', 'padding': '10px'})
+            return (html.Div("Please select at least 2 features for clustering",
+                          style={'color': 'orange', 'padding': '10px'}), no_update)
 
         # Get all datasets
         datasets = loader.datasets
         if not datasets:
-            return html.Div("No datasets available", style={'color': 'red', 'padding': '10px'})
+            return (html.Div("No datasets available", style={'color': 'red', 'padding': '10px'}), no_update)
 
         features_str = ','.join(selected_features)
         method = clustering_method or 'dbscan'
@@ -2825,13 +2827,19 @@ def create_app(data_dir=DATA_DIR):
         # Clear progress when done
         clear_progress()
 
+        # Update per-dataset feature storage for all datasets with the selected features
+        # This ensures switching datasets will show the same features that were used for clustering
+        updated_features_data = stored_features_data or {}
+        for dataset in datasets:
+            updated_features_data[dataset] = selected_features
+
         # Summary message
         if fail_count > 0:
             summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets ({fail_count} failed)"
         else:
             summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets"
 
-        return html.Div([
+        result_div = html.Div([
             html.Div(summary_msg,
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
             html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
@@ -2840,9 +2848,11 @@ def create_app(data_dir=DATA_DIR):
                 html.Div([html.Div(d, style={'fontSize': '11px'}) for d in results_details],
                         style={'maxHeight': '150px', 'overflowY': 'auto', 'marginTop': '5px'})
             ]) if results_details else None,
-            html.Div("Refresh the page to see updated results.",
+            html.Div("Feature selection copied to all datasets.",
                     style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
         ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+
+        return (result_div, updated_features_data)
 
     @app.callback(
         Output('reclassify-all-result', 'children'),
