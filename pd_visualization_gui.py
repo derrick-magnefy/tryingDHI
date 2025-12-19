@@ -113,6 +113,7 @@ PULSE_FEATURES = [
     'pulse_count',
     'is_multi_pulse',
     # Normalized features (scale-independent)
+    'norm_absolute_amplitude',
     'norm_peak_amplitude_positive',
     'norm_peak_amplitude_negative',
     'norm_peak_to_peak_amplitude',

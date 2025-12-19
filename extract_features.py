@@ -85,6 +85,7 @@ FEATURE_NAMES = [
     'pulse_count',              # number of distinct PD pulses in waveform
     'is_multi_pulse',           # 1 if multiple pulses detected, 0 otherwise
     # Normalized features
+    'norm_absolute_amplitude',       # normalized by noise_floor (same as SNR)
     'norm_peak_amplitude_positive',  # normalized by noise_floor
     'norm_peak_amplitude_negative',  # normalized by noise_floor
     'norm_peak_to_peak_amplitude',   # normalized by noise_floor
@@ -637,6 +638,7 @@ def process_dataset(prefix, data_dir=DATA_DIR, polarity_method=DEFAULT_POLARITY_
         features['signal_to_noise_ratio'] = features['absolute_amplitude'] / noise_floor
 
         # Normalized amplitude features (by noise_floor)
+        features['norm_absolute_amplitude'] = features['absolute_amplitude'] / noise_floor  # Same as SNR
         features['norm_peak_amplitude_positive'] = features['peak_amplitude_positive'] / noise_floor
         features['norm_peak_amplitude_negative'] = features['peak_amplitude_negative'] / noise_floor
         features['norm_peak_to_peak_amplitude'] = features['peak_to_peak_amplitude'] / noise_floor
