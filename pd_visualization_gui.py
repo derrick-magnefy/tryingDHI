@@ -1791,13 +1791,43 @@ def create_app(data_dir=DATA_DIR):
                 html.Span("(Click on any point in the PRPD plot above to see cluster statistics and classification details)",
                          style={'color': '#666', 'fontSize': '12px', 'fontStyle': 'italic'})
             ], style={'marginBottom': '10px'}),
+
+            # Cluster feature selector (collapsible)
+            html.Details([
+                html.Summary("Select Cluster Features to Display", style={
+                    'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                    'padding': '5px', 'backgroundColor': '#e3f2fd', 'borderRadius': '4px'
+                }),
+                html.Div([
+                    html.Div([
+                        html.Button("Select All Mean", id='cluster-feat-select-mean', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
+                        html.Button("Select All Trimmed Mean", id='cluster-feat-select-trimmed', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
+                        html.Button("Select PRPD Features", id='cluster-feat-select-prpd', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
+                        html.Button("Clear All", id='cluster-feat-select-none', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
+                    ], style={'marginBottom': '10px'}),
+                    dcc.Dropdown(
+                        id='cluster-feature-selector',
+                        options=[],  # Will be populated dynamically
+                        value=['mean_absolute_amplitude', 'mean_rise_time', 'mean_phase_angle',
+                               'trimmed_mean_absolute_amplitude', 'trimmed_mean_rise_time'],
+                        multi=True,
+                        placeholder="Select features to display...",
+                        style={'fontSize': '11px'}
+                    ),
+                ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+            ], style={'marginBottom': '10px'}),
+
             html.Div(id='cluster-details-display', style={
                 'display': 'none',
                 'padding': '15px',
                 'backgroundColor': '#f8f9fa',
                 'border': '1px solid #dee2e6',
                 'borderRadius': '5px',
-                'maxHeight': '400px',
+                'maxHeight': '500px',
                 'overflowY': 'auto'
             })
         ], style={'width': '95%', 'margin': '10px auto'}),
@@ -3814,6 +3844,63 @@ def create_app(data_dir=DATA_DIR):
 
         return create_waveform_plot(None, None, None, None, None, None), None
 
+    # Define cluster feature lists for the selector
+    from aggregate_cluster_features import (
+        CLUSTER_FEATURE_NAMES as AGG_CLUSTER_FEATURE_NAMES,
+        WAVEFORM_MEAN_FEATURE_NAMES,
+        WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES,
+        ALL_CLUSTER_FEATURE_NAMES
+    )
+
+    @app.callback(
+        Output('cluster-feature-selector', 'options'),
+        [Input('current-data-store', 'data')],
+        prevent_initial_call=True
+    )
+    def populate_cluster_feature_options(prefix):
+        """Populate the cluster feature selector with all available features."""
+        options = []
+
+        # Group 1: PRPD-based features
+        for feat in AGG_CLUSTER_FEATURE_NAMES:
+            options.append({'label': f'[PRPD] {feat}', 'value': feat})
+
+        # Group 2: Mean features
+        for feat in WAVEFORM_MEAN_FEATURE_NAMES:
+            display_name = feat.replace('mean_', '')
+            options.append({'label': f'[Mean] {display_name}', 'value': feat})
+
+        # Group 3: Trimmed mean features
+        for feat in WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES:
+            display_name = feat.replace('trimmed_mean_', '')
+            options.append({'label': f'[TrimMean] {display_name}', 'value': feat})
+
+        return options
+
+    @app.callback(
+        Output('cluster-feature-selector', 'value'),
+        [Input('cluster-feat-select-mean', 'n_clicks'),
+         Input('cluster-feat-select-trimmed', 'n_clicks'),
+         Input('cluster-feat-select-prpd', 'n_clicks'),
+         Input('cluster-feat-select-none', 'n_clicks')],
+        [State('cluster-feature-selector', 'value')],
+        prevent_initial_call=True
+    )
+    def update_cluster_feature_selection(mean_clicks, trimmed_clicks, prpd_clicks, none_clicks, current_value):
+        """Handle cluster feature selection buttons."""
+        triggered = ctx.triggered_id
+
+        if triggered == 'cluster-feat-select-mean':
+            return WAVEFORM_MEAN_FEATURE_NAMES
+        elif triggered == 'cluster-feat-select-trimmed':
+            return WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES
+        elif triggered == 'cluster-feat-select-prpd':
+            return list(AGG_CLUSTER_FEATURE_NAMES)
+        elif triggered == 'cluster-feat-select-none':
+            return []
+
+        return current_value or []
+
     @app.callback(
         [Output('cluster-details-display', 'children'),
          Output('cluster-details-display', 'style')],
@@ -3821,10 +3908,11 @@ def create_app(data_dir=DATA_DIR):
          Input('pdtype-prpd', 'clickData')],
         [State('show-cluster-details-checkbox', 'value'),
          State('current-data-store', 'data'),
-         State('clustering-method-radio', 'value')],
+         State('clustering-method-radio', 'value'),
+         State('cluster-feature-selector', 'value')],
         prevent_initial_call=True
     )
-    def update_cluster_details(cluster_click, pdtype_click, show_details, prefix, clustering_method):
+    def update_cluster_details(cluster_click, pdtype_click, show_details, prefix, clustering_method, selected_cluster_features):
         """Show cluster statistics and decision tree details when clicking on PRPD."""
         # Check if feature is enabled
         if not show_details or 'show' not in show_details:
@@ -4053,6 +4141,79 @@ def create_app(data_dir=DATA_DIR):
                 for warning in result['warnings']:
                     warning_list.append(html.Li(warning, style={'fontSize': '12px', 'color': '#856404'}))
                 content.append(html.Ul(warning_list, style={'marginLeft': '20px', 'marginTop': '0'}))
+
+            # Selected Cluster Features Table
+            if selected_cluster_features and len(selected_cluster_features) > 0:
+                content.append(html.H5("Selected Cluster Features:",
+                                       style={'marginTop': '20px', 'marginBottom': '10px', 'color': '#1565c0'}))
+
+                # Build feature table
+                feat_header = html.Tr([
+                    html.Th("Feature", style={'padding': '6px', 'borderBottom': '2px solid #333', 'textAlign': 'left', 'backgroundColor': '#e3f2fd'}),
+                    html.Th("Value", style={'padding': '6px', 'borderBottom': '2px solid #333', 'textAlign': 'right', 'backgroundColor': '#e3f2fd'}),
+                ])
+
+                feat_rows = [feat_header]
+
+                # Group features by type
+                mean_feats = [f for f in selected_cluster_features if f.startswith('mean_') and not f.startswith('mean_amplitude')]
+                trimmed_feats = [f for f in selected_cluster_features if f.startswith('trimmed_mean_')]
+                prpd_feats = [f for f in selected_cluster_features if f in AGG_CLUSTER_FEATURE_NAMES]
+                # Also catch mean_amplitude_positive/negative which are PRPD features
+                prpd_feats += [f for f in selected_cluster_features if f.startswith('mean_amplitude')]
+
+                def format_value(val):
+                    """Format a feature value for display."""
+                    if val is None:
+                        return "N/A"
+                    if isinstance(val, float):
+                        if abs(val) < 0.001 or abs(val) > 10000:
+                            return f"{val:.4e}"
+                        elif abs(val) < 1:
+                            return f"{val:.6f}"
+                        else:
+                            return f"{val:.4f}"
+                    return str(val)
+
+                def add_section(title, features, color):
+                    if features:
+                        feat_rows.append(html.Tr([
+                            html.Td(title, colSpan=2, style={
+                                'padding': '6px 4px', 'fontSize': '11px', 'fontWeight': 'bold',
+                                'backgroundColor': color, 'borderBottom': '1px solid #ccc'
+                            })
+                        ]))
+                        for feat in sorted(features):
+                            val = cluster_feats.get(feat, 0.0)
+                            display_name = feat
+                            if feat.startswith('mean_'):
+                                display_name = feat.replace('mean_', '')
+                            elif feat.startswith('trimmed_mean_'):
+                                display_name = feat.replace('trimmed_mean_', '')
+
+                            feat_rows.append(html.Tr([
+                                html.Td(display_name, style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #eee'}),
+                                html.Td(format_value(val), style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
+                                                                   'fontFamily': 'monospace', 'borderBottom': '1px solid #eee'}),
+                            ]))
+
+                add_section("PRPD Features", prpd_feats, '#fff3e0')
+                add_section("Mean Waveform Features", mean_feats, '#e8f5e9')
+                add_section("Trimmed Mean Waveform Features", trimmed_feats, '#e3f2fd')
+
+                selected_feat_table = html.Table(
+                    feat_rows,
+                    style={
+                        'width': '100%',
+                        'borderCollapse': 'collapse',
+                        'fontSize': '11px',
+                        'backgroundColor': '#fff'
+                    }
+                )
+                content.append(html.Div(selected_feat_table, style={
+                    'maxHeight': '250px', 'overflowY': 'auto',
+                    'border': '1px solid #ddd', 'borderRadius': '4px'
+                }))
 
             return html.Div(content), {
                 'display': 'block',
