@@ -1857,15 +1857,18 @@ def create_app(data_dir=DATA_DIR):
             dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
+        # Waveform viewer - full width (always visible)
+        html.Div([
+            dcc.Graph(id='waveform-plot', style={'height': '450px'})
+        ], style={'width': '95%', 'margin': '20px auto'}),
+
+        # Phase Distribution Histogram (always visible)
+        html.Div([
+            dcc.Graph(id='histogram', style={'height': '450px'})
+        ], style={'width': '95%', 'margin': '20px auto'}),
+
         # Detailed analysis sections (hidden in simplified view)
         html.Div(id='detailed-analysis-container', children=[
-            # Third row: Waveform (left) and Features panel (right)
-            html.Div([
-                # Waveform viewer
-                html.Div([
-                    dcc.Graph(id='waveform-plot', style={'height': '450px'})
-                ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
-
             # Feature display area
             html.Div([
                 html.Div([
@@ -1889,16 +1892,10 @@ def create_app(data_dir=DATA_DIR):
                     'maxHeight': '350px',
                     'overflowY': 'auto'
                 })
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top',
-                      'padding': '10px', 'backgroundColor': '#fff', 'border': '1px solid #ddd', 'borderRadius': '4px'})
-        ], style={'width': '95%', 'margin': 'auto'}),
+            ], style={'width': '95%', 'margin': 'auto',
+                      'padding': '10px', 'backgroundColor': '#fff', 'border': '1px solid #ddd', 'borderRadius': '4px'}),
 
-        # Fourth row: Phase Distribution Histogram
-        html.Div([
-            dcc.Graph(id='histogram', style={'height': '450px'})
-        ], style={'width': '95%', 'margin': '20px auto'}),
-
-        # Feature Analysis Section (unified)
+            # Feature Analysis Section (unified)
         html.Div([
             html.Details([
                 html.Summary("Feature Analysis", style={
