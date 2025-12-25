@@ -3206,6 +3206,13 @@ def create_app(data_dir=DATA_DIR):
                 subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
                 eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
+                # Extract auto-estimated eps from output if available
+                if not eps_value and result.stdout:
+                    import re
+                    match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
+                    if match:
+                        eps_msg = f"eps: auto ({match.group(1)})"
+
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
                     html.Div(f"Method: {method.upper()} | {eps_msg}", style={'fontSize': '12px', 'color': '#666'}),
@@ -3299,6 +3306,13 @@ def create_app(data_dir=DATA_DIR):
                 subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
                 eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
+                # Extract auto-estimated eps from output if available
+                if not eps_value and result.stdout:
+                    import re
+                    match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
+                    if match:
+                        eps_msg = f"eps: auto ({match.group(1)})"
+
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
                     html.Div(f"Method: {method.upper()} | {eps_msg} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
