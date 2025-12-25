@@ -2193,6 +2193,8 @@ def create_app(data_dir=DATA_DIR):
                 }),
                 html.Div([
                     html.Div([
+                        html.Button("Classification Features", id='cluster-feat-select-classification', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px', 'backgroundColor': '#e3f2fd'}),
                         html.Button("Select All Mean", id='cluster-feat-select-mean', n_clicks=0,
                                    style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
                         html.Button("Select All Trimmed Mean", id='cluster-feat-select-trimmed', n_clicks=0,
@@ -4816,20 +4818,57 @@ def create_app(data_dir=DATA_DIR):
 
         return options
 
+    # Define classification-relevant features (all features used in PD type decision tree)
+    CLASSIFICATION_FEATURES = [
+        # Noise detection (Branch 1)
+        'coefficient_of_variation',
+        'mean_is_multi_pulse',
+        'mean_pulse_count',
+        # Phase spread (Branch 2)
+        'phase_spread',
+        'cross_correlation',
+        'discharge_asymmetry',
+        # Surface detection (Branch 3)
+        'mean_slew_rate',
+        'mean_spectral_power_ratio',
+        'mean_cv',
+        'mean_crest_factor',
+        'mean_spectral_flatness',
+        'mean_repetition_rate_variance',
+        # Corona/Internal (Branch 4)
+        'quadrant_1_percentage',
+        'quadrant_2_percentage',
+        'quadrant_3_percentage',
+        'quadrant_4_percentage',
+        'phase_of_max_activity',
+        'mean_oscillation_count',
+        'repetition_rate',
+        # Additional useful features
+        'mean_absolute_amplitude',
+        'mean_rise_time',
+        'mean_fall_time',
+        'weibull_beta',
+        'inception_phase',
+        'extinction_phase',
+    ]
+
     @app.callback(
         Output('cluster-feature-selector', 'value'),
-        [Input('cluster-feat-select-mean', 'n_clicks'),
+        [Input('cluster-feat-select-classification', 'n_clicks'),
+         Input('cluster-feat-select-mean', 'n_clicks'),
          Input('cluster-feat-select-trimmed', 'n_clicks'),
          Input('cluster-feat-select-prpd', 'n_clicks'),
          Input('cluster-feat-select-none', 'n_clicks')],
         [State('cluster-feature-selector', 'value')],
         prevent_initial_call=True
     )
-    def update_cluster_feature_selection(mean_clicks, trimmed_clicks, prpd_clicks, none_clicks, current_value):
+    def update_cluster_feature_selection(classification_clicks, mean_clicks, trimmed_clicks, prpd_clicks, none_clicks, current_value):
         """Handle cluster feature selection buttons."""
         triggered = ctx.triggered_id
 
-        if triggered == 'cluster-feat-select-mean':
+        if triggered == 'cluster-feat-select-classification':
+            return CLASSIFICATION_FEATURES
+        elif triggered == 'cluster-feat-select-mean':
             return WAVEFORM_MEAN_FEATURE_NAMES
         elif triggered == 'cluster-feat-select-trimmed':
             return WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES
@@ -4992,6 +5031,17 @@ def create_app(data_dir=DATA_DIR):
             cv = cluster_feats.get('coefficient_of_variation', 0)
             cv_thresh = NOISE_THRESHOLDS['max_coefficient_of_variation']
             table_rows.append(make_row('Coefficient of Variation', cv, f'< {cv_thresh}', cv <= cv_thresh))
+
+            # Multi-pulse detection features
+            is_multi_pulse = cluster_feats.get('mean_is_multi_pulse', cluster_feats.get('is_multi_pulse', 0))
+            pulse_count = cluster_feats.get('mean_pulse_count', cluster_feats.get('pulses_per_waveform',
+                          cluster_feats.get('mean_pulses_per_waveform', 1)))
+            min_pulses_mp = NOISE_THRESHOLDS.get('min_pulses_for_multipulse', 3)
+
+            # Multi-pulse is detected if >50% of waveforms are multi-pulse OR pulse count >= threshold
+            is_mp_detected = is_multi_pulse > 0.5 or pulse_count >= min_pulses_mp
+            table_rows.append(make_row('Is Multi-Pulse (mean)', is_multi_pulse, f'> 0.5 (NOISE_MULTIPULSE)', is_multi_pulse > 0.5))
+            table_rows.append(make_row('Pulse Count (mean)', pulse_count, f'>= {min_pulses_mp} (NOISE_MULTIPULSE)', pulse_count >= min_pulses_mp))
 
             # Branch 2: Phase Spread
             table_rows.append(section_header("Branch 2: Phase Spread"))
