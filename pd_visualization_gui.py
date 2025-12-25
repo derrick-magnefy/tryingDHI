@@ -2051,7 +2051,6 @@ def create_app(data_dir=DATA_DIR):
          Output('advanced-options-container', 'style'),
          Output('stats-container', 'style'),
          Output('manual-cluster-section', 'style'),
-         Output('manual-cluster-mode-container', 'style'),
          Output('cluster-details-section', 'style'),
          Output('detailed-analysis-container', 'style'),
          Output('toggle-detailed-view-btn', 'children')],
@@ -2064,7 +2063,6 @@ def create_app(data_dir=DATA_DIR):
             noise_threshold_style = {'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}
             show_style = {'width': '90%', 'margin': '10px auto'}
             show_95_style = {'width': '95%', 'margin': '10px auto'}
-            manual_container_style = {'width': '95%', 'margin': '10px auto', 'display': 'none'}  # Hidden by default
             detailed_container_style = {}  # No display:none
             button_text = "Simplified View"
         else:
@@ -2073,7 +2071,6 @@ def create_app(data_dir=DATA_DIR):
             noise_threshold_style = hide_style
             show_style = hide_style
             show_95_style = hide_style
-            manual_container_style = hide_style
             detailed_container_style = hide_style
             button_text = "Detailed View"
 
@@ -2082,7 +2079,6 @@ def create_app(data_dir=DATA_DIR):
             show_style,  # advanced-options-container
             show_style,  # stats-container
             show_95_style,  # manual-cluster-section
-            manual_container_style,  # manual-cluster-mode-container
             show_95_style,  # cluster-details-section
             detailed_container_style,  # detailed-analysis-container
             button_text  # toggle button text
