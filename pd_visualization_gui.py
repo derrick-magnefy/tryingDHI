@@ -5025,91 +5025,211 @@ def create_app(data_dir=DATA_DIR):
                                                     'borderBottom': '1px solid #ccc'})
                 ])
 
-            # Branch 1: Noise Detection
-            table_rows.append(section_header("Branch 1: Noise Detection"))
+            # =====================================================================
+            # BRANCH 1: NOISE DETECTION (11 features, score-based)
+            # =====================================================================
+            table_rows.append(section_header("Branch 1: Noise Detection (score >= 0.45 → NOISE)"))
 
-            cv = cluster_feats.get('coefficient_of_variation', 0)
-            cv_thresh = NOISE_THRESHOLDS['max_coefficient_of_variation']
-            table_rows.append(make_row('Coefficient of Variation', cv, f'< {cv_thresh}', cv <= cv_thresh))
-
-            # Multi-pulse detection features
+            # Multi-pulse detection (checked first)
             is_multi_pulse = cluster_feats.get('mean_is_multi_pulse', cluster_feats.get('is_multi_pulse', 0))
             pulse_count = cluster_feats.get('mean_pulse_count', cluster_feats.get('pulses_per_waveform',
                           cluster_feats.get('mean_pulses_per_waveform', 1)))
             min_pulses_mp = NOISE_THRESHOLDS.get('min_pulses_for_multipulse', 3)
+            table_rows.append(make_row('Is Multi-Pulse (mean)', is_multi_pulse, f'> 0.5 → NOISE_MULTIPULSE', is_multi_pulse > 0.5))
+            table_rows.append(make_row('Pulse Count (mean)', pulse_count, f'>= {min_pulses_mp} → NOISE_MULTIPULSE', pulse_count >= min_pulses_mp))
 
-            # Multi-pulse is detected if >50% of waveforms are multi-pulse OR pulse count >= threshold
-            is_mp_detected = is_multi_pulse > 0.5 or pulse_count >= min_pulses_mp
-            table_rows.append(make_row('Is Multi-Pulse (mean)', is_multi_pulse, f'> 0.5 (NOISE_MULTIPULSE)', is_multi_pulse > 0.5))
-            table_rows.append(make_row('Pulse Count (mean)', pulse_count, f'>= {min_pulses_mp} (NOISE_MULTIPULSE)', pulse_count >= min_pulses_mp))
+            # Noise score features
+            spectral_flatness = cluster_feats.get('mean_spectral_flatness', cluster_feats.get('spectral_flatness', 0))
+            sf_thresh = NOISE_THRESHOLDS['min_spectral_flatness']
+            table_rows.append(make_row('Spectral Flatness', spectral_flatness, f'> {sf_thresh} (+0.15)', spectral_flatness > sf_thresh))
 
-            # Branch 2: Phase Spread
-            table_rows.append(section_header("Branch 2: Phase Spread"))
+            slew_rate = cluster_feats.get('mean_slew_rate', cluster_feats.get('slew_rate', 1e9))
+            sr_thresh = NOISE_THRESHOLDS['min_slew_rate']
+            table_rows.append(make_row('Slew Rate', slew_rate, f'< {sr_thresh:.0e} (+0.15)', slew_rate < sr_thresh))
 
-            cross_corr = cluster_feats.get('cross_correlation', 0)
-            cc_thresh = SURFACE_DETECTION_THRESHOLDS['corona_min_cross_corr']
-            table_rows.append(make_row('Cross Correlation', cross_corr, f'>= {cc_thresh} (corona/internal)', cross_corr >= cc_thresh))
+            crest_factor = cluster_feats.get('mean_crest_factor', cluster_feats.get('crest_factor', 10))
+            cf_thresh = NOISE_THRESHOLDS['min_crest_factor']
+            table_rows.append(make_row('Crest Factor', crest_factor, f'< {cf_thresh} (+0.15)', crest_factor < cf_thresh))
 
-            asymmetry = cluster_feats.get('discharge_asymmetry', 0)
-            asym_thresh = CORONA_INTERNAL_THRESHOLDS['internal_max_asymmetry']
-            table_rows.append(make_row('Discharge Asymmetry', abs(asymmetry), f'< {asym_thresh} (internal)', abs(asymmetry) < asym_thresh))
+            cross_corr_noise = cluster_feats.get('mean_cross_correlation', cluster_feats.get('cross_correlation', 0.5))
+            cc_thresh = NOISE_THRESHOLDS['min_cross_correlation']
+            table_rows.append(make_row('Cross Correlation', cross_corr_noise, f'< {cc_thresh} (+0.10)', cross_corr_noise < cc_thresh))
+
+            oscillation_count = cluster_feats.get('mean_oscillation_count', cluster_feats.get('oscillation_count', 5))
+            osc_thresh = NOISE_THRESHOLDS['max_oscillation_count']
+            table_rows.append(make_row('Oscillation Count', oscillation_count, f'> {osc_thresh} (+0.10)', oscillation_count > osc_thresh))
+
+            snr = cluster_feats.get('mean_signal_to_noise_ratio', cluster_feats.get('signal_to_noise_ratio', 10))
+            snr_thresh = NOISE_THRESHOLDS['min_signal_to_noise_ratio']
+            table_rows.append(make_row('Signal-to-Noise Ratio', snr, f'< {snr_thresh} (+0.15)', snr < snr_thresh))
+
+            cv = cluster_feats.get('coefficient_of_variation', 0)
+            cv_thresh = NOISE_THRESHOLDS['max_coefficient_of_variation']
+            table_rows.append(make_row('Coefficient of Variation', cv, f'> {cv_thresh} (+0.10)', cv > cv_thresh))
+
+            bandwidth = cluster_feats.get('mean_bandwidth_3db', cluster_feats.get('bandwidth_3db', 1e9))
+            bw_thresh = NOISE_THRESHOLDS['max_bandwidth_3db']
+            table_rows.append(make_row('Bandwidth 3dB', bandwidth, f'< {bw_thresh:.0e} (+0.05)', bandwidth < bw_thresh))
+
+            dominant_freq = cluster_feats.get('mean_dominant_frequency', cluster_feats.get('dominant_frequency', 1e6))
+            df_thresh = NOISE_THRESHOLDS['max_dominant_frequency']
+            table_rows.append(make_row('Dominant Frequency', dominant_freq, f'< {df_thresh:.0e} (+0.10)', dominant_freq < df_thresh))
+
+            # =====================================================================
+            # BRANCH 2: PHASE SPREAD (Surface PD immediate detection)
+            # =====================================================================
+            table_rows.append(section_header("Branch 2: Phase Spread (> threshold → SURFACE)"))
 
             phase_spread = cluster_feats.get('phase_spread', 0)
             ps_thresh = PHASE_SPREAD_THRESHOLDS['surface_phase_spread_min']
-            table_rows.append(make_row('Phase Spread', phase_spread, f'< {ps_thresh} (corona/internal)', phase_spread < ps_thresh, ' deg'))
+            table_rows.append(make_row('Phase Spread', phase_spread, f'> {ps_thresh}° → SURFACE', phase_spread > ps_thresh, '°'))
 
-            # Branch 3: Symmetry & Quadrants
-            table_rows.append(section_header("Branch 3: Quadrant Distribution"))
+            # =====================================================================
+            # BRANCH 3: SURFACE DETECTION (8 features, weighted scoring)
+            # =====================================================================
+            table_rows.append(section_header("Branch 3: Surface Detection (weighted score)"))
 
-            q1 = cluster_feats.get('quadrant_1_percentage', 0)
-            q2 = cluster_feats.get('quadrant_2_percentage', 0)
-            q3 = cluster_feats.get('quadrant_3_percentage', 0)
-            q4 = cluster_feats.get('quadrant_4_percentage', 0)
-            positive_half = q1 + q2
-            negative_half = q3 + q4
+            # Get weights
+            surf_primary = int(SURFACE_DETECTION_THRESHOLDS.get('primary_weight', 4))
+            surf_secondary = int(SURFACE_DETECTION_THRESHOLDS.get('secondary_weight', 3))
+            surf_mid = int(SURFACE_DETECTION_THRESHOLDS.get('mid_weight', 2))
+            surf_supporting = int(SURFACE_DETECTION_THRESHOLDS.get('supporting_weight', 1))
+            min_surface_score = int(SURFACE_DETECTION_THRESHOLDS.get('min_surface_score', 8))
 
-            single_half_thresh = QUADRANT_THRESHOLDS['single_halfcycle_threshold']
-            table_rows.append(make_row('Q1 (0-90 deg)', q1, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
-                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q1 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
-            table_rows.append(make_row('Q2 (90-180 deg)', q2, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
-                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q2 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
-            table_rows.append(make_row('Q3 (180-270 deg)', q3, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
-                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q3 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
-            table_rows.append(make_row('Q4 (270-360 deg)', q4, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
-                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q4 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
-            table_rows.append(make_row('Positive Half (Q1+Q2)', positive_half, f'< {single_half_thresh}% (not corona)', positive_half < single_half_thresh, '%'))
-            table_rows.append(make_row('Negative Half (Q3+Q4)', negative_half, f'< {single_half_thresh}% (not corona)', negative_half < single_half_thresh, '%'))
+            # Primary (weight 4): Phase spread
+            surf_ps_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_phase_spread', 120)
+            table_rows.append(make_row(f'Phase Spread [Primary, +{surf_primary}]', phase_spread,
+                                       f'> {surf_ps_thresh}°', phase_spread > surf_ps_thresh, '°'))
 
-            # Branch 4: Phase Location
-            table_rows.append(section_header("Branch 4: Phase Location"))
+            # Secondary (weight 3): Slew rate, Spectral power ratio, CV
+            surf_slew = cluster_feats.get('mean_slew_rate', cluster_feats.get('slew_rate', 1e7))
+            surf_slew_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_max_slew_rate', 1e7)
+            table_rows.append(make_row(f'Slew Rate [Secondary, +{surf_secondary}]', surf_slew,
+                                       f'< {surf_slew_thresh:.0e}', surf_slew < surf_slew_thresh))
+
+            surf_spectral = cluster_feats.get('spectral_power_ratio', cluster_feats.get('mean_spectral_power_ratio', 0.5))
+            surf_spectral_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_max_spectral_power_ratio', 0.8)
+            table_rows.append(make_row(f'Spectral Power Ratio [Secondary, +{surf_secondary}]', surf_spectral,
+                                       f'< {surf_spectral_thresh}', surf_spectral < surf_spectral_thresh))
+
+            surf_cv = cluster_feats.get('coefficient_of_variation', 0.3)
+            surf_cv_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_min_cv', 0.25)
+            table_rows.append(make_row(f'Coeff. of Variation [Secondary, +{surf_secondary}]', surf_cv,
+                                       f'> {surf_cv_thresh}', surf_cv > surf_cv_thresh))
+
+            # Mid (weight 2): Crest factor, Cross correlation
+            surf_crest = cluster_feats.get('mean_crest_factor', cluster_feats.get('crest_factor', 5))
+            surf_crest_min = SURFACE_DETECTION_THRESHOLDS.get('surface_min_crest_factor', 4)
+            surf_crest_max = SURFACE_DETECTION_THRESHOLDS.get('surface_max_crest_factor', 6)
+            table_rows.append(make_row(f'Crest Factor [Mid, +{surf_mid}]', surf_crest,
+                                       f'{surf_crest_min}-{surf_crest_max}', surf_crest_min <= surf_crest <= surf_crest_max))
+
+            surf_cc = cluster_feats.get('cross_correlation', 0.5)
+            surf_cc_min = SURFACE_DETECTION_THRESHOLDS.get('surface_min_cross_corr', 0.4)
+            surf_cc_max = SURFACE_DETECTION_THRESHOLDS.get('surface_max_cross_corr', 0.6)
+            table_rows.append(make_row(f'Cross Correlation [Mid, +{surf_mid}]', surf_cc,
+                                       f'{surf_cc_min}-{surf_cc_max}', surf_cc_min <= surf_cc <= surf_cc_max))
+
+            # Supporting (weight 1): Spectral flatness, Repetition rate variance
+            surf_flat = cluster_feats.get('mean_spectral_flatness', cluster_feats.get('spectral_flatness', 0.4))
+            surf_flat_min = SURFACE_DETECTION_THRESHOLDS.get('surface_min_spectral_flatness', 0.4)
+            surf_flat_max = SURFACE_DETECTION_THRESHOLDS.get('surface_max_spectral_flatness', 0.5)
+            table_rows.append(make_row(f'Spectral Flatness [Supporting, +{surf_supporting}]', surf_flat,
+                                       f'{surf_flat_min}-{surf_flat_max}', surf_flat_min <= surf_flat <= surf_flat_max))
+
+            rep_rate_var = cluster_feats.get('repetition_rate_variance', cluster_feats.get('rep_rate_variance', 0.4))
+            rep_var_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_min_rep_rate_var', 0.3)
+            table_rows.append(make_row(f'Repetition Rate Variance [Supporting, +{surf_supporting}]', rep_rate_var,
+                                       f'> {rep_var_thresh}', rep_rate_var > rep_var_thresh))
+
+            # =====================================================================
+            # BRANCH 4: CORONA vs INTERNAL (8 features, weighted scoring)
+            # =====================================================================
+            table_rows.append(section_header("Branch 4: Corona vs Internal (weighted scores)"))
+
+            # Get weights
+            ci_primary = int(CORONA_INTERNAL_THRESHOLDS.get('primary_weight', 4))
+            ci_secondary = int(CORONA_INTERNAL_THRESHOLDS.get('secondary_weight', 2))
+            ci_supporting = int(CORONA_INTERNAL_THRESHOLDS.get('supporting_weight', 1))
+
+            # Primary (weight 4): Discharge asymmetry, Phase of max activity
+            asymmetry = cluster_feats.get('discharge_asymmetry', 0)
+            corona_asym_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_max_asymmetry', -0.4)
+            internal_asym_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_asymmetry', -0.3)
+            internal_asym_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_asymmetry', 0.3)
+            asym_corona = asymmetry < corona_asym_thresh
+            asym_internal = internal_asym_min <= asymmetry <= internal_asym_max
+            asym_status = f'Corona: <{corona_asym_thresh}, Internal: [{internal_asym_min},{internal_asym_max}]'
+            table_rows.append(make_row(f'Discharge Asymmetry [Primary, +{ci_primary}]', asymmetry,
+                                       asym_status, asym_corona or asym_internal))
 
             phase_max = cluster_feats.get('phase_of_max_activity', 0)
-            surface_tol = 30  # Surface PD tolerance around zero-crossings (degrees)
-            near_zero = phase_max < surface_tol or abs(phase_max - 180) < surface_tol or phase_max > (360 - surface_tol)
-            table_rows.append(make_row('Phase of Max Activity', phase_max, f'Near 0/180/360 deg +/-{surface_tol} (surface)', near_zero, ' deg'))
+            corona_phase_min = CORONA_INTERNAL_THRESHOLDS.get('corona_phase_min', 200)
+            corona_phase_max = CORONA_INTERNAL_THRESHOLDS.get('corona_phase_max', 250)
+            int_phase_q1_min = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q1_min', 80)
+            int_phase_q1_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q1_max', 100)
+            int_phase_q3_min = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_min', 260)
+            int_phase_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_max', 280)
+            phase_corona = corona_phase_min <= phase_max <= corona_phase_max
+            phase_internal = (int_phase_q1_min <= phase_max <= int_phase_q1_max) or (int_phase_q3_min <= phase_max <= int_phase_q3_max)
+            table_rows.append(make_row(f'Phase of Max Activity [Primary, +{ci_primary}]', phase_max,
+                                       f'Corona: [{corona_phase_min},{corona_phase_max}]°', phase_corona or phase_internal, '°'))
 
-            inception = cluster_feats.get('inception_phase', 0)
-            extinction = cluster_feats.get('extinction_phase', 0)
-            table_rows.append(make_row('Inception Phase', inception, 'Info only', True, ' deg'))
-            table_rows.append(make_row('Extinction Phase', extinction, 'Info only', True, ' deg'))
+            # Secondary (weight 2): Slew rate, Spectral power ratio, Oscillation count
+            ci_slew = cluster_feats.get('mean_slew_rate', cluster_feats.get('slew_rate', 1e7))
+            corona_slew_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_slew_rate', 5e7)
+            int_slew_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_slew_rate', 1e7)
+            int_slew_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_slew_rate', 5e7)
+            slew_corona = ci_slew > corona_slew_thresh
+            slew_internal = int_slew_min <= ci_slew <= int_slew_max
+            table_rows.append(make_row(f'Slew Rate [Secondary, +{ci_secondary}]', ci_slew,
+                                       f'Corona: >{corona_slew_thresh:.0e}', slew_corona or slew_internal))
 
-            # Branch 5: Amplitude Characteristics
-            table_rows.append(section_header("Branch 5: Amplitude Characteristics"))
+            ci_spectral = cluster_feats.get('spectral_power_ratio', cluster_feats.get('mean_spectral_power_ratio', 1.0))
+            corona_spec_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_spectral_ratio', 1.5)
+            int_spec_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_spectral_ratio', 0.8)
+            int_spec_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_spectral_ratio', 1.5)
+            spec_corona = ci_spectral > corona_spec_thresh
+            spec_internal = int_spec_min <= ci_spectral <= int_spec_max
+            table_rows.append(make_row(f'Spectral Power Ratio [Secondary, +{ci_secondary}]', ci_spectral,
+                                       f'Corona: >{corona_spec_thresh}', spec_corona or spec_internal))
 
-            weibull_beta = cluster_feats.get('weibull_beta', 0)
-            wb_min = AMPLITUDE_THRESHOLDS['internal_weibull_beta_min']
-            wb_max = AMPLITUDE_THRESHOLDS['internal_weibull_beta_max']
-            table_rows.append(make_row('Weibull Beta', weibull_beta, f'{wb_min}-{wb_max} (internal)', wb_min <= weibull_beta <= wb_max))
+            ci_osc = cluster_feats.get('mean_oscillation_count', cluster_feats.get('oscillation_count', 5))
+            corona_osc_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_max_oscillation', 3)
+            int_osc_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_oscillation', 3)
+            int_osc_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_oscillation', 8)
+            osc_corona = ci_osc < corona_osc_thresh
+            osc_internal = int_osc_min <= ci_osc <= int_osc_max
+            table_rows.append(make_row(f'Oscillation Count [Secondary, +{ci_secondary}]', ci_osc,
+                                       f'Corona: <{corona_osc_thresh}', osc_corona or osc_internal))
 
-            mean_amp_pos = cluster_feats.get('mean_amplitude_positive', 0)
-            mean_amp_neg = cluster_feats.get('mean_amplitude_negative', 0)
-            max_amp_pos = cluster_feats.get('max_amplitude_positive', 0)
-            max_amp_neg = cluster_feats.get('max_amplitude_negative', 0)
-            mean_amp = max(mean_amp_pos, abs(mean_amp_neg)) if max(mean_amp_pos, abs(mean_amp_neg)) > 0 else 1e-10
-            max_amp = max(max_amp_pos, abs(max_amp_neg))
-            amp_ratio = max_amp / mean_amp if mean_amp > 0 else 0
-            ar_thresh = AMPLITUDE_THRESHOLDS['corona_amplitude_ratio_threshold']
-            table_rows.append(make_row('Amplitude Ratio (max/mean)', amp_ratio, f'> {ar_thresh} (corona)', amp_ratio > ar_thresh))
+            # Supporting (weight 1): CV, Q3 percentage, Repetition rate
+            ci_cv = cluster_feats.get('coefficient_of_variation', 0.2)
+            corona_cv_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_max_cv', 0.15)
+            int_cv_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_cv', 0.15)
+            int_cv_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_cv', 0.35)
+            cv_corona = ci_cv < corona_cv_thresh
+            cv_internal = int_cv_min <= ci_cv <= int_cv_max
+            table_rows.append(make_row(f'Coeff. of Variation [Supporting, +{ci_supporting}]', ci_cv,
+                                       f'Corona: <{corona_cv_thresh}', cv_corona or cv_internal))
+
+            q3 = cluster_feats.get('quadrant_3_percentage', 0)
+            corona_q3_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_q3_pct', 55)
+            int_q3_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_q3_pct', 35)
+            int_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_q3_pct', 50)
+            q3_corona = q3 > corona_q3_thresh
+            q3_internal = int_q3_min <= q3 <= int_q3_max
+            table_rows.append(make_row(f'Quadrant 3 % [Supporting, +{ci_supporting}]', q3,
+                                       f'Corona: >{corona_q3_thresh}%', q3_corona or q3_internal, '%'))
+
+            rep_rate = cluster_feats.get('repetition_rate', cluster_feats.get('pulses_per_cycle', 50))
+            corona_rep_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_rep_rate', 100)
+            int_rep_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_rep_rate', 20)
+            int_rep_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_rep_rate', 100)
+            rep_corona = rep_rate > corona_rep_thresh
+            rep_internal = int_rep_min <= rep_rate <= int_rep_max
+            table_rows.append(make_row(f'Repetition Rate [Supporting, +{ci_supporting}]', rep_rate,
+                                       f'Corona: >{corona_rep_thresh}', rep_corona or rep_internal))
 
             # Create the table
             feature_table = html.Table(
