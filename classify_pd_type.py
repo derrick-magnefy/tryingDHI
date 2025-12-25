@@ -28,12 +28,21 @@ DATA_DIR = "Rugged Data Files"
 # DECISION TREE THRESHOLDS (Based on PD Research)
 # =============================================================================
 
-# Branch 1: Noise Detection
+# Branch 1: Noise Detection (using waveform characteristics)
 NOISE_THRESHOLDS = {
     'dbscan_noise_label': -1,                 # DBSCAN marks noise as -1
-    'min_pulse_count': 10,                    # Minimum pulses for valid cluster
-    'max_coefficient_of_variation': 2.0,      # CV too high indicates random noise
-    'min_repetition_rate': 1.0,               # Minimum pulses per second
+    # Spectral characteristics
+    'min_spectral_flatness': 0.7,             # High flatness = random noise (white noise ~1.0)
+    'max_bandwidth_3db': 1e6,                 # Narrowband EMI has low bandwidth (Hz)
+    'max_dominant_frequency': 1000,           # 60Hz hum or low-freq interference (Hz)
+    # Pulse shape characteristics
+    'min_slew_rate': 1e6,                     # Real PD has fast rise (V/s), noise is slower
+    'min_crest_factor': 3.0,                  # Real PD is impulsive (high crest factor)
+    'max_oscillation_count': 20,              # Excessive ringing = noise/EMI
+    # Signal quality
+    'min_signal_to_noise_ratio': 3.0,         # Minimum SNR for valid signal (dB)
+    'min_cross_correlation': 0.3,             # Shape consistency across pulses
+    'max_coefficient_of_variation': 2.0,      # CV too high = random amplitude noise
 }
 
 # Branch 2: Phase Correlation & Broadband
@@ -80,16 +89,28 @@ def apply_custom_thresholds(custom_thresholds):
 
     # Map custom threshold names to the actual dictionary keys
     threshold_mapping = {
-        'min_pulse_count': ('NOISE_THRESHOLDS', 'min_pulse_count'),
+        # Branch 1: Noise Detection
+        'min_spectral_flatness': ('NOISE_THRESHOLDS', 'min_spectral_flatness'),
+        'max_bandwidth_3db': ('NOISE_THRESHOLDS', 'max_bandwidth_3db'),
+        'max_dominant_frequency': ('NOISE_THRESHOLDS', 'max_dominant_frequency'),
+        'min_slew_rate': ('NOISE_THRESHOLDS', 'min_slew_rate'),
+        'min_crest_factor': ('NOISE_THRESHOLDS', 'min_crest_factor'),
+        'max_oscillation_count': ('NOISE_THRESHOLDS', 'max_oscillation_count'),
+        'min_snr': ('NOISE_THRESHOLDS', 'min_signal_to_noise_ratio'),
+        'min_cross_corr_noise': ('NOISE_THRESHOLDS', 'min_cross_correlation'),
         'max_cv': ('NOISE_THRESHOLDS', 'max_coefficient_of_variation'),
+        # Branch 2: Phase Correlation
         'min_cross_corr': ('PHASE_CORRELATION_THRESHOLDS', 'min_cross_correlation_symmetric'),
         'max_asymmetry_sym': ('PHASE_CORRELATION_THRESHOLDS', 'max_asymmetry_symmetric'),
+        # Branch 3: Corona
         'min_asymmetry_corona': ('SYMMETRY_THRESHOLDS', 'min_asymmetry_corona'),
         'halfcycle_dominance': ('SYMMETRY_THRESHOLDS', 'min_halfcycle_dominance_corona'),
         'single_halfcycle': ('QUADRANT_THRESHOLDS', 'single_halfcycle_threshold'),
+        # Branch 4: Internal
         'weibull_beta_min': ('AMPLITUDE_THRESHOLDS', 'internal_weibull_beta_min'),
         'sym_quadrant_min': ('QUADRANT_THRESHOLDS', 'symmetric_quadrant_min'),
         'sym_quadrant_max': ('QUADRANT_THRESHOLDS', 'symmetric_quadrant_max'),
+        # Branch 5: Surface
         'surface_phase_tol': ('SYMMETRY_THRESHOLDS', 'surface_phase_tolerance'),
     }
 
@@ -256,23 +277,90 @@ class PDTypeClassifier:
             )
             return result
 
-        # Check minimum pulse count
-        if n_pulses < NOISE_THRESHOLDS['min_pulse_count']:
+        # Extract noise-related features (using mean values for cluster)
+        spectral_flatness = self._get_feature(cluster_features, 'mean_spectral_flatness',
+                           self._get_feature(cluster_features, 'spectral_flatness', 0))
+        slew_rate = self._get_feature(cluster_features, 'mean_slew_rate',
+                   self._get_feature(cluster_features, 'slew_rate', 1e9))
+        crest_factor = self._get_feature(cluster_features, 'mean_crest_factor',
+                      self._get_feature(cluster_features, 'crest_factor', 10))
+        cross_corr_noise = self._get_feature(cluster_features, 'mean_cross_correlation',
+                          self._get_feature(cluster_features, 'cross_correlation', 0.5))
+        oscillation_count = self._get_feature(cluster_features, 'mean_oscillation_count',
+                           self._get_feature(cluster_features, 'oscillation_count', 5))
+        snr = self._get_feature(cluster_features, 'mean_signal_to_noise_ratio',
+             self._get_feature(cluster_features, 'signal_to_noise_ratio', 10))
+        cv = self._get_feature(cluster_features, 'coefficient_of_variation', 0)
+        bandwidth = self._get_feature(cluster_features, 'mean_bandwidth_3db',
+                   self._get_feature(cluster_features, 'bandwidth_3db', 1e9))
+        dominant_freq = self._get_feature(cluster_features, 'mean_dominant_frequency',
+                       self._get_feature(cluster_features, 'dominant_frequency', 1e6))
+
+        # Score-based noise detection (higher score = more likely noise)
+        noise_score = 0.0
+        noise_reasons = []
+
+        # 1. Spectral flatness: high flatness = random noise (white noise ~1.0)
+        if spectral_flatness > NOISE_THRESHOLDS['min_spectral_flatness']:
+            noise_score += 0.15
+            noise_reasons.append(f"high_spectral_flatness={spectral_flatness:.2f}")
+
+        # 2. Slew rate: real PD has fast rise times
+        if slew_rate < NOISE_THRESHOLDS['min_slew_rate']:
+            noise_score += 0.15
+            noise_reasons.append(f"slow_slew_rate={slew_rate:.2e}")
+
+        # 3. Crest factor: real PD is impulsive (high crest factor)
+        if crest_factor < NOISE_THRESHOLDS['min_crest_factor']:
+            noise_score += 0.15
+            noise_reasons.append(f"low_crest_factor={crest_factor:.2f}")
+
+        # 4. Cross-correlation: consistent shape across pulses
+        if cross_corr_noise < NOISE_THRESHOLDS['min_cross_correlation']:
+            noise_score += 0.10
+            noise_reasons.append(f"low_cross_corr={cross_corr_noise:.2f}")
+
+        # 5. Oscillation count: excessive ringing = EMI
+        if oscillation_count > NOISE_THRESHOLDS['max_oscillation_count']:
+            noise_score += 0.10
+            noise_reasons.append(f"excessive_oscillations={oscillation_count}")
+
+        # 6. Signal-to-noise ratio: poor signal quality
+        if snr < NOISE_THRESHOLDS['min_signal_to_noise_ratio']:
+            noise_score += 0.15
+            noise_reasons.append(f"low_snr={snr:.2f}")
+
+        # 7. Coefficient of variation: random amplitude
+        if cv > NOISE_THRESHOLDS['max_coefficient_of_variation']:
+            noise_score += 0.10
+            noise_reasons.append(f"high_cv={cv:.2f}")
+
+        # 8. Bandwidth: narrowband EMI has very low bandwidth
+        if bandwidth < NOISE_THRESHOLDS['max_bandwidth_3db']:
+            noise_score += 0.05
+            noise_reasons.append(f"narrowband={bandwidth:.2e}Hz")
+
+        # 9. Dominant frequency: 60Hz hum or low-freq interference
+        if dominant_freq < NOISE_THRESHOLDS['max_dominant_frequency']:
+            noise_score += 0.10
+            noise_reasons.append(f"low_freq={dominant_freq:.0f}Hz")
+
+        # Classify as noise if score exceeds threshold
+        if noise_score >= 0.45:
             result['pd_type'] = 'NOISE'
-            result['confidence'] = 0.8
+            result['confidence'] = min(0.5 + noise_score, 0.95)
             result['reasoning'].append(
-                f"Insufficient pulse count ({n_pulses} < {NOISE_THRESHOLDS['min_pulse_count']})"
+                f"Noise indicators: {', '.join(noise_reasons)}"
             )
             return result
 
-        # Check coefficient of variation
-        cv = self._get_feature(cluster_features, 'coefficient_of_variation', 0)
-        if cv > NOISE_THRESHOLDS['max_coefficient_of_variation']:
+        # Add warning if some noise indicators present
+        if noise_score > 0.2:
             result['warnings'].append(
-                f"High amplitude variability (CV={cv:.2f}) - possible noise contamination"
+                f"Partial noise indicators (score={noise_score:.2f}): {', '.join(noise_reasons)}"
             )
 
-        result['reasoning'].append(f"Passed noise detection (n={n_pulses}, CV={cv:.2f})")
+        result['reasoning'].append(f"Passed noise detection (score={noise_score:.2f}, n={n_pulses})")
 
         # =====================================================================
         # BRANCH 2: PHASE CORRELATION & SYMMETRY

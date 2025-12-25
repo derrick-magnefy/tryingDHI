@@ -1672,18 +1672,63 @@ def create_app(data_dir=DATA_DIR):
                                         'padding': '5px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'
                                     }),
                                     html.Div([
+                                        html.P("Score-based detection: each feature adds to noise score. Score ≥ 0.45 = NOISE",
+                                              style={'fontSize': '11px', 'color': '#666', 'marginBottom': '10px', 'fontStyle': 'italic'}),
+                                        # Spectral characteristics
                                         html.Div([
-                                            html.Label("Min Pulse Count:", style={'width': '200px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-min-pulse-count', type='number', value=10, min=1, max=100,
+                                            html.Label("Min Spectral Flatness:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-spectral-flatness', type='number', value=0.7, min=0, max=1, step=0.05,
                                                      style={'width': '80px'}),
-                                            html.Span(" (clusters with fewer pulses = NOISE)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
+                                            html.Span(" (> this = random noise, +0.15)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Min Slew Rate (V/s):", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-slew-rate', type='number', value=1e6, min=0, step=1e5,
+                                                     style={'width': '100px'}),
+                                            html.Span(" (< this = slow rise, +0.15)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Min Crest Factor:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-crest-factor', type='number', value=3.0, min=1, max=20, step=0.5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = not impulsive, +0.15)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Min Cross-Correlation:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-cross-corr-noise', type='number', value=0.3, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = inconsistent shape, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Max Oscillation Count:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-oscillation-count', type='number', value=20, min=1, max=100, step=1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this = excessive ringing, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Min SNR (dB):", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-snr', type='number', value=3.0, min=0, max=50, step=0.5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = poor signal quality, +0.15)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
                                         html.Div([
                                             html.Label("Max Coeff. of Variation:", style={'width': '200px', 'display': 'inline-block'}),
                                             dcc.Input(id='thresh-max-cv', type='number', value=2.0, min=0.1, max=10, step=0.1,
                                                      style={'width': '80px'}),
-                                            html.Span(" (CV > this triggers noise warning)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
+                                            html.Span(" (> this = random amplitude, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Max Bandwidth (Hz):", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-bandwidth', type='number', value=1e6, min=0, step=1e5,
+                                                     style={'width': '100px'}),
+                                            html.Span(" (< this = narrowband EMI, +0.05)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Max Dominant Freq (Hz):", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-dominant-freq', type='number', value=1000, min=0, max=1e6, step=100,
+                                                     style={'width': '100px'}),
+                                            html.Span(" (< this = 60Hz hum/low-freq, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
 
@@ -2318,16 +2363,28 @@ def create_app(data_dir=DATA_DIR):
 
     # Callback to reset decision tree thresholds to defaults
     @app.callback(
-        [Output('thresh-min-pulse-count', 'value'),
+        [# Branch 1: Noise Detection
+         Output('thresh-min-spectral-flatness', 'value'),
+         Output('thresh-min-slew-rate', 'value'),
+         Output('thresh-min-crest-factor', 'value'),
+         Output('thresh-min-cross-corr-noise', 'value'),
+         Output('thresh-max-oscillation-count', 'value'),
+         Output('thresh-min-snr', 'value'),
          Output('thresh-max-cv', 'value'),
+         Output('thresh-max-bandwidth', 'value'),
+         Output('thresh-max-dominant-freq', 'value'),
+         # Branch 2: Phase Correlation
          Output('thresh-min-cross-corr', 'value'),
          Output('thresh-max-asymmetry-sym', 'value'),
+         # Branch 3: Corona
          Output('thresh-min-asymmetry-corona', 'value'),
          Output('thresh-halfcycle-dominance', 'value'),
          Output('thresh-single-halfcycle', 'value'),
+         # Branch 4: Internal
          Output('thresh-weibull-beta-min', 'value'),
          Output('thresh-sym-quadrant-min', 'value'),
          Output('thresh-sym-quadrant-max', 'value'),
+         # Branch 5: Surface
          Output('thresh-surface-phase-tol', 'value')],
         [Input('threshold-reset-btn', 'n_clicks')],
         prevent_initial_call=True
@@ -2335,16 +2392,28 @@ def create_app(data_dir=DATA_DIR):
     def reset_thresholds(n_clicks):
         """Reset all threshold inputs to default values."""
         return (
-            10,    # min_pulse_count
+            # Branch 1: Noise Detection
+            0.7,   # min_spectral_flatness
+            1e6,   # min_slew_rate
+            3.0,   # min_crest_factor
+            0.3,   # min_cross_corr_noise
+            20,    # max_oscillation_count
+            3.0,   # min_snr
             2.0,   # max_cv
+            1e6,   # max_bandwidth
+            1000,  # max_dominant_freq
+            # Branch 2: Phase Correlation
             0.7,   # min_cross_corr
             0.35,  # max_asymmetry_sym
+            # Branch 3: Corona
             0.4,   # min_asymmetry_corona
             65,    # halfcycle_dominance
             80,    # single_halfcycle
+            # Branch 4: Internal
             2.0,   # weibull_beta_min
             15,    # sym_quadrant_min
             35,    # sym_quadrant_max
+            # Branch 5: Surface
             45,    # surface_phase_tol
         )
 
@@ -2929,8 +2998,17 @@ def create_app(data_dir=DATA_DIR):
         [Input('reclassify-btn', 'n_clicks')],
         [State('dataset-dropdown', 'value'),
          State('clustering-method-radio', 'value'),
-         State('thresh-min-pulse-count', 'value'),
+         # Branch 1: Noise Detection
+         State('thresh-min-spectral-flatness', 'value'),
+         State('thresh-min-slew-rate', 'value'),
+         State('thresh-min-crest-factor', 'value'),
+         State('thresh-min-cross-corr-noise', 'value'),
+         State('thresh-max-oscillation-count', 'value'),
+         State('thresh-min-snr', 'value'),
          State('thresh-max-cv', 'value'),
+         State('thresh-max-bandwidth', 'value'),
+         State('thresh-max-dominant-freq', 'value'),
+         # Branch 2-5
          State('thresh-min-cross-corr', 'value'),
          State('thresh-max-asymmetry-sym', 'value'),
          State('thresh-min-asymmetry-corona', 'value'),
@@ -2943,7 +3021,10 @@ def create_app(data_dir=DATA_DIR):
         prevent_initial_call=True
     )
     def reclassify_with_thresholds(n_clicks, prefix, clustering_method,
-                                    min_pulse_count, max_cv, min_cross_corr, max_asymmetry_sym,
+                                    min_spectral_flatness, min_slew_rate, min_crest_factor,
+                                    min_cross_corr_noise, max_oscillation_count, min_snr,
+                                    max_cv, max_bandwidth, max_dominant_freq,
+                                    min_cross_corr, max_asymmetry_sym,
                                     min_asymmetry_corona, halfcycle_dominance, single_halfcycle,
                                     weibull_beta_min, sym_quadrant_min, sym_quadrant_max, surface_phase_tol):
         """Run classification with custom threshold values."""
@@ -2967,8 +3048,15 @@ def create_app(data_dir=DATA_DIR):
 
         try:
             # Build threshold string
-            thresholds_str = (f"min_pulse_count={min_pulse_count},"
+            thresholds_str = (f"min_spectral_flatness={min_spectral_flatness},"
+                             f"min_slew_rate={min_slew_rate},"
+                             f"min_crest_factor={min_crest_factor},"
+                             f"min_cross_corr_noise={min_cross_corr_noise},"
+                             f"max_oscillation_count={max_oscillation_count},"
+                             f"min_snr={min_snr},"
                              f"max_cv={max_cv},"
+                             f"max_bandwidth_3db={max_bandwidth},"
+                             f"max_dominant_frequency={max_dominant_freq},"
                              f"min_cross_corr={min_cross_corr},"
                              f"max_asymmetry_sym={max_asymmetry_sym},"
                              f"min_asymmetry_corona={min_asymmetry_corona},"
@@ -3454,8 +3542,17 @@ def create_app(data_dir=DATA_DIR):
         Output('reclassify-all-result', 'children'),
         [Input('reclassify-all-btn', 'n_clicks')],
         [State('clustering-method-radio', 'value'),
-         State('thresh-min-pulse-count', 'value'),
+         # Branch 1: Noise Detection
+         State('thresh-min-spectral-flatness', 'value'),
+         State('thresh-min-slew-rate', 'value'),
+         State('thresh-min-crest-factor', 'value'),
+         State('thresh-min-cross-corr-noise', 'value'),
+         State('thresh-max-oscillation-count', 'value'),
+         State('thresh-min-snr', 'value'),
          State('thresh-max-cv', 'value'),
+         State('thresh-max-bandwidth', 'value'),
+         State('thresh-max-dominant-freq', 'value'),
+         # Branch 2-5
          State('thresh-min-cross-corr', 'value'),
          State('thresh-max-asymmetry-sym', 'value'),
          State('thresh-min-asymmetry-corona', 'value'),
@@ -3468,7 +3565,10 @@ def create_app(data_dir=DATA_DIR):
         prevent_initial_call=True
     )
     def reclassify_all_datasets(n_clicks, clustering_method,
-                                 min_pulse_count, max_cv, min_cross_corr, max_asymmetry_sym,
+                                 min_spectral_flatness, min_slew_rate, min_crest_factor,
+                                 min_cross_corr_noise, max_oscillation_count, min_snr,
+                                 max_cv, max_bandwidth, max_dominant_freq,
+                                 min_cross_corr, max_asymmetry_sym,
                                  min_asymmetry_corona, halfcycle_dominance, single_halfcycle,
                                  weibull_beta_min, sym_quadrant_min, sym_quadrant_max, surface_phase_tol):
         """Run classification on all datasets with custom thresholds."""
@@ -3481,8 +3581,15 @@ def create_app(data_dir=DATA_DIR):
             return html.Div("No datasets available", style={'color': 'red', 'padding': '10px'})
 
         # Build threshold string
-        thresholds_str = (f"min_pulse_count={min_pulse_count},"
+        thresholds_str = (f"min_spectral_flatness={min_spectral_flatness},"
+                         f"min_slew_rate={min_slew_rate},"
+                         f"min_crest_factor={min_crest_factor},"
+                         f"min_cross_corr_noise={min_cross_corr_noise},"
+                         f"max_oscillation_count={max_oscillation_count},"
+                         f"min_snr={min_snr},"
                          f"max_cv={max_cv},"
+                         f"max_bandwidth_3db={max_bandwidth},"
+                         f"max_dominant_frequency={max_dominant_freq},"
                          f"min_cross_corr={min_cross_corr},"
                          f"max_asymmetry_sym={max_asymmetry_sym},"
                          f"min_asymmetry_corona={min_asymmetry_corona},"
