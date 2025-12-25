@@ -1416,9 +1416,19 @@ def create_app(data_dir=DATA_DIR):
     loader = PDDataLoader(data_dir)
 
     app.layout = html.Div([
-        html.H1("PD Analysis Visualization", style={'textAlign': 'center'}),
+        # Header with title and view toggle
+        html.Div([
+            html.H1("Edge Processing Demo", style={'textAlign': 'center', 'display': 'inline-block', 'margin': '0'}),
+            html.Button("Toggle Detailed View", id='toggle-detailed-view-btn', n_clicks=0,
+                       style={'marginLeft': '20px', 'padding': '8px 16px', 'fontSize': '14px',
+                              'backgroundColor': '#1976d2', 'color': 'white', 'border': 'none',
+                              'borderRadius': '4px', 'cursor': 'pointer', 'verticalAlign': 'middle'}),
+        ], style={'textAlign': 'center', 'padding': '15px 0'}),
 
-        # Controls
+        # Store for view mode
+        dcc.Store(id='detailed-view-mode', data=True),
+
+        # Controls (always visible)
         html.Div([
             html.Div([
                 html.Label("Select Dataset:"),
@@ -1444,7 +1454,17 @@ def create_app(data_dir=DATA_DIR):
             ], style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
 
-        # Advanced Options (collapsible)
+        # PD Type Summary (always visible - shown prominently in simplified view)
+        html.Div([
+            html.Div(id='pd-type-summary-display', style={
+                'padding': '15px',
+                'backgroundColor': '#f0f7ff',
+                'borderRadius': '8px',
+                'border': '1px solid #1976d2'
+            })
+        ], style={'width': '90%', 'margin': '15px auto'}),
+
+        # Advanced Options (collapsible) - hidden in simplified view
         html.Div([
             html.Details([
                 html.Summary("Advanced Analysis Options", style={
@@ -1680,25 +1700,25 @@ def create_app(data_dir=DATA_DIR):
                     ]),
                 ], style={'padding': '15px', 'border': '1px solid #ddd', 'borderRadius': '4px', 'marginTop': '5px'})
             ])
-        ], style={'width': '90%', 'margin': '10px auto'}),
+        ], id='advanced-options-container', style={'width': '90%', 'margin': '10px auto'}),
 
-        # Re-analysis status message
+        # Re-analysis status message (hidden in simplified view)
         html.Div(id='reanalysis-status', style={
             'width': '90%', 'margin': '5px auto', 'padding': '8px',
             'textAlign': 'center', 'display': 'none'
         }),
 
-        # Statistics
+        # Statistics (hidden in simplified view)
         html.Div([
             dcc.Markdown(id='stats-text', style={'padding': '10px', 'backgroundColor': '#f0f0f0', 'borderRadius': '5px'})
-        ], style={'width': '90%', 'margin': '10px auto'}),
+        ], id='stats-container', style={'width': '90%', 'margin': '10px auto'}),
 
         # Cluster PRPD - full row
         html.Div([
             dcc.Graph(id='cluster-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
-        # Manual Cluster Definition Section - Full dedicated mode
+        # Manual Cluster Definition Section - Full dedicated mode (hidden in simplified view)
         html.Div([
             html.Div([
                 html.Button("Enter Manual Cluster Mode", id='enter-manual-mode-btn', n_clicks=0,
@@ -1708,7 +1728,7 @@ def create_app(data_dir=DATA_DIR):
                 html.Span(" Define your own clusters to discover which features best separate them",
                          style={'marginLeft': '15px', 'color': '#666', 'fontStyle': 'italic'})
             ], style={'marginBottom': '10px'}),
-        ], style={'width': '95%', 'margin': '10px auto'}),
+        ], id='manual-cluster-section', style={'width': '95%', 'margin': '10px auto'}),
 
         # Manual Cluster Mode Container (hidden by default)
         html.Div(id='manual-cluster-mode-container', children=[
@@ -1779,7 +1799,7 @@ def create_app(data_dir=DATA_DIR):
             ),
         ], style={'width': '95%', 'margin': '10px auto', 'display': 'none'}),
 
-        # Cluster details toggle and display
+        # Cluster details toggle and display (hidden in simplified view)
         html.Div([
             html.Div([
                 dcc.Checklist(
@@ -1830,19 +1850,21 @@ def create_app(data_dir=DATA_DIR):
                 'maxHeight': '500px',
                 'overflowY': 'auto'
             })
-        ], style={'width': '95%', 'margin': '10px auto'}),
+        ], id='cluster-details-section', style={'width': '95%', 'margin': '10px auto'}),
 
-        # PD Type PRPD - full row
+        # PD Type PRPD - full row (always visible)
         html.Div([
             dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
-        # Third row: Waveform (left) and Features panel (right)
-        html.Div([
-            # Waveform viewer
+        # Detailed analysis sections (hidden in simplified view)
+        html.Div(id='detailed-analysis-container', children=[
+            # Third row: Waveform (left) and Features panel (right)
             html.Div([
-                dcc.Graph(id='waveform-plot', style={'height': '450px'})
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+                # Waveform viewer
+                html.Div([
+                    dcc.Graph(id='waveform-plot', style={'height': '450px'})
+                ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
 
             # Feature display area
             html.Div([
@@ -1982,12 +2004,13 @@ def create_app(data_dir=DATA_DIR):
             ], open=False)
         ], style={'width': '95%', 'margin': '20px auto', 'border': '1px solid #ddd', 'borderRadius': '4px'}),
 
-        # PCA Plot (shown only for K-means)
-        html.Div([
+            # PCA Plot (shown only for K-means)
             html.Div([
-                dcc.Graph(id='pca-plot', style={'height': '500px'})
-            ])
-        ], id='pca-container', style={'width': '95%', 'margin': '20px auto', 'display': 'none'}),
+                html.Div([
+                    dcc.Graph(id='pca-plot', style={'height': '500px'})
+                ])
+            ], id='pca-container', style={'width': '95%', 'margin': '20px auto', 'display': 'none'}),
+        ]),  # End of detailed-analysis-container
 
         # Hidden stores
         dcc.Store(id='selected-index'),
@@ -2008,6 +2031,154 @@ def create_app(data_dir=DATA_DIR):
         dcc.Store(id='current-selection-indices', data=[]),  # Currently selected point indices
         dcc.Store(id='manual-mode-active', data=False),  # Whether manual mode is active
     ])
+
+    # =========================================================================
+    # VIEW MODE TOGGLE CALLBACKS
+    # =========================================================================
+
+    @app.callback(
+        Output('detailed-view-mode', 'data'),
+        [Input('toggle-detailed-view-btn', 'n_clicks')],
+        [State('detailed-view-mode', 'data')],
+        prevent_initial_call=True
+    )
+    def toggle_detailed_view(n_clicks, current_mode):
+        """Toggle between detailed and simplified view."""
+        return not current_mode
+
+    @app.callback(
+        [Output('advanced-options-container', 'style'),
+         Output('stats-container', 'style'),
+         Output('manual-cluster-section', 'style'),
+         Output('manual-cluster-mode-container', 'style'),
+         Output('cluster-details-section', 'style'),
+         Output('detailed-analysis-container', 'style'),
+         Output('toggle-detailed-view-btn', 'children')],
+        [Input('detailed-view-mode', 'data')]
+    )
+    def update_section_visibility(detailed_mode):
+        """Show/hide sections based on view mode."""
+        if detailed_mode:
+            # Detailed view - show everything
+            show_style = {'width': '90%', 'margin': '10px auto'}
+            show_95_style = {'width': '95%', 'margin': '10px auto'}
+            manual_container_style = {'width': '95%', 'margin': '10px auto', 'display': 'none'}  # Hidden by default
+            detailed_container_style = {}  # No display:none
+            button_text = "Simplified View"
+        else:
+            # Simplified view - hide most sections
+            hide_style = {'display': 'none'}
+            show_style = hide_style
+            show_95_style = hide_style
+            manual_container_style = hide_style
+            detailed_container_style = hide_style
+            button_text = "Detailed View"
+
+        return (
+            show_style,  # advanced-options-container
+            show_style,  # stats-container
+            show_95_style,  # manual-cluster-section
+            manual_container_style,  # manual-cluster-mode-container
+            show_95_style,  # cluster-details-section
+            detailed_container_style,  # detailed-analysis-container
+            button_text  # toggle button text
+        )
+
+    @app.callback(
+        Output('pd-type-summary-display', 'children'),
+        [Input('current-data-store', 'data'),
+         Input('detailed-view-mode', 'data')],
+        [State('clustering-method-radio', 'value')]
+    )
+    def update_pd_type_summary(prefix, detailed_mode, clustering_method):
+        """Display summary of PD types in the dataset."""
+        if not prefix:
+            return html.Div("Select a dataset to see PD type summary", style={'color': '#666', 'fontStyle': 'italic'})
+
+        try:
+            method = clustering_method or 'dbscan'
+            pd_types_file = os.path.join(data_dir, f"{prefix}-pd-types-{method}.csv")
+
+            if not os.path.exists(pd_types_file):
+                return html.Div([
+                    html.Span("PD Type Summary: ", style={'fontWeight': 'bold'}),
+                    html.Span("Classification not yet run. Use 'Recluster' to analyze.", style={'color': '#666'})
+                ])
+
+            # Read PD types
+            type_counts = {}
+            total_clusters = 0
+
+            with open(pd_types_file, 'r') as f:
+                for line in f:
+                    if line.startswith('#') or line.startswith('cluster_label'):
+                        continue
+                    parts = line.strip().split(',')
+                    if len(parts) >= 2:
+                        pd_type = parts[1]
+                        type_counts[pd_type] = type_counts.get(pd_type, 0) + 1
+                        total_clusters += 1
+
+            if total_clusters == 0:
+                return html.Div("No clusters found", style={'color': '#666'})
+
+            # Build summary display
+            summary_items = []
+
+            # Title
+            summary_items.append(html.H4("PD Type Summary", style={'marginTop': '0', 'marginBottom': '15px', 'color': '#1976d2'}))
+
+            # Type breakdown with colored badges
+            type_colors = {
+                'CORONA': '#ff9800',
+                'INTERNAL': '#4caf50',
+                'SURFACE': '#2196f3',
+                'NOISE': '#9e9e9e',
+                'UNKNOWN': '#f44336'
+            }
+
+            type_badges = []
+            for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'UNKNOWN']:
+                if pd_type in type_counts:
+                    count = type_counts[pd_type]
+                    pct = count / total_clusters * 100
+                    color = type_colors.get(pd_type, '#666')
+
+                    type_badges.append(html.Div([
+                        html.Div(pd_type, style={
+                            'fontWeight': 'bold',
+                            'fontSize': '14px',
+                            'color': color
+                        }),
+                        html.Div(f"{count} cluster{'s' if count > 1 else ''}", style={
+                            'fontSize': '20px',
+                            'fontWeight': 'bold'
+                        }),
+                        html.Div(f"{pct:.1f}%", style={
+                            'fontSize': '12px',
+                            'color': '#666'
+                        })
+                    ], style={
+                        'display': 'inline-block',
+                        'textAlign': 'center',
+                        'padding': '10px 20px',
+                        'margin': '5px',
+                        'backgroundColor': '#fff',
+                        'borderRadius': '8px',
+                        'border': f'2px solid {color}',
+                        'minWidth': '100px'
+                    }))
+
+            summary_items.append(html.Div(type_badges, style={'marginBottom': '10px'}))
+
+            # Total count
+            summary_items.append(html.Div(f"Total: {total_clusters} clusters analyzed",
+                                         style={'fontSize': '12px', 'color': '#666', 'marginTop': '10px'}))
+
+            return html.Div(summary_items)
+
+        except Exception as e:
+            return html.Div(f"Error loading summary: {str(e)}", style={'color': 'red'})
 
     # Callbacks for pulse features selection buttons
     @app.callback(
