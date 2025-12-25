@@ -99,22 +99,70 @@ SURFACE_DETECTION_THRESHOLDS = {
     'min_surface_features': 5,                # Configurable in GUI
 }
 
-# Branch 4: Corona vs Internal (Symmetry Analysis)
-SYMMETRY_THRESHOLDS = {
-    # Corona: asymmetric discharge
-    'min_asymmetry_corona': 0.4,              # |asymmetry| > 0.4 = corona
-    'min_halfcycle_dominance_corona': 65.0,   # >65% in one half-cycle suggests corona
+# Branch 4: Corona vs Internal (Score-based detection)
+CORONA_INTERNAL_THRESHOLDS = {
+    # Weights for scoring
+    'primary_weight': 4,
+    'secondary_weight': 2,
+    'supporting_weight': 1,
 
-    # Internal: symmetric, peaks at 90deg and 270deg
-    'internal_phase_q1_range': (45, 135),     # Quadrant 1 peak region
-    'internal_phase_q3_range': (225, 315),    # Quadrant 3 peak region
+    # Minimum score to classify (out of max possible 20)
+    'min_corona_score': 10,
+    'min_internal_score': 10,
 
-    # Cross-correlation for symmetry
-    'min_cross_correlation_symmetric': 0.7,   # High correlation = symmetric discharge
-    'max_asymmetry_symmetric': 0.35,          # Low asymmetry = symmetric discharge
+    # PRIMARY FEATURES (Weight: 4)
+    # discharge_asymmetry: Corona < -0.4, Internal -0.3 to +0.3
+    'corona_max_asymmetry': -0.4,             # Corona: < -0.4
+    'internal_min_asymmetry': -0.3,           # Internal: -0.3 to +0.3
+    'internal_max_asymmetry': 0.3,
+
+    # phase_of_max_activity: Corona 200-250°, Internal 45-90° or 225-270°
+    'corona_phase_min': 200,                  # Corona: 200°-250°
+    'corona_phase_max': 250,
+    'internal_phase_q1_min': 45,              # Internal: 45°-90° or 225°-270°
+    'internal_phase_q1_max': 90,
+    'internal_phase_q3_min': 225,
+    'internal_phase_q3_max': 270,
+
+    # SECONDARY FEATURES (Weight: 2)
+    # slew_rate: Corona very high, Internal high
+    'corona_min_slew_rate': 5e7,              # Corona: Very high (>50 MV/s)
+    'internal_min_slew_rate': 1e7,            # Internal: High (10-50 MV/s)
+    'internal_max_slew_rate': 5e7,
+
+    # spectral_power_ratio: Corona > 1.5, Internal 0.8-1.5
+    'corona_min_spectral_ratio': 1.5,         # Corona: > 1.5
+    'internal_min_spectral_ratio': 0.8,       # Internal: 0.8-1.5
+    'internal_max_spectral_ratio': 1.5,
+
+    # quadrant_3_percentage: Corona > 55%, Internal 35-50%
+    'corona_min_q3_pct': 55,                  # Corona: > 55%
+    'internal_min_q3_pct': 35,                # Internal: 35-50%
+    'internal_max_q3_pct': 50,
+
+    # oscillation_count: Corona low (<3), Internal moderate (3-8)
+    'corona_max_oscillation': 3,              # Corona: < 3 oscillations
+    'internal_min_oscillation': 3,            # Internal: 3-8 oscillations
+    'internal_max_oscillation': 8,
+
+    # SUPPORTING FEATURES (Weight: 1)
+    # coefficient_of_variation: Corona < 0.15, Internal 0.15-0.35
+    'corona_max_cv': 0.15,                    # Corona: < 0.15
+    'internal_min_cv': 0.15,                  # Internal: 0.15-0.35
+    'internal_max_cv': 0.35,
+
+    # amplitude_ratio (pos/neg): Corona < 0.5, Internal 0.7-1.3
+    'corona_max_amp_ratio': 0.5,              # Corona: < 0.5
+    'internal_min_amp_ratio': 0.7,            # Internal: 0.7-1.3
+    'internal_max_amp_ratio': 1.3,
+
+    # repetition_rate: Corona high, Internal moderate
+    'corona_min_rep_rate': 100,               # Corona: High (>100 pulses/cycle)
+    'internal_min_rep_rate': 20,              # Internal: Moderate (20-100)
+    'internal_max_rep_rate': 100,
 }
 
-# Branch 4: Amplitude Characteristics
+# Branch 5: Amplitude Characteristics (for fallback)
 AMPLITUDE_THRESHOLDS = {
     'corona_amplitude_ratio_threshold': 3.0,  # max/mean ratio for corona
     'internal_weibull_beta_min': 2.0,         # Weibull shape > 2 = internal
@@ -132,7 +180,7 @@ QUADRANT_THRESHOLDS = {
 def apply_custom_thresholds(custom_thresholds):
     """Apply custom threshold values to the global threshold dictionaries."""
     global NOISE_THRESHOLDS, PHASE_SPREAD_THRESHOLDS, SURFACE_DETECTION_THRESHOLDS
-    global SYMMETRY_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
+    global CORONA_INTERNAL_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
 
     # Map custom threshold names to the actual dictionary keys
     threshold_mapping = {
@@ -176,14 +224,54 @@ def apply_custom_thresholds(custom_thresholds):
         'corona_max_rep_rate_var': ('SURFACE_DETECTION_THRESHOLDS', 'corona_max_rep_rate_var'),
         'min_surface_features': ('SURFACE_DETECTION_THRESHOLDS', 'min_surface_features'),
 
-        # Branch 4: Corona vs Internal
-        'min_asymmetry_corona': ('SYMMETRY_THRESHOLDS', 'min_asymmetry_corona'),
-        'halfcycle_dominance': ('SYMMETRY_THRESHOLDS', 'min_halfcycle_dominance_corona'),
-        'min_cross_corr_symmetric': ('SYMMETRY_THRESHOLDS', 'min_cross_correlation_symmetric'),
-        'max_asymmetry_symmetric': ('SYMMETRY_THRESHOLDS', 'max_asymmetry_symmetric'),
-        'single_halfcycle': ('QUADRANT_THRESHOLDS', 'single_halfcycle_threshold'),
+        # Branch 4: Corona vs Internal (Score-based)
+        # Weights
+        'primary_weight': ('CORONA_INTERNAL_THRESHOLDS', 'primary_weight'),
+        'secondary_weight': ('CORONA_INTERNAL_THRESHOLDS', 'secondary_weight'),
+        'supporting_weight': ('CORONA_INTERNAL_THRESHOLDS', 'supporting_weight'),
+        'min_corona_score': ('CORONA_INTERNAL_THRESHOLDS', 'min_corona_score'),
+        'min_internal_score': ('CORONA_INTERNAL_THRESHOLDS', 'min_internal_score'),
+        # Primary: Asymmetry
+        'corona_max_asymmetry': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_asymmetry'),
+        'internal_min_asymmetry': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_asymmetry'),
+        'internal_max_asymmetry': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_asymmetry'),
+        # Primary: Phase of max activity
+        'corona_phase_min': ('CORONA_INTERNAL_THRESHOLDS', 'corona_phase_min'),
+        'corona_phase_max': ('CORONA_INTERNAL_THRESHOLDS', 'corona_phase_max'),
+        'internal_phase_q1_min': ('CORONA_INTERNAL_THRESHOLDS', 'internal_phase_q1_min'),
+        'internal_phase_q1_max': ('CORONA_INTERNAL_THRESHOLDS', 'internal_phase_q1_max'),
+        'internal_phase_q3_min': ('CORONA_INTERNAL_THRESHOLDS', 'internal_phase_q3_min'),
+        'internal_phase_q3_max': ('CORONA_INTERNAL_THRESHOLDS', 'internal_phase_q3_max'),
+        # Secondary: Slew rate
+        'ci_corona_min_slew_rate': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_slew_rate'),
+        'ci_internal_min_slew_rate': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_slew_rate'),
+        'ci_internal_max_slew_rate': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_slew_rate'),
+        # Secondary: Spectral power ratio
+        'ci_corona_min_spectral_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_spectral_ratio'),
+        'ci_internal_min_spectral_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_spectral_ratio'),
+        'ci_internal_max_spectral_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_spectral_ratio'),
+        # Secondary: Q3 percentage
+        'corona_min_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_q3_pct'),
+        'internal_min_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_q3_pct'),
+        'internal_max_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_q3_pct'),
+        # Secondary: Oscillation count
+        'corona_max_oscillation': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_oscillation'),
+        'internal_min_oscillation': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_oscillation'),
+        'internal_max_oscillation': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_oscillation'),
+        # Supporting: CV
+        'ci_corona_max_cv': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_cv'),
+        'ci_internal_min_cv': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_cv'),
+        'ci_internal_max_cv': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_cv'),
+        # Supporting: Amplitude ratio
+        'corona_max_amp_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_amp_ratio'),
+        'internal_min_amp_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_amp_ratio'),
+        'internal_max_amp_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_amp_ratio'),
+        # Supporting: Repetition rate
+        'corona_min_rep_rate': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_rep_rate'),
+        'internal_min_rep_rate': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_rep_rate'),
+        'internal_max_rep_rate': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_rep_rate'),
 
-        # Branch 5: Internal/Amplitude
+        # Branch 5: Internal/Amplitude (fallback)
         'weibull_beta_min': ('AMPLITUDE_THRESHOLDS', 'internal_weibull_beta_min'),
         'sym_quadrant_min': ('QUADRANT_THRESHOLDS', 'symmetric_quadrant_min'),
         'sym_quadrant_max': ('QUADRANT_THRESHOLDS', 'symmetric_quadrant_max'),
@@ -194,7 +282,7 @@ def apply_custom_thresholds(custom_thresholds):
         'NOISE_THRESHOLDS': NOISE_THRESHOLDS,
         'PHASE_SPREAD_THRESHOLDS': PHASE_SPREAD_THRESHOLDS,
         'SURFACE_DETECTION_THRESHOLDS': SURFACE_DETECTION_THRESHOLDS,
-        'SYMMETRY_THRESHOLDS': SYMMETRY_THRESHOLDS,
+        'CORONA_INTERNAL_THRESHOLDS': CORONA_INTERNAL_THRESHOLDS,
         'AMPLITUDE_THRESHOLDS': AMPLITUDE_THRESHOLDS,
         'QUADRANT_THRESHOLDS': QUADRANT_THRESHOLDS,
     }
@@ -553,222 +641,187 @@ class PDTypeClassifier:
             return result
 
         # =====================================================================
-        # BRANCH 4: CORONA vs INTERNAL (Symmetry Analysis)
+        # BRANCH 4: CORONA vs INTERNAL (Score-based detection)
         # =====================================================================
         result['branch_path'].append('Branch 4: Corona vs Internal')
 
+        # Extract all features needed for scoring
         asymmetry = self._get_feature(cluster_features, 'discharge_asymmetry', 0)
-        q1 = self._get_feature(cluster_features, 'quadrant_1_percentage', 0)
-        q2 = self._get_feature(cluster_features, 'quadrant_2_percentage', 0)
         q3 = self._get_feature(cluster_features, 'quadrant_3_percentage', 0)
-        q4 = self._get_feature(cluster_features, 'quadrant_4_percentage', 0)
-
-        positive_half = q1 + q2  # 0-180deg
-        negative_half = q3 + q4  # 180-360deg
-
-        is_symmetric = (
-            cross_corr > SYMMETRY_THRESHOLDS['min_cross_correlation_symmetric'] and
-            abs(asymmetry) < SYMMETRY_THRESHOLDS['max_asymmetry_symmetric']
-        )
-
-        is_highly_asymmetric = abs(asymmetry) > SYMMETRY_THRESHOLDS['min_asymmetry_corona']
-
-        # Negative cross-correlation indicates anti-correlated half-cycles (corona signature)
-        has_negative_correlation = cross_corr < -0.3
-
-        result['reasoning'].append(
-            f"Symmetry analysis: cross_corr={cross_corr:.3f}, asymmetry={asymmetry:.3f}"
-        )
-        result['reasoning'].append(
-            f"Quadrant distribution: Q1={q1:.1f}%, Q2={q2:.1f}%, Q3={q3:.1f}%, Q4={q4:.1f}%"
-        )
-        result['reasoning'].append(
-            f"Half-cycle: positive={positive_half:.1f}%, negative={negative_half:.1f}%"
-        )
-
-        # =====================================================================
-        # BRANCH 5: PHASE LOCATION ANALYSIS
-        # =====================================================================
-        result['branch_path'].append('Branch 5: Phase Location')
-
         phase_max = self._get_feature(cluster_features, 'phase_of_max_activity', 0)
-        inception = self._get_feature(cluster_features, 'inception_phase', 0)
-        extinction = self._get_feature(cluster_features, 'extinction_phase', 0)
+        ci_slew_rate = self._get_feature(cluster_features, 'mean_slew_rate',
+                       self._get_feature(cluster_features, 'slew_rate', 1e7))
+        ci_spectral_ratio = self._get_feature(cluster_features, 'spectral_power_ratio',
+                           self._get_feature(cluster_features, 'mean_spectral_power_ratio', 1.0))
+        ci_cv = self._get_feature(cluster_features, 'coefficient_of_variation', 0.2)
+        mean_amp_pos = self._get_feature(cluster_features, 'mean_amplitude_positive', 1)
+        mean_amp_neg = self._get_feature(cluster_features, 'mean_amplitude_negative', 1)
+        amp_ratio_pos_neg = mean_amp_pos / mean_amp_neg if mean_amp_neg > 0 else 1.0
+        rep_rate = self._get_feature(cluster_features, 'repetition_rate',
+                   self._get_feature(cluster_features, 'pulses_per_cycle', 50))
+        ci_oscillation = self._get_feature(cluster_features, 'mean_oscillation_count',
+                         self._get_feature(cluster_features, 'oscillation_count', 5))
 
-        # Check if at voltage peaks (90deg, 270deg)
-        near_positive_peak = 45 < phase_max < 135
-        near_negative_peak = 225 < phase_max < 315
+        # Get weights
+        primary_weight = int(CORONA_INTERNAL_THRESHOLDS['primary_weight'])
+        secondary_weight = int(CORONA_INTERNAL_THRESHOLDS['secondary_weight'])
+        supporting_weight = int(CORONA_INTERNAL_THRESHOLDS['supporting_weight'])
+
+        # Score Corona and Internal separately
+        corona_score = 0
+        internal_score = 0
+        corona_indicators = []
+        internal_indicators = []
+
+        # PRIMARY FEATURES (Weight: 4)
+        # 1. discharge_asymmetry
+        if asymmetry < CORONA_INTERNAL_THRESHOLDS['corona_max_asymmetry']:
+            corona_score += primary_weight
+            corona_indicators.append(f"asymmetry={asymmetry:.2f}<-0.4 [+{primary_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_asymmetry'] <= asymmetry <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_asymmetry']):
+            internal_score += primary_weight
+            internal_indicators.append(f"asymmetry={asymmetry:.2f} in [-0.3,0.3] [+{primary_weight}]")
+
+        # 2. phase_of_max_activity
+        if (CORONA_INTERNAL_THRESHOLDS['corona_phase_min'] <= phase_max <=
+            CORONA_INTERNAL_THRESHOLDS['corona_phase_max']):
+            corona_score += primary_weight
+            corona_indicators.append(f"phase_max={phase_max:.0f}° in [200,250] [+{primary_weight}]")
+        if ((CORONA_INTERNAL_THRESHOLDS['internal_phase_q1_min'] <= phase_max <=
+             CORONA_INTERNAL_THRESHOLDS['internal_phase_q1_max']) or
+            (CORONA_INTERNAL_THRESHOLDS['internal_phase_q3_min'] <= phase_max <=
+             CORONA_INTERNAL_THRESHOLDS['internal_phase_q3_max'])):
+            internal_score += primary_weight
+            internal_indicators.append(f"phase_max={phase_max:.0f}° at peaks [+{primary_weight}]")
+
+        # SECONDARY FEATURES (Weight: 2)
+        # 3. slew_rate
+        if ci_slew_rate > CORONA_INTERNAL_THRESHOLDS['corona_min_slew_rate']:
+            corona_score += secondary_weight
+            corona_indicators.append(f"slew={ci_slew_rate:.1e}>50M [+{secondary_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_slew_rate'] <= ci_slew_rate <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_slew_rate']):
+            internal_score += secondary_weight
+            internal_indicators.append(f"slew={ci_slew_rate:.1e} in [10M,50M] [+{secondary_weight}]")
+
+        # 4. spectral_power_ratio
+        if ci_spectral_ratio > CORONA_INTERNAL_THRESHOLDS['corona_min_spectral_ratio']:
+            corona_score += secondary_weight
+            corona_indicators.append(f"spectral_ratio={ci_spectral_ratio:.2f}>1.5 [+{secondary_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_spectral_ratio'] <= ci_spectral_ratio <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_spectral_ratio']):
+            internal_score += secondary_weight
+            internal_indicators.append(f"spectral_ratio={ci_spectral_ratio:.2f} in [0.8,1.5] [+{secondary_weight}]")
+
+        # 5. quadrant_3_percentage
+        if q3 > CORONA_INTERNAL_THRESHOLDS['corona_min_q3_pct']:
+            corona_score += secondary_weight
+            corona_indicators.append(f"q3={q3:.1f}%>55% [+{secondary_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_q3_pct'] <= q3 <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_q3_pct']):
+            internal_score += secondary_weight
+            internal_indicators.append(f"q3={q3:.1f}% in [35,50] [+{secondary_weight}]")
+
+        # 6. oscillation_count
+        if ci_oscillation < CORONA_INTERNAL_THRESHOLDS['corona_max_oscillation']:
+            corona_score += secondary_weight
+            corona_indicators.append(f"oscillation={ci_oscillation:.0f}<3 [+{secondary_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_oscillation'] <= ci_oscillation <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_oscillation']):
+            internal_score += secondary_weight
+            internal_indicators.append(f"oscillation={ci_oscillation:.0f} in [3,8] [+{secondary_weight}]")
+
+        # SUPPORTING FEATURES (Weight: 1)
+        # 7. coefficient_of_variation
+        if ci_cv < CORONA_INTERNAL_THRESHOLDS['corona_max_cv']:
+            corona_score += supporting_weight
+            corona_indicators.append(f"cv={ci_cv:.2f}<0.15 [+{supporting_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_cv'] <= ci_cv <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_cv']):
+            internal_score += supporting_weight
+            internal_indicators.append(f"cv={ci_cv:.2f} in [0.15,0.35] [+{supporting_weight}]")
+
+        # 8. amplitude_ratio (pos/neg)
+        if amp_ratio_pos_neg < CORONA_INTERNAL_THRESHOLDS['corona_max_amp_ratio']:
+            corona_score += supporting_weight
+            corona_indicators.append(f"amp_ratio={amp_ratio_pos_neg:.2f}<0.5 [+{supporting_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_amp_ratio'] <= amp_ratio_pos_neg <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_amp_ratio']):
+            internal_score += supporting_weight
+            internal_indicators.append(f"amp_ratio={amp_ratio_pos_neg:.2f} in [0.7,1.3] [+{supporting_weight}]")
+
+        # 9. repetition_rate
+        if rep_rate > CORONA_INTERNAL_THRESHOLDS['corona_min_rep_rate']:
+            corona_score += supporting_weight
+            corona_indicators.append(f"rep_rate={rep_rate:.0f}>100 [+{supporting_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_rep_rate'] <= rep_rate <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_rep_rate']):
+            internal_score += supporting_weight
+            internal_indicators.append(f"rep_rate={rep_rate:.0f} in [20,100] [+{supporting_weight}]")
+
+        # Max possible score: 2*4 + 4*2 + 3*1 = 8 + 8 + 3 = 19
+        max_score = 2 * primary_weight + 4 * secondary_weight + 3 * supporting_weight
+        min_corona = int(CORONA_INTERNAL_THRESHOLDS['min_corona_score'])
+        min_internal = int(CORONA_INTERNAL_THRESHOLDS['min_internal_score'])
 
         result['reasoning'].append(
-            f"Phase location: max_activity={phase_max:.1f}deg, "
-            f"inception={inception:.1f}deg, extinction={extinction:.1f}deg"
+            f"Corona score: {corona_score}/{max_score} (need {min_corona})"
         )
-
-        # =====================================================================
-        # BRANCH 6: AMPLITUDE CHARACTERISTICS
-        # =====================================================================
-        result['branch_path'].append('Branch 6: Amplitude Analysis')
-
-        weibull_beta = self._get_feature(cluster_features, 'weibull_beta', 0)
-        mean_amp_pos = self._get_feature(cluster_features, 'mean_amplitude_positive', 0)
-        mean_amp_neg = self._get_feature(cluster_features, 'mean_amplitude_negative', 0)
-        max_amp_pos = self._get_feature(cluster_features, 'max_amplitude_positive', 0)
-        max_amp_neg = self._get_feature(cluster_features, 'max_amplitude_negative', 0)
-
-        # Amplitude ratio (max/mean) for variability assessment
-        mean_amp = max(mean_amp_pos, mean_amp_neg) if max(mean_amp_pos, mean_amp_neg) > 0 else 1e-10
-        max_amp = max(max_amp_pos, max_amp_neg)
-        amplitude_ratio = max_amp / mean_amp if mean_amp > 0 else 0
-
         result['reasoning'].append(
-            f"Amplitude: Weibull_beta={weibull_beta:.2f}, amp_ratio={amplitude_ratio:.2f}"
+            f"Internal score: {internal_score}/{max_score} (need {min_internal})"
         )
 
-        # =====================================================================
-        # CLASSIFICATION DECISION
-        # =====================================================================
-        result['branch_path'].append('Classification Decision')
-
-        # Decision logic with confidence scoring
-        confidence_factors = []
-
-        # ----- CORONA DETECTION -----
-        # Check for corona if: highly asymmetric OR has half-cycle dominance with negative correlation
-        halfcycle_dominant = (
-            positive_half > SYMMETRY_THRESHOLDS['min_halfcycle_dominance_corona'] or
-            negative_half > SYMMETRY_THRESHOLDS['min_halfcycle_dominance_corona']
-        )
-        corona_candidate = is_highly_asymmetric or (has_negative_correlation and halfcycle_dominant)
-
-        if corona_candidate:
-            # Strong asymmetry or negative correlation with half-cycle dominance indicates corona
-            corona_confidence = 0.0
-
-            # Factor 1: Asymmetry strength
-            asym_factor = min(abs(asymmetry), 1.0)
-            corona_confidence += asym_factor * 0.30
-            confidence_factors.append(f"asymmetry={asym_factor:.2f}")
-
-            # Factor 2: Single half-cycle dominance
-            if positive_half > QUADRANT_THRESHOLDS['single_halfcycle_threshold'] or \
-               negative_half > QUADRANT_THRESHOLDS['single_halfcycle_threshold']:
-                corona_confidence += 0.25
-                confidence_factors.append("single_halfcycle>80%=True")
-            elif halfcycle_dominant:
-                corona_confidence += 0.20
-                confidence_factors.append(f"halfcycle_dominant={max(positive_half, negative_half):.1f}%")
-
-            # Factor 3: Negative cross-correlation (anti-correlated half-cycles)
-            if has_negative_correlation:
-                neg_corr_factor = min(abs(cross_corr), 1.0) * 0.20
-                corona_confidence += neg_corr_factor
-                confidence_factors.append(f"negative_corr={cross_corr:.2f}")
-
-            # Factor 4: Phase concentration (low spread) - corona is concentrated
-            if phase_spread < SURFACE_DETECTION_THRESHOLDS['corona_phase_spread']:
-                corona_confidence += 0.10
-                confidence_factors.append(f"concentrated_phase={phase_spread:.1f}deg")
-
-            # Factor 5: Near voltage peak
-            if near_positive_peak or near_negative_peak:
-                corona_confidence += 0.10
-                confidence_factors.append("near_peak=True")
-
-            # Factor 6: Amplitude variability
-            if amplitude_ratio > AMPLITUDE_THRESHOLDS['corona_amplitude_ratio_threshold']:
-                corona_confidence += 0.05
-                confidence_factors.append(f"high_amp_ratio={amplitude_ratio:.2f}")
-
-            if corona_confidence > 0.45:
-                result['pd_type'] = 'CORONA'
-                result['confidence'] = min(corona_confidence, 0.95)
-                result['reasoning'].append(
-                    f"Classified as CORONA: {', '.join(confidence_factors)}"
-                )
-                return result
-
-        # ----- INTERNAL (VOID) DETECTION -----
-        if is_symmetric:
-            internal_confidence = 0.0
-            confidence_factors = []
-
-            # Factor 1: High cross-correlation
-            corr_factor = min(cross_corr, 1.0)
-            internal_confidence += corr_factor * 0.30
-            confidence_factors.append(f"cross_corr={corr_factor:.2f}")
-
-            # Factor 2: Low asymmetry
-            sym_factor = 1.0 - min(abs(asymmetry), 1.0)
-            internal_confidence += sym_factor * 0.25
-            confidence_factors.append(f"symmetry={sym_factor:.2f}")
-
-            # Factor 3: Balanced quadrant distribution
-            all_quadrants_active = all(
-                QUADRANT_THRESHOLDS['symmetric_quadrant_min'] < q <
-                QUADRANT_THRESHOLDS['symmetric_quadrant_max'] + 15
-                for q in [q1, q2, q3, q4]
-            )
-            if all_quadrants_active:
-                internal_confidence += 0.20
-                confidence_factors.append("balanced_quadrants=True")
-
-            # Factor 4: Weibull distribution
-            if AMPLITUDE_THRESHOLDS['internal_weibull_beta_min'] < weibull_beta < \
-               AMPLITUDE_THRESHOLDS['internal_weibull_beta_max']:
-                internal_confidence += 0.15
-                confidence_factors.append(f"weibull_beta={weibull_beta:.2f}")
-
-            # Factor 5: Phase at voltage peaks
-            if near_positive_peak or near_negative_peak:
-                internal_confidence += 0.10
-                confidence_factors.append("peak_phase=True")
-
-            if internal_confidence > 0.5:
-                result['pd_type'] = 'INTERNAL'
-                result['confidence'] = min(internal_confidence, 0.95)
-                result['reasoning'].append(
-                    f"Classified as INTERNAL: {', '.join(confidence_factors)}"
-                )
-                return result
-
-        # ----- FALLBACK: Additional analysis -----
-        # Try to classify based on dominant patterns with more permissive thresholds
-
-        # Check for partial corona (less pronounced asymmetry but clear half-cycle dominance)
-        if abs(asymmetry) > 0.25 and (positive_half > 60 or negative_half > 60):
+        # Classify based on scores
+        if corona_score >= min_corona and corona_score > internal_score:
             result['pd_type'] = 'CORONA'
-            result['confidence'] = 0.55
+            result['confidence'] = min(0.5 + (corona_score / max_score) * 0.4, 0.95)
             result['reasoning'].append(
-                f"Weak CORONA signature: asymmetry={asymmetry:.2f}, "
-                f"half_cycle={max(positive_half, negative_half):.1f}%"
+                f"Classified as CORONA: {', '.join(corona_indicators[:4])}..."
             )
             return result
 
-        # Check for corona based on strong negative correlation alone
-        if cross_corr < -0.5 and (positive_half > 55 or negative_half > 55):
-            result['pd_type'] = 'CORONA'
-            result['confidence'] = 0.50
-            result['reasoning'].append(
-                f"CORONA from anti-correlation: cross_corr={cross_corr:.2f}, "
-                f"half_cycle={max(positive_half, negative_half):.1f}%"
-            )
-            return result
-
-        # Check for partial internal (moderate symmetry)
-        if cross_corr > 0.5 and abs(asymmetry) < 0.5:
+        if internal_score >= min_internal and internal_score > corona_score:
             result['pd_type'] = 'INTERNAL'
-            result['confidence'] = 0.55
+            result['confidence'] = min(0.5 + (internal_score / max_score) * 0.4, 0.95)
             result['reasoning'].append(
-                f"Weak INTERNAL signature: cross_corr={cross_corr:.2f}, asymmetry={asymmetry:.2f}"
+                f"Classified as INTERNAL: {', '.join(internal_indicators[:4])}..."
             )
             return result
 
-        # Check for surface discharge (moderate asymmetry, not near peaks)
-        if 0.15 < abs(asymmetry) < 0.5 and not (near_positive_peak or near_negative_peak):
-            result['pd_type'] = 'SURFACE'
+        # If both scores are above threshold but equal, use additional heuristics
+        if corona_score >= min_corona and internal_score >= min_internal:
+            # Tie-breaker: use asymmetry
+            if asymmetry < -0.2:
+                result['pd_type'] = 'CORONA'
+                result['confidence'] = 0.60
+                result['reasoning'].append(
+                    f"Tie-breaker CORONA: asymmetry={asymmetry:.2f} (scores: C={corona_score}, I={internal_score})"
+                )
+                return result
+            else:
+                result['pd_type'] = 'INTERNAL'
+                result['confidence'] = 0.60
+                result['reasoning'].append(
+                    f"Tie-breaker INTERNAL: asymmetry={asymmetry:.2f} (scores: C={corona_score}, I={internal_score})"
+                )
+                return result
+
+        # ----- FALLBACK: Low confidence classification -----
+        # If scores are below threshold but one is higher
+        if corona_score > internal_score and corona_score >= min_corona / 2:
+            result['pd_type'] = 'CORONA'
             result['confidence'] = 0.45
             result['reasoning'].append(
-                f"Possible SURFACE: asymmetry={asymmetry:.2f}, not near voltage peaks"
+                f"Weak CORONA: score={corona_score}/{max_score} (below threshold but higher than internal)"
+            )
+            return result
+
+        if internal_score > corona_score and internal_score >= min_internal / 2:
+            result['pd_type'] = 'INTERNAL'
+            result['confidence'] = 0.45
+            result['reasoning'].append(
+                f"Weak INTERNAL: score={internal_score}/{max_score} (below threshold but higher than corona)"
             )
             return result
 
@@ -776,7 +829,7 @@ class PDTypeClassifier:
         result['pd_type'] = 'UNKNOWN'
         result['confidence'] = 0.3
         result['reasoning'].append(
-            "Pattern does not match known PD signatures - requires manual inspection"
+            f"Pattern unclear - Corona score: {corona_score}, Internal score: {internal_score}"
         )
         result['warnings'].append("Could not reliably classify - manual review recommended")
 

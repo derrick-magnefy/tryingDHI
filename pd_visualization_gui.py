@@ -1850,72 +1850,186 @@ def create_app(data_dir=DATA_DIR):
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
 
-                                # Branch 4: Corona vs Internal
+                                # Branch 4: Corona vs Internal (Score-based)
                                 html.Details([
-                                    html.Summary("Branch 4: Corona vs Internal", style={
+                                    html.Summary("Branch 4: Corona vs Internal (Score-based)", style={
                                         'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
                                         'padding': '5px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'
                                     }),
                                     html.Div([
+                                        # Weights and minimum scores
                                         html.Div([
-                                            html.Label("Min Asymmetry (corona):", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-min-asymmetry-corona', type='number', value=0.4, min=0, max=1, step=0.05,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (|asymmetry| > this = corona)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
-                                        html.Div([
-                                            html.Label("Min Half-cycle Dominance %:", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-halfcycle-dominance', type='number', value=65, min=50, max=100, step=1,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (> this % in one half = corona)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
-                                        html.Div([
-                                            html.Label("Single Half-cycle Threshold %:", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-single-halfcycle', type='number', value=80, min=50, max=100, step=1,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (> this % = strong corona)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
+                                            html.Strong("Weights & Minimum Scores", style={'marginBottom': '5px', 'display': 'block'}),
+                                            html.Div([
+                                                html.Label("Primary Weight:", style={'width': '140px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-primary-weight', type='number', value=4, min=1, max=10, step=1,
+                                                         style={'width': '60px'}),
+                                                html.Label("Secondary:", style={'width': '80px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-secondary-weight', type='number', value=2, min=1, max=10, step=1,
+                                                         style={'width': '60px'}),
+                                                html.Label("Supporting:", style={'width': '80px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-supporting-weight', type='number', value=1, min=1, max=10, step=1,
+                                                         style={'width': '60px'}),
+                                            ], style={'marginBottom': '6px'}),
+                                            html.Div([
+                                                html.Label("Min Corona Score:", style={'width': '140px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-min-corona-score', type='number', value=12, min=1, max=28, step=1,
+                                                         style={'width': '60px', 'backgroundColor': '#fff3e0'}),
+                                                html.Label("Min Internal:", style={'width': '100px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-min-internal-score', type='number', value=12, min=1, max=28, step=1,
+                                                         style={'width': '60px', 'backgroundColor': '#e8f5e9'}),
+                                                html.Span(" (max=19)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                            ], style={'marginBottom': '6px'}),
+                                        ], style={'marginBottom': '10px', 'padding': '8px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'}),
                                         html.Hr(style={'margin': '10px 0'}),
-                                        html.Div([
-                                            html.Label("Min Cross-Corr (symmetric):", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-min-cross-corr-symmetric', type='number', value=0.7, min=0, max=1, step=0.05,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (> this = internal)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
-                                        html.Div([
-                                            html.Label("Max Asymmetry (symmetric):", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-max-asymmetry-symmetric', type='number', value=0.35, min=0, max=1, step=0.05,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (< this = internal)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
-                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
-                                ], style={'marginBottom': '10px'}),
 
-                                # Branch 5: Internal Detection
-                                html.Details([
-                                    html.Summary("Branch 5: Internal (Amplitude)", style={
-                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
-                                        'padding': '5px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'
-                                    }),
-                                    html.Div([
+                                        # PRIMARY FEATURES (Weight: 4)
                                         html.Div([
-                                            html.Label("Min Weibull Beta:", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-weibull-beta-min', type='number', value=2.0, min=0, max=10, step=0.5,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (beta > this supports internal)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
+                                            html.Strong("PRIMARY Features (Weight: 4)", style={'color': '#d32f2f', 'marginBottom': '5px', 'display': 'block'}),
+                                            # 1. discharge_asymmetry
+                                            html.Div("1. discharge_asymmetry", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-max-asymmetry', type='number', value=-0.4, min=-1, max=0, step=0.05,
+                                                         style={'width': '70px'}),
+                                                html.Span(" (< this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-asymmetry', type='number', value=-0.3, min=-1, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Span(" to ", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-asymmetry', type='number', value=0.3, min=-1, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 2. phase_of_max_activity
+                                            html.Div("2. phase_of_max_activity (degrees)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona:", style={'width': '60px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-phase-min', type='number', value=200, min=0, max=360, step=5,
+                                                         style={'width': '60px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-corona-phase-max', type='number', value=250, min=0, max=360, step=5,
+                                                         style={'width': '60px'}),
+                                                html.Label("Int Q1:", style={'width': '50px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-phase-q1-min', type='number', value=45, min=0, max=360, step=5,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 2px'}),
+                                                dcc.Input(id='thresh-internal-phase-q1-max', type='number', value=90, min=0, max=360, step=5,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '2px'}),
+                                            html.Div([
+                                                html.Span("", style={'width': '136px', 'display': 'inline-block'}),
+                                                html.Label("Int Q3:", style={'width': '50px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-phase-q3-min', type='number', value=225, min=0, max=360, step=5,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 2px'}),
+                                                dcc.Input(id='thresh-internal-phase-q3-max', type='number', value=270, min=0, max=360, step=5,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                        ], style={'marginBottom': '10px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+
+                                        # SECONDARY FEATURES (Weight: 2)
                                         html.Div([
-                                            html.Label("Symmetric Quadrant Min %:", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-sym-quadrant-min', type='number', value=15, min=0, max=50, step=1,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (each quadrant > this = symmetric)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
+                                            html.Strong("SECONDARY Features (Weight: 2)", style={'color': '#f57c00', 'marginBottom': '5px', 'display': 'block'}),
+                                            # 3. slew_rate
+                                            html.Div("3. slew_rate (V/s)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-ci-corona-min-slew', type='number', value=5e7, min=1e6, max=1e9, step=1e7,
+                                                         style={'width': '80px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-ci-internal-min-slew', type='number', value=1e7, min=1e6, max=1e9, step=1e6,
+                                                         style={'width': '70px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-ci-internal-max-slew', type='number', value=5e7, min=1e6, max=1e9, step=1e7,
+                                                         style={'width': '70px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 4. spectral_power_ratio
+                                            html.Div("4. spectral_power_ratio", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-ci-corona-min-spectral-ratio', type='number', value=1.5, min=0, max=5, step=0.1,
+                                                         style={'width': '70px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-ci-internal-min-spectral-ratio', type='number', value=0.8, min=0, max=5, step=0.1,
+                                                         style={'width': '60px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-ci-internal-max-spectral-ratio', type='number', value=1.5, min=0, max=5, step=0.1,
+                                                         style={'width': '60px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 5. quadrant_3_percentage
+                                            html.Div("5. quadrant_3_percentage (%)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-q3-pct', type='number', value=55, min=0, max=100, step=1,
+                                                         style={'width': '60px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-q3-pct', type='number', value=35, min=0, max=100, step=1,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-q3-pct', type='number', value=50, min=0, max=100, step=1,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 6. oscillation_count
+                                            html.Div("6. oscillation_count", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-max-oscillation', type='number', value=3, min=0, max=20, step=1,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (< this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-oscillation', type='number', value=3, min=0, max=20, step=1,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-oscillation', type='number', value=8, min=0, max=20, step=1,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                        ], style={'marginBottom': '10px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+
+                                        # SUPPORTING FEATURES (Weight: 1)
                                         html.Div([
-                                            html.Label("Symmetric Quadrant Max %:", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-sym-quadrant-max', type='number', value=35, min=0, max=50, step=1,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (each quadrant < this = symmetric)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
+                                            html.Strong("SUPPORTING Features (Weight: 1)", style={'color': '#388e3c', 'marginBottom': '5px', 'display': 'block'}),
+                                            # 7. coefficient_of_variation
+                                            html.Div("7. coefficient_of_variation", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-ci-corona-max-cv', type='number', value=0.15, min=0, max=2, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-ci-internal-min-cv', type='number', value=0.15, min=0, max=2, step=0.05,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-ci-internal-max-cv', type='number', value=0.35, min=0, max=2, step=0.05,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 8. amplitude_ratio (pos/neg)
+                                            html.Div("8. amplitude_ratio (pos/neg)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-max-amp-ratio', type='number', value=0.5, min=0, max=2, step=0.1,
+                                                         style={'width': '60px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-amp-ratio', type='number', value=0.7, min=0, max=2, step=0.1,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-amp-ratio', type='number', value=1.3, min=0, max=2, step=0.1,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 9. repetition_rate
+                                            html.Div("9. repetition_rate (pulses/cycle)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-rep-rate', type='number', value=100, min=0, max=1000, step=10,
+                                                         style={'width': '60px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-rep-rate', type='number', value=20, min=0, max=500, step=5,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-rep-rate', type='number', value=100, min=0, max=500, step=10,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                        ], style={'marginBottom': '10px'}),
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
 
@@ -2484,16 +2598,45 @@ def create_app(data_dir=DATA_DIR):
          Output('thresh-surface-max-flatness', 'value'),
          Output('thresh-surface-max-bandwidth', 'value'),
          Output('thresh-surface-min-rep-var', 'value'),
-         # Branch 4: Corona vs Internal
-         Output('thresh-min-asymmetry-corona', 'value'),
-         Output('thresh-halfcycle-dominance', 'value'),
-         Output('thresh-single-halfcycle', 'value'),
-         Output('thresh-min-cross-corr-symmetric', 'value'),
-         Output('thresh-max-asymmetry-symmetric', 'value'),
-         # Branch 5: Internal
-         Output('thresh-weibull-beta-min', 'value'),
-         Output('thresh-sym-quadrant-min', 'value'),
-         Output('thresh-sym-quadrant-max', 'value')],
+         # Branch 4: Corona vs Internal - Weights and Scores
+         Output('thresh-primary-weight', 'value'),
+         Output('thresh-secondary-weight', 'value'),
+         Output('thresh-supporting-weight', 'value'),
+         Output('thresh-min-corona-score', 'value'),
+         Output('thresh-min-internal-score', 'value'),
+         # Branch 4: Primary features
+         Output('thresh-corona-max-asymmetry', 'value'),
+         Output('thresh-internal-min-asymmetry', 'value'),
+         Output('thresh-internal-max-asymmetry', 'value'),
+         Output('thresh-corona-phase-min', 'value'),
+         Output('thresh-corona-phase-max', 'value'),
+         Output('thresh-internal-phase-q1-min', 'value'),
+         Output('thresh-internal-phase-q1-max', 'value'),
+         Output('thresh-internal-phase-q3-min', 'value'),
+         Output('thresh-internal-phase-q3-max', 'value'),
+         # Branch 4: Secondary features
+         Output('thresh-ci-corona-min-slew', 'value'),
+         Output('thresh-ci-internal-min-slew', 'value'),
+         Output('thresh-ci-internal-max-slew', 'value'),
+         Output('thresh-ci-corona-min-spectral-ratio', 'value'),
+         Output('thresh-ci-internal-min-spectral-ratio', 'value'),
+         Output('thresh-ci-internal-max-spectral-ratio', 'value'),
+         Output('thresh-corona-min-q3-pct', 'value'),
+         Output('thresh-internal-min-q3-pct', 'value'),
+         Output('thresh-internal-max-q3-pct', 'value'),
+         Output('thresh-corona-max-oscillation', 'value'),
+         Output('thresh-internal-min-oscillation', 'value'),
+         Output('thresh-internal-max-oscillation', 'value'),
+         # Branch 4: Supporting features
+         Output('thresh-ci-corona-max-cv', 'value'),
+         Output('thresh-ci-internal-min-cv', 'value'),
+         Output('thresh-ci-internal-max-cv', 'value'),
+         Output('thresh-corona-max-amp-ratio', 'value'),
+         Output('thresh-internal-min-amp-ratio', 'value'),
+         Output('thresh-internal-max-amp-ratio', 'value'),
+         Output('thresh-corona-min-rep-rate', 'value'),
+         Output('thresh-internal-min-rep-rate', 'value'),
+         Output('thresh-internal-max-rep-rate', 'value')],
         [Input('threshold-reset-btn', 'n_clicks')],
         prevent_initial_call=True
     )
@@ -2528,16 +2671,45 @@ def create_app(data_dir=DATA_DIR):
             0.5,   # surface_max_flatness
             2e6,   # surface_max_bandwidth
             0.5,   # surface_min_rep_var
-            # Branch 4: Corona vs Internal
-            0.4,   # min_asymmetry_corona
-            65,    # halfcycle_dominance
-            80,    # single_halfcycle
-            0.7,   # min_cross_corr_symmetric
-            0.35,  # max_asymmetry_symmetric
-            # Branch 5: Internal
-            2.0,   # weibull_beta_min
-            15,    # sym_quadrant_min
-            35,    # sym_quadrant_max
+            # Branch 4: Corona vs Internal - Weights and Scores
+            4,     # primary_weight
+            2,     # secondary_weight
+            1,     # supporting_weight
+            12,    # min_corona_score
+            12,    # min_internal_score
+            # Branch 4: Primary features
+            -0.4,  # corona_max_asymmetry
+            -0.3,  # internal_min_asymmetry
+            0.3,   # internal_max_asymmetry
+            200,   # corona_phase_min
+            250,   # corona_phase_max
+            45,    # internal_phase_q1_min
+            90,    # internal_phase_q1_max
+            225,   # internal_phase_q3_min
+            270,   # internal_phase_q3_max
+            # Branch 4: Secondary features
+            5e7,   # ci_corona_min_slew
+            1e7,   # ci_internal_min_slew
+            5e7,   # ci_internal_max_slew
+            1.5,   # ci_corona_min_spectral_ratio
+            0.8,   # ci_internal_min_spectral_ratio
+            1.5,   # ci_internal_max_spectral_ratio
+            55,    # corona_min_q3_pct
+            35,    # internal_min_q3_pct
+            50,    # internal_max_q3_pct
+            3,     # corona_max_oscillation
+            3,     # internal_min_oscillation
+            8,     # internal_max_oscillation
+            # Branch 4: Supporting features
+            0.15,  # ci_corona_max_cv
+            0.15,  # ci_internal_min_cv
+            0.35,  # ci_internal_max_cv
+            0.5,   # corona_max_amp_ratio
+            0.7,   # internal_min_amp_ratio
+            1.3,   # internal_max_amp_ratio
+            100,   # corona_min_rep_rate
+            20,    # internal_min_rep_rate
+            100,   # internal_max_rep_rate
         )
 
     # Save pulse features to per-dataset store when they change
@@ -3149,16 +3321,45 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-surface-max-flatness', 'value'),
          State('thresh-surface-max-bandwidth', 'value'),
          State('thresh-surface-min-rep-var', 'value'),
-         # Branch 4: Corona vs Internal
-         State('thresh-min-asymmetry-corona', 'value'),
-         State('thresh-halfcycle-dominance', 'value'),
-         State('thresh-single-halfcycle', 'value'),
-         State('thresh-min-cross-corr-symmetric', 'value'),
-         State('thresh-max-asymmetry-symmetric', 'value'),
-         # Branch 5: Internal
-         State('thresh-weibull-beta-min', 'value'),
-         State('thresh-sym-quadrant-min', 'value'),
-         State('thresh-sym-quadrant-max', 'value')],
+         # Branch 4: Corona vs Internal - Weights and Scores
+         State('thresh-primary-weight', 'value'),
+         State('thresh-secondary-weight', 'value'),
+         State('thresh-supporting-weight', 'value'),
+         State('thresh-min-corona-score', 'value'),
+         State('thresh-min-internal-score', 'value'),
+         # Branch 4: Primary features
+         State('thresh-corona-max-asymmetry', 'value'),
+         State('thresh-internal-min-asymmetry', 'value'),
+         State('thresh-internal-max-asymmetry', 'value'),
+         State('thresh-corona-phase-min', 'value'),
+         State('thresh-corona-phase-max', 'value'),
+         State('thresh-internal-phase-q1-min', 'value'),
+         State('thresh-internal-phase-q1-max', 'value'),
+         State('thresh-internal-phase-q3-min', 'value'),
+         State('thresh-internal-phase-q3-max', 'value'),
+         # Branch 4: Secondary features
+         State('thresh-ci-corona-min-slew', 'value'),
+         State('thresh-ci-internal-min-slew', 'value'),
+         State('thresh-ci-internal-max-slew', 'value'),
+         State('thresh-ci-corona-min-spectral-ratio', 'value'),
+         State('thresh-ci-internal-min-spectral-ratio', 'value'),
+         State('thresh-ci-internal-max-spectral-ratio', 'value'),
+         State('thresh-corona-min-q3-pct', 'value'),
+         State('thresh-internal-min-q3-pct', 'value'),
+         State('thresh-internal-max-q3-pct', 'value'),
+         State('thresh-corona-max-oscillation', 'value'),
+         State('thresh-internal-min-oscillation', 'value'),
+         State('thresh-internal-max-oscillation', 'value'),
+         # Branch 4: Supporting features
+         State('thresh-ci-corona-max-cv', 'value'),
+         State('thresh-ci-internal-min-cv', 'value'),
+         State('thresh-ci-internal-max-cv', 'value'),
+         State('thresh-corona-max-amp-ratio', 'value'),
+         State('thresh-internal-min-amp-ratio', 'value'),
+         State('thresh-internal-max-amp-ratio', 'value'),
+         State('thresh-corona-min-rep-rate', 'value'),
+         State('thresh-internal-min-rep-rate', 'value'),
+         State('thresh-internal-max-rep-rate', 'value')],
         prevent_initial_call=True
     )
     def reclassify_with_thresholds(n_clicks, prefix, clustering_method,
@@ -3172,9 +3373,20 @@ def create_app(data_dir=DATA_DIR):
                                     surface_min_cross_corr, surface_max_cross_corr,
                                     surface_min_flatness, surface_max_flatness,
                                     surface_max_bandwidth, surface_min_rep_var,
-                                    min_asymmetry_corona, halfcycle_dominance, single_halfcycle,
-                                    min_cross_corr_symmetric, max_asymmetry_symmetric,
-                                    weibull_beta_min, sym_quadrant_min, sym_quadrant_max):
+                                    # Branch 4: Corona vs Internal
+                                    primary_weight, secondary_weight, supporting_weight,
+                                    min_corona_score, min_internal_score,
+                                    corona_max_asymmetry, internal_min_asymmetry, internal_max_asymmetry,
+                                    corona_phase_min, corona_phase_max,
+                                    internal_phase_q1_min, internal_phase_q1_max,
+                                    internal_phase_q3_min, internal_phase_q3_max,
+                                    ci_corona_min_slew, ci_internal_min_slew, ci_internal_max_slew,
+                                    ci_corona_min_spectral_ratio, ci_internal_min_spectral_ratio, ci_internal_max_spectral_ratio,
+                                    corona_min_q3_pct, internal_min_q3_pct, internal_max_q3_pct,
+                                    corona_max_oscillation, internal_min_oscillation, internal_max_oscillation,
+                                    ci_corona_max_cv, ci_internal_min_cv, ci_internal_max_cv,
+                                    corona_max_amp_ratio, internal_min_amp_ratio, internal_max_amp_ratio,
+                                    corona_min_rep_rate, internal_min_rep_rate, internal_max_rep_rate):
         """Run classification with custom threshold values."""
         if not n_clicks:
             raise PreventUpdate
@@ -3225,16 +3437,45 @@ def create_app(data_dir=DATA_DIR):
                 f"surface_max_spectral_flatness={surface_max_flatness},"
                 f"surface_max_bandwidth={surface_max_bandwidth},"
                 f"surface_min_rep_rate_var={surface_min_rep_var},"
-                # Branch 4: Corona vs Internal
-                f"min_asymmetry_corona={min_asymmetry_corona},"
-                f"halfcycle_dominance={halfcycle_dominance},"
-                f"single_halfcycle={single_halfcycle},"
-                f"min_cross_corr_symmetric={min_cross_corr_symmetric},"
-                f"max_asymmetry_symmetric={max_asymmetry_symmetric},"
-                # Branch 5: Internal
-                f"weibull_beta_min={weibull_beta_min},"
-                f"sym_quadrant_min={sym_quadrant_min},"
-                f"sym_quadrant_max={sym_quadrant_max}"
+                # Branch 4: Corona vs Internal - Weights and Scores
+                f"primary_weight={primary_weight},"
+                f"secondary_weight={secondary_weight},"
+                f"supporting_weight={supporting_weight},"
+                f"min_corona_score={min_corona_score},"
+                f"min_internal_score={min_internal_score},"
+                # Branch 4: Primary features
+                f"corona_max_asymmetry={corona_max_asymmetry},"
+                f"internal_min_asymmetry={internal_min_asymmetry},"
+                f"internal_max_asymmetry={internal_max_asymmetry},"
+                f"corona_phase_min={corona_phase_min},"
+                f"corona_phase_max={corona_phase_max},"
+                f"internal_phase_q1_min={internal_phase_q1_min},"
+                f"internal_phase_q1_max={internal_phase_q1_max},"
+                f"internal_phase_q3_min={internal_phase_q3_min},"
+                f"internal_phase_q3_max={internal_phase_q3_max},"
+                # Branch 4: Secondary features
+                f"ci_corona_min_slew_rate={ci_corona_min_slew},"
+                f"ci_internal_min_slew_rate={ci_internal_min_slew},"
+                f"ci_internal_max_slew_rate={ci_internal_max_slew},"
+                f"ci_corona_min_spectral_ratio={ci_corona_min_spectral_ratio},"
+                f"ci_internal_min_spectral_ratio={ci_internal_min_spectral_ratio},"
+                f"ci_internal_max_spectral_ratio={ci_internal_max_spectral_ratio},"
+                f"corona_min_q3_pct={corona_min_q3_pct},"
+                f"internal_min_q3_pct={internal_min_q3_pct},"
+                f"internal_max_q3_pct={internal_max_q3_pct},"
+                f"corona_max_oscillation={corona_max_oscillation},"
+                f"internal_min_oscillation={internal_min_oscillation},"
+                f"internal_max_oscillation={internal_max_oscillation},"
+                # Branch 4: Supporting features
+                f"ci_corona_max_cv={ci_corona_max_cv},"
+                f"ci_internal_min_cv={ci_internal_min_cv},"
+                f"ci_internal_max_cv={ci_internal_max_cv},"
+                f"corona_max_amp_ratio={corona_max_amp_ratio},"
+                f"internal_min_amp_ratio={internal_min_amp_ratio},"
+                f"internal_max_amp_ratio={internal_max_amp_ratio},"
+                f"corona_min_rep_rate={corona_min_rep_rate},"
+                f"internal_min_rep_rate={internal_min_rep_rate},"
+                f"internal_max_rep_rate={internal_max_rep_rate}"
             )
 
             # Run classification with custom thresholds
@@ -3740,16 +3981,45 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-surface-max-flatness', 'value'),
          State('thresh-surface-max-bandwidth', 'value'),
          State('thresh-surface-min-rep-var', 'value'),
-         # Branch 4: Corona vs Internal
-         State('thresh-min-asymmetry-corona', 'value'),
-         State('thresh-halfcycle-dominance', 'value'),
-         State('thresh-single-halfcycle', 'value'),
-         State('thresh-min-cross-corr-symmetric', 'value'),
-         State('thresh-max-asymmetry-symmetric', 'value'),
-         # Branch 5: Internal
-         State('thresh-weibull-beta-min', 'value'),
-         State('thresh-sym-quadrant-min', 'value'),
-         State('thresh-sym-quadrant-max', 'value')],
+         # Branch 4: Corona vs Internal - Weights and Scores
+         State('thresh-primary-weight', 'value'),
+         State('thresh-secondary-weight', 'value'),
+         State('thresh-supporting-weight', 'value'),
+         State('thresh-min-corona-score', 'value'),
+         State('thresh-min-internal-score', 'value'),
+         # Branch 4: Primary features
+         State('thresh-corona-max-asymmetry', 'value'),
+         State('thresh-internal-min-asymmetry', 'value'),
+         State('thresh-internal-max-asymmetry', 'value'),
+         State('thresh-corona-phase-min', 'value'),
+         State('thresh-corona-phase-max', 'value'),
+         State('thresh-internal-phase-q1-min', 'value'),
+         State('thresh-internal-phase-q1-max', 'value'),
+         State('thresh-internal-phase-q3-min', 'value'),
+         State('thresh-internal-phase-q3-max', 'value'),
+         # Branch 4: Secondary features
+         State('thresh-ci-corona-min-slew', 'value'),
+         State('thresh-ci-internal-min-slew', 'value'),
+         State('thresh-ci-internal-max-slew', 'value'),
+         State('thresh-ci-corona-min-spectral-ratio', 'value'),
+         State('thresh-ci-internal-min-spectral-ratio', 'value'),
+         State('thresh-ci-internal-max-spectral-ratio', 'value'),
+         State('thresh-corona-min-q3-pct', 'value'),
+         State('thresh-internal-min-q3-pct', 'value'),
+         State('thresh-internal-max-q3-pct', 'value'),
+         State('thresh-corona-max-oscillation', 'value'),
+         State('thresh-internal-min-oscillation', 'value'),
+         State('thresh-internal-max-oscillation', 'value'),
+         # Branch 4: Supporting features
+         State('thresh-ci-corona-max-cv', 'value'),
+         State('thresh-ci-internal-min-cv', 'value'),
+         State('thresh-ci-internal-max-cv', 'value'),
+         State('thresh-corona-max-amp-ratio', 'value'),
+         State('thresh-internal-min-amp-ratio', 'value'),
+         State('thresh-internal-max-amp-ratio', 'value'),
+         State('thresh-corona-min-rep-rate', 'value'),
+         State('thresh-internal-min-rep-rate', 'value'),
+         State('thresh-internal-max-rep-rate', 'value')],
         prevent_initial_call=True
     )
     def reclassify_all_datasets(n_clicks, clustering_method,
@@ -3763,9 +4033,20 @@ def create_app(data_dir=DATA_DIR):
                                  surface_min_cross_corr, surface_max_cross_corr,
                                  surface_min_flatness, surface_max_flatness,
                                  surface_max_bandwidth, surface_min_rep_var,
-                                 min_asymmetry_corona, halfcycle_dominance, single_halfcycle,
-                                 min_cross_corr_symmetric, max_asymmetry_symmetric,
-                                 weibull_beta_min, sym_quadrant_min, sym_quadrant_max):
+                                 # Branch 4: Corona vs Internal
+                                 primary_weight, secondary_weight, supporting_weight,
+                                 min_corona_score, min_internal_score,
+                                 corona_max_asymmetry, internal_min_asymmetry, internal_max_asymmetry,
+                                 corona_phase_min, corona_phase_max,
+                                 internal_phase_q1_min, internal_phase_q1_max,
+                                 internal_phase_q3_min, internal_phase_q3_max,
+                                 ci_corona_min_slew, ci_internal_min_slew, ci_internal_max_slew,
+                                 ci_corona_min_spectral_ratio, ci_internal_min_spectral_ratio, ci_internal_max_spectral_ratio,
+                                 corona_min_q3_pct, internal_min_q3_pct, internal_max_q3_pct,
+                                 corona_max_oscillation, internal_min_oscillation, internal_max_oscillation,
+                                 ci_corona_max_cv, ci_internal_min_cv, ci_internal_max_cv,
+                                 corona_max_amp_ratio, internal_min_amp_ratio, internal_max_amp_ratio,
+                                 corona_min_rep_rate, internal_min_rep_rate, internal_max_rep_rate):
         """Run classification on all datasets with custom thresholds."""
         if not n_clicks:
             raise PreventUpdate
@@ -3805,16 +4086,45 @@ def create_app(data_dir=DATA_DIR):
             f"surface_max_spectral_flatness={surface_max_flatness},"
             f"surface_max_bandwidth={surface_max_bandwidth},"
             f"surface_min_rep_rate_var={surface_min_rep_var},"
-            # Branch 4: Corona vs Internal
-            f"min_asymmetry_corona={min_asymmetry_corona},"
-            f"halfcycle_dominance={halfcycle_dominance},"
-            f"single_halfcycle={single_halfcycle},"
-            f"min_cross_corr_symmetric={min_cross_corr_symmetric},"
-            f"max_asymmetry_symmetric={max_asymmetry_symmetric},"
-            # Branch 5: Internal
-            f"weibull_beta_min={weibull_beta_min},"
-            f"sym_quadrant_min={sym_quadrant_min},"
-            f"sym_quadrant_max={sym_quadrant_max}"
+            # Branch 4: Corona vs Internal - Weights and Scores
+            f"primary_weight={primary_weight},"
+            f"secondary_weight={secondary_weight},"
+            f"supporting_weight={supporting_weight},"
+            f"min_corona_score={min_corona_score},"
+            f"min_internal_score={min_internal_score},"
+            # Branch 4: Primary features
+            f"corona_max_asymmetry={corona_max_asymmetry},"
+            f"internal_min_asymmetry={internal_min_asymmetry},"
+            f"internal_max_asymmetry={internal_max_asymmetry},"
+            f"corona_phase_min={corona_phase_min},"
+            f"corona_phase_max={corona_phase_max},"
+            f"internal_phase_q1_min={internal_phase_q1_min},"
+            f"internal_phase_q1_max={internal_phase_q1_max},"
+            f"internal_phase_q3_min={internal_phase_q3_min},"
+            f"internal_phase_q3_max={internal_phase_q3_max},"
+            # Branch 4: Secondary features
+            f"ci_corona_min_slew_rate={ci_corona_min_slew},"
+            f"ci_internal_min_slew_rate={ci_internal_min_slew},"
+            f"ci_internal_max_slew_rate={ci_internal_max_slew},"
+            f"ci_corona_min_spectral_ratio={ci_corona_min_spectral_ratio},"
+            f"ci_internal_min_spectral_ratio={ci_internal_min_spectral_ratio},"
+            f"ci_internal_max_spectral_ratio={ci_internal_max_spectral_ratio},"
+            f"corona_min_q3_pct={corona_min_q3_pct},"
+            f"internal_min_q3_pct={internal_min_q3_pct},"
+            f"internal_max_q3_pct={internal_max_q3_pct},"
+            f"corona_max_oscillation={corona_max_oscillation},"
+            f"internal_min_oscillation={internal_min_oscillation},"
+            f"internal_max_oscillation={internal_max_oscillation},"
+            # Branch 4: Supporting features
+            f"ci_corona_max_cv={ci_corona_max_cv},"
+            f"ci_internal_min_cv={ci_internal_min_cv},"
+            f"ci_internal_max_cv={ci_internal_max_cv},"
+            f"corona_max_amp_ratio={corona_max_amp_ratio},"
+            f"internal_min_amp_ratio={internal_min_amp_ratio},"
+            f"internal_max_amp_ratio={internal_max_amp_ratio},"
+            f"corona_min_rep_rate={corona_min_rep_rate},"
+            f"internal_min_rep_rate={internal_min_rep_rate},"
+            f"internal_max_rep_rate={internal_max_rep_rate}"
         )
 
         method = clustering_method or 'dbscan'
