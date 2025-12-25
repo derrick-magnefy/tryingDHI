@@ -1426,7 +1426,7 @@ def create_app(data_dir=DATA_DIR):
         ], style={'textAlign': 'center', 'padding': '15px 0'}),
 
         # Store for view mode
-        dcc.Store(id='detailed-view-mode', data=True),
+        dcc.Store(id='detailed-view-mode', data=False),
 
         # Controls (always visible)
         html.Div([
@@ -1442,7 +1442,7 @@ def create_app(data_dir=DATA_DIR):
                 ),
             ], style={'width': '60%', 'display': 'inline-block', 'marginRight': '2%'}),
 
-            # Noise Threshold Display
+            # Noise Threshold Display (hidden in simplified view)
             html.Div([
                 html.Div([
                     html.Label("Noise Threshold:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
@@ -1451,7 +1451,7 @@ def create_app(data_dir=DATA_DIR):
                                style={'padding': '2px 8px', 'fontSize': '12px', 'cursor': 'pointer'}),
                 ], style={'display': 'flex', 'alignItems': 'center'}),
                 html.Div(id='noise-threshold-details', style={'fontSize': '11px', 'color': '#666', 'marginTop': '3px'}),
-            ], style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+            ], id='noise-threshold-container', style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
 
         # PD Type Summary (always visible - shown prominently in simplified view)
@@ -2047,7 +2047,8 @@ def create_app(data_dir=DATA_DIR):
         return not current_mode
 
     @app.callback(
-        [Output('advanced-options-container', 'style'),
+        [Output('noise-threshold-container', 'style'),
+         Output('advanced-options-container', 'style'),
          Output('stats-container', 'style'),
          Output('manual-cluster-section', 'style'),
          Output('manual-cluster-mode-container', 'style'),
@@ -2060,6 +2061,7 @@ def create_app(data_dir=DATA_DIR):
         """Show/hide sections based on view mode."""
         if detailed_mode:
             # Detailed view - show everything
+            noise_threshold_style = {'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}
             show_style = {'width': '90%', 'margin': '10px auto'}
             show_95_style = {'width': '95%', 'margin': '10px auto'}
             manual_container_style = {'width': '95%', 'margin': '10px auto', 'display': 'none'}  # Hidden by default
@@ -2068,6 +2070,7 @@ def create_app(data_dir=DATA_DIR):
         else:
             # Simplified view - hide most sections
             hide_style = {'display': 'none'}
+            noise_threshold_style = hide_style
             show_style = hide_style
             show_95_style = hide_style
             manual_container_style = hide_style
@@ -2075,6 +2078,7 @@ def create_app(data_dir=DATA_DIR):
             button_text = "Detailed View"
 
         return (
+            noise_threshold_style,  # noise-threshold-container
             show_style,  # advanced-options-container
             show_style,  # stats-container
             show_95_style,  # manual-cluster-section
