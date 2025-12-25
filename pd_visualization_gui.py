@@ -4030,6 +4030,7 @@ def create_app(data_dir=DATA_DIR):
                                  min_spectral_flatness, min_slew_rate, min_crest_factor,
                                  min_cross_corr_noise, max_oscillation_count, min_snr,
                                  max_cv_noise, max_bandwidth, max_dominant_freq,
+                                 min_pulses_multipulse,
                                  surface_phase_spread_min,
                                  # Branch 3: Surface Detection (8 features, weighted)
                                  surface_primary_weight, surface_secondary_weight, surface_mid_weight, surface_supporting_weight,
@@ -4073,6 +4074,7 @@ def create_app(data_dir=DATA_DIR):
             f"max_cv_noise={max_cv_noise},"
             f"max_bandwidth_3db={max_bandwidth},"
             f"max_dominant_frequency={max_dominant_freq},"
+            f"min_pulses_for_multipulse={min_pulses_multipulse},"
             # Branch 2: Phase Spread
             f"surface_phase_spread_min={surface_phase_spread_min},"
             # Branch 3: Surface Detection (8 features, weighted)
