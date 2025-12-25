@@ -5173,7 +5173,18 @@ def create_app(data_dir=DATA_DIR):
                             })
                         ]))
                         for feat in sorted(features):
-                            val = cluster_feats.get(feat, 0.0)
+                            # Check if feature exists in the data (vs defaulting to 0.0)
+                            if feat in cluster_feats:
+                                val = cluster_feats[feat]
+                                val_display = format_value(val)
+                                val_style = {'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
+                                            'fontFamily': 'monospace', 'borderBottom': '1px solid #eee'}
+                            else:
+                                val_display = "N/A (missing)"
+                                val_style = {'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
+                                            'fontFamily': 'monospace', 'borderBottom': '1px solid #eee',
+                                            'color': '#999', 'fontStyle': 'italic'}
+
                             display_name = feat
                             if feat.startswith('mean_'):
                                 display_name = feat.replace('mean_', '')
@@ -5182,8 +5193,7 @@ def create_app(data_dir=DATA_DIR):
 
                             feat_rows.append(html.Tr([
                                 html.Td(display_name, style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #eee'}),
-                                html.Td(format_value(val), style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
-                                                                   'fontFamily': 'monospace', 'borderBottom': '1px solid #eee'}),
+                                html.Td(val_display, style=val_style),
                             ]))
 
                 add_section("PRPD Features", prpd_feats, '#fff3e0')
