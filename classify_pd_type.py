@@ -31,10 +31,10 @@ DATA_DIR = "Rugged Data Files"
 # Branch 1: Noise Detection (using waveform characteristics)
 NOISE_THRESHOLDS = {
     'dbscan_noise_label': -1,                 # DBSCAN marks noise as -1
-    # Spectral characteristics
-    'min_spectral_flatness': 0.7,             # High flatness = random noise (white noise ~1.0)
-    'max_bandwidth_3db': 1e6,                 # Narrowband EMI has low bandwidth (Hz)
-    'max_dominant_frequency': 1000,           # 60Hz hum or low-freq interference (Hz)
+    # Spectral characteristics - Noise is < 1 MHz, real PD is higher frequency
+    'min_spectral_flatness': 0.6,             # High flatness = random noise (white noise ~1.0)
+    'max_bandwidth_3db': 2e6,                 # Noise has < 2 MHz bandwidth
+    'max_dominant_frequency': 1e6,            # Noise is < 1 MHz (60Hz hum, EMI)
     # Pulse shape characteristics
     'min_slew_rate': 1e6,                     # Real PD has fast rise (V/s), noise is slower
     'min_crest_factor': 3.0,                  # Real PD is impulsive (high crest factor)
@@ -101,6 +101,10 @@ SURFACE_DETECTION_THRESHOLDS = {
     # Feature 8: Repetition rate variance
     'surface_min_rep_rate_var': 0.5,          # Surface: High variance
     'corona_max_rep_rate_var': 0.3,           # Corona/Internal: Low variance
+
+    # Feature 9: Dominant frequency - Surface PD is 1-5 MHz
+    'surface_min_dominant_freq': 1e6,         # Surface: >= 1 MHz
+    'surface_max_dominant_freq': 5e6,         # Surface: <= 5 MHz
 }
 
 # Branch 4: Corona vs Internal (Score-based detection)
@@ -159,6 +163,11 @@ CORONA_INTERNAL_THRESHOLDS = {
     'corona_min_rep_rate': 100,               # Corona: High (>100 pulses/cycle)
     'internal_min_rep_rate': 20,              # Internal: Moderate (20-100)
     'internal_max_rep_rate': 100,
+
+    # dominant_frequency: Corona > 10 MHz, Internal 5-15 MHz
+    'corona_min_dominant_freq': 10e6,         # Corona: >= 10 MHz
+    'internal_min_dominant_freq': 5e6,        # Internal: 5-15 MHz
+    'internal_max_dominant_freq': 15e6,
 }
 
 # Branch 5: Amplitude Characteristics (for fallback)
@@ -648,8 +657,16 @@ class PDTypeClassifier:
             surface_score += supporting_weight
             surface_indicators.append(f"high_rep_var={rep_rate_var:.2f} [+{supporting_weight}]")
 
-        # Max possible score: 4 + 3*3 + 2*2 + 1*2 = 4 + 9 + 4 + 2 = 19
-        max_score = primary_weight + 3 * secondary_weight + 2 * mid_weight + 2 * supporting_weight
+        # Feature 9: Dominant frequency - Surface PD is 1-5 MHz
+        dominant_freq = self._get_feature(cluster_features, 'mean_dominant_frequency',
+                       self._get_feature(cluster_features, 'dominant_frequency', 3e6))
+        if (SURFACE_DETECTION_THRESHOLDS['surface_min_dominant_freq'] <= dominant_freq <=
+            SURFACE_DETECTION_THRESHOLDS['surface_max_dominant_freq']):
+            surface_score += supporting_weight
+            surface_indicators.append(f"freq={dominant_freq/1e6:.1f}MHz in [1-5MHz] [+{supporting_weight}]")
+
+        # Max possible score: 4 + 3*3 + 2*2 + 1*3 = 4 + 9 + 4 + 3 = 20
+        max_score = primary_weight + 3 * secondary_weight + 2 * mid_weight + 3 * supporting_weight
         min_surface = int(SURFACE_DETECTION_THRESHOLDS['min_surface_score'])
         result['reasoning'].append(
             f"Surface score: {surface_score}/{max_score} (need {min_surface}): {', '.join(surface_indicators[:3])}..."
@@ -772,8 +789,19 @@ class PDTypeClassifier:
             internal_score += supporting_weight
             internal_indicators.append(f"rep_rate={rep_rate:.0f} in [20,100] [+{supporting_weight}]")
 
-        # Max possible score: 2*4 + 3*2 + 3*1 = 8 + 6 + 3 = 17
-        max_score = 2 * primary_weight + 3 * secondary_weight + 3 * supporting_weight
+        # 9. dominant_frequency: Corona > 10 MHz, Internal 5-15 MHz
+        ci_dom_freq = self._get_feature(cluster_features, 'mean_dominant_frequency',
+                      self._get_feature(cluster_features, 'dominant_frequency', 8e6))
+        if ci_dom_freq >= CORONA_INTERNAL_THRESHOLDS['corona_min_dominant_freq']:
+            corona_score += secondary_weight
+            corona_indicators.append(f"freq={ci_dom_freq/1e6:.1f}MHz>=10MHz [+{secondary_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_dominant_freq'] <= ci_dom_freq <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_dominant_freq']):
+            internal_score += secondary_weight
+            internal_indicators.append(f"freq={ci_dom_freq/1e6:.1f}MHz in [5-15MHz] [+{secondary_weight}]")
+
+        # Max possible score: 2*4 + 4*2 + 3*1 = 8 + 8 + 3 = 19
+        max_score = 2 * primary_weight + 4 * secondary_weight + 3 * supporting_weight
         min_corona = int(CORONA_INTERNAL_THRESHOLDS['min_corona_score'])
         min_internal = int(CORONA_INTERNAL_THRESHOLDS['min_internal_score'])
 

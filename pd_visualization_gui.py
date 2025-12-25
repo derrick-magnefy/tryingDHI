@@ -5142,8 +5142,16 @@ def create_app(data_dir=DATA_DIR):
             table_rows.append(make_row(f'Repetition Rate Variance [Supporting, +{surf_supporting}]', rep_rate_var,
                                        f'> {rep_var_thresh}', rep_rate_var > rep_var_thresh))
 
+            # Feature 9: Dominant frequency - Surface PD is 1-5 MHz
+            surf_dom_freq = cluster_feats.get('mean_dominant_frequency', cluster_feats.get('dominant_frequency', 0))
+            surf_freq_min = SURFACE_DETECTION_THRESHOLDS.get('surface_min_dominant_freq', 1e6)
+            surf_freq_max = SURFACE_DETECTION_THRESHOLDS.get('surface_max_dominant_freq', 5e6)
+            table_rows.append(make_row(f'Dominant Freq [Supporting, +{surf_supporting}]', surf_dom_freq / 1e6,
+                                       f'{surf_freq_min/1e6:.0f}-{surf_freq_max/1e6:.0f} MHz',
+                                       surf_freq_min <= surf_dom_freq <= surf_freq_max, ' MHz'))
+
             # =====================================================================
-            # BRANCH 4: CORONA vs INTERNAL (8 features, weighted scoring)
+            # BRANCH 4: CORONA vs INTERNAL (9 features, weighted scoring)
             # =====================================================================
             table_rows.append(section_header("Branch 4: Corona vs Internal (weighted scores)"))
 
@@ -5280,8 +5288,20 @@ def create_app(data_dir=DATA_DIR):
                                           f'>{corona_rep_thresh}', f'[{int_rep_min},{int_rep_max}]',
                                           rep_corona, rep_internal, ci_supporting))
 
-            # Add score summary row
-            max_score = 2 * ci_primary + 3 * ci_secondary + 3 * ci_supporting
+            # Dominant frequency: Corona >= 10 MHz, Internal 5-15 MHz
+            ci_dom_freq = cluster_feats.get('mean_dominant_frequency', cluster_feats.get('dominant_frequency', 0))
+            corona_freq_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_dominant_freq', 10e6)
+            int_freq_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_dominant_freq', 5e6)
+            int_freq_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_dominant_freq', 15e6)
+            freq_corona = ci_dom_freq >= corona_freq_thresh
+            freq_internal = int_freq_min <= ci_dom_freq <= int_freq_max
+            table_rows.append(make_ci_row(f'Dom Freq [+{ci_secondary}]', ci_dom_freq / 1e6,
+                                          f'>={corona_freq_thresh/1e6:.0f}MHz',
+                                          f'[{int_freq_min/1e6:.0f},{int_freq_max/1e6:.0f}]MHz',
+                                          freq_corona, freq_internal, ci_secondary, ' MHz'))
+
+            # Add score summary row (2 primary + 4 secondary + 3 supporting = 8 + 8 + 3 = 19)
+            max_score = 2 * ci_primary + 4 * ci_secondary + 3 * ci_supporting
             winner = 'CORONA' if corona_score > internal_score else ('INTERNAL' if internal_score > corona_score else 'TIE')
             winner_color = '#e53935' if winner == 'CORONA' else ('#1e88e5' if winner == 'INTERNAL' else '#666')
             table_rows.append(html.Tr([
