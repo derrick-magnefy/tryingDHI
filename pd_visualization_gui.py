@@ -1542,10 +1542,25 @@ def create_app(data_dir=DATA_DIR):
                                             min=0.01,
                                             max=10,
                                             step=0.01,
-                                            style={'width': '80px'}
+                                            style={'width': '70px'}
                                         ),
-                                        html.Span(" (empty=auto)", style={'fontSize': '10px', 'color': '#666', 'marginLeft': '5px'}),
-                                    ], style={'display': 'inline-block', 'marginRight': '30px'}),
+                                    ], style={'display': 'inline-block', 'marginRight': '10px'}),
+                                    html.Div([
+                                        html.Label("Auto %:", style={'marginRight': '5px', 'fontSize': '12px'}),
+                                        dcc.Dropdown(
+                                            id='dbscan-auto-percentile',
+                                            options=[
+                                                {'label': '50% (tight)', 'value': 50},
+                                                {'label': '60%', 'value': 60},
+                                                {'label': '70%', 'value': 70},
+                                                {'label': '80%', 'value': 80},
+                                                {'label': '90% (loose)', 'value': 90},
+                                            ],
+                                            value=60,
+                                            clearable=False,
+                                            style={'width': '105px', 'fontSize': '11px'}
+                                        ),
+                                    ], style={'display': 'inline-block', 'marginRight': '20px', 'verticalAlign': 'middle'}),
                                     html.Div([
                                         html.Label("K-Means clusters:", style={'marginRight': '10px'}),
                                         dcc.Input(
@@ -3138,10 +3153,11 @@ def create_app(data_dir=DATA_DIR):
         [State('manual-feature-selection', 'value'),
          State('dataset-dropdown', 'value'),
          State('clustering-method-radio', 'value'),
-         State('dbscan-eps-input', 'value')],
+         State('dbscan-eps-input', 'value'),
+         State('dbscan-auto-percentile', 'value')],
         prevent_initial_call=True
     )
-    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value):
+    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value, auto_percentile):
         """Run clustering with the selected features."""
         if not n_clicks:
             raise PreventUpdate
@@ -3176,9 +3192,11 @@ def create_app(data_dir=DATA_DIR):
                 '--features', features_str
             ]
 
-            # Add eps if specified
+            # Add eps if specified, otherwise use auto with percentile
             if eps_value is not None and eps_value > 0:
                 cmd.extend(['--eps', str(eps_value)])
+            elif auto_percentile:
+                cmd.extend(['--auto-percentile', str(auto_percentile)])
 
             # Add input file for specific dataset
             input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
@@ -3238,10 +3256,11 @@ def create_app(data_dir=DATA_DIR):
         [State('pulse-features-checklist', 'value'),
          State('dataset-dropdown', 'value'),
          State('clustering-method-radio', 'value'),
-         State('dbscan-eps-input', 'value')],
+         State('dbscan-eps-input', 'value'),
+         State('dbscan-auto-percentile', 'value')],
         prevent_initial_call=True
     )
-    def recluster_main_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value):
+    def recluster_main_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value, auto_percentile):
         """Run clustering with the selected pulse features from Advanced Options."""
         if not n_clicks:
             raise PreventUpdate
@@ -3276,9 +3295,11 @@ def create_app(data_dir=DATA_DIR):
                 '--features', features_str
             ]
 
-            # Add eps if specified
+            # Add eps if specified, otherwise use auto with percentile
             if eps_value is not None and eps_value > 0:
                 cmd.extend(['--eps', str(eps_value)])
+            elif auto_percentile:
+                cmd.extend(['--auto-percentile', str(auto_percentile)])
 
             # Add input file for specific dataset
             input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
