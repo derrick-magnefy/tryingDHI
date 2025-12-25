@@ -450,16 +450,20 @@ class PDTypeClassifier:
 
         # Check for multi-pulse waveforms
         # Multi-pulse = multiple distinct PD events captured in a single waveform acquisition
-        pulses_per_waveform = self._get_feature(cluster_features, 'pulses_per_waveform',
-                             self._get_feature(cluster_features, 'mean_pulses_per_waveform', 1))
-        is_multi_pulse = self._get_feature(cluster_features, 'is_multi_pulse', 0)
+        pulses_per_waveform = self._get_feature(cluster_features, 'mean_pulse_count',
+                             self._get_feature(cluster_features, 'pulses_per_waveform',
+                             self._get_feature(cluster_features, 'mean_pulses_per_waveform', 1)))
+        is_multi_pulse = self._get_feature(cluster_features, 'mean_is_multi_pulse',
+                        self._get_feature(cluster_features, 'is_multi_pulse', 0))
 
         min_pulses_multipulse = NOISE_THRESHOLDS['min_pulses_for_multipulse']
-        if is_multi_pulse or pulses_per_waveform >= min_pulses_multipulse:
+        # Check if majority of waveforms are multi-pulse (mean > 0.5) or pulse count >= threshold
+        if is_multi_pulse > 0.5 or pulses_per_waveform >= min_pulses_multipulse:
             result['pd_type'] = 'NOISE_MULTIPULSE'
             result['confidence'] = 0.90
             result['reasoning'].append(
-                f"Multi-pulse waveform detected: {pulses_per_waveform:.1f} pulses/waveform (threshold: {min_pulses_multipulse})"
+                f"Multi-pulse waveform detected: {pulses_per_waveform:.1f} pulses/waveform, "
+                f"{is_multi_pulse*100:.0f}% multi-pulse (threshold: {min_pulses_multipulse} pulses or >50% multi-pulse)"
             )
             return result
 
