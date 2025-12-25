@@ -50,8 +50,8 @@ from polarity_methods import (
 )
 from classify_pd_type import (
     PDTypeClassifier, load_cluster_features,
-    NOISE_THRESHOLDS, PHASE_CORRELATION_THRESHOLDS,
-    SYMMETRY_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
+    NOISE_THRESHOLDS, PHASE_SPREAD_THRESHOLDS, SURFACE_DETECTION_THRESHOLDS,
+    CORONA_INTERNAL_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
 )
 
 # Try to import the Tektronix WFM parser
@@ -4976,20 +4976,20 @@ def create_app(data_dir=DATA_DIR):
             cv_thresh = NOISE_THRESHOLDS['max_coefficient_of_variation']
             table_rows.append(make_row('Coefficient of Variation', cv, f'< {cv_thresh}', cv <= cv_thresh))
 
-            # Branch 2: Phase Correlation
-            table_rows.append(section_header("Branch 2: Phase Correlation"))
+            # Branch 2: Phase Spread
+            table_rows.append(section_header("Branch 2: Phase Spread"))
 
             cross_corr = cluster_feats.get('cross_correlation', 0)
-            cc_thresh = PHASE_CORRELATION_THRESHOLDS['min_cross_correlation_symmetric']
-            table_rows.append(make_row('Cross Correlation', cross_corr, f'>= {cc_thresh} (symmetric)', cross_corr >= cc_thresh))
+            cc_thresh = SURFACE_DETECTION_THRESHOLDS['corona_min_cross_corr']
+            table_rows.append(make_row('Cross Correlation', cross_corr, f'>= {cc_thresh} (corona/internal)', cross_corr >= cc_thresh))
 
             asymmetry = cluster_feats.get('discharge_asymmetry', 0)
-            asym_thresh = PHASE_CORRELATION_THRESHOLDS['max_asymmetry_symmetric']
-            table_rows.append(make_row('Discharge Asymmetry', abs(asymmetry), f'< {asym_thresh} (symmetric)', abs(asymmetry) < asym_thresh))
+            asym_thresh = CORONA_INTERNAL_THRESHOLDS['internal_max_asymmetry']
+            table_rows.append(make_row('Discharge Asymmetry', abs(asymmetry), f'< {asym_thresh} (internal)', abs(asymmetry) < asym_thresh))
 
             phase_spread = cluster_feats.get('phase_spread', 0)
-            ps_thresh = PHASE_CORRELATION_THRESHOLDS['max_phase_spread_corona']
-            table_rows.append(make_row('Phase Spread', phase_spread, f'< {ps_thresh} (corona)', phase_spread < ps_thresh, ' deg'))
+            ps_thresh = PHASE_SPREAD_THRESHOLDS['surface_phase_spread_min']
+            table_rows.append(make_row('Phase Spread', phase_spread, f'< {ps_thresh} (corona/internal)', phase_spread < ps_thresh, ' deg'))
 
             # Branch 3: Symmetry & Quadrants
             table_rows.append(section_header("Branch 3: Quadrant Distribution"))
@@ -5017,7 +5017,7 @@ def create_app(data_dir=DATA_DIR):
             table_rows.append(section_header("Branch 4: Phase Location"))
 
             phase_max = cluster_feats.get('phase_of_max_activity', 0)
-            surface_tol = SYMMETRY_THRESHOLDS['surface_phase_tolerance']
+            surface_tol = 30  # Surface PD tolerance around zero-crossings (degrees)
             near_zero = phase_max < surface_tol or abs(phase_max - 180) < surface_tol or phase_max > (360 - surface_tol)
             table_rows.append(make_row('Phase of Max Activity', phase_max, f'Near 0/180/360 deg +/-{surface_tol} (surface)', near_zero, ' deg'))
 
