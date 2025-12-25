@@ -743,7 +743,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
     elif color_by == 'pdtype' and cluster_labels is not None and pd_types is not None:
         pulse_types = [pd_types.get(l, 'UNKNOWN') for l in cluster_labels]
 
-        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'UNKNOWN']:
+        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
             mask = np.array([t == pd_type for t in pulse_types])
             if np.any(mask):
                 color = PD_TYPE_COLORS.get(pd_type, '#000000')
@@ -892,7 +892,7 @@ def create_histogram(features, feature_names, cluster_labels, pd_types):
     if cluster_labels is not None and pd_types is not None:
         pulse_types = [pd_types.get(l, 'UNKNOWN') for l in cluster_labels]
 
-        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'UNKNOWN']:
+        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
             mask = np.array([t == pd_type for t in pulse_types])
             if np.any(mask):
                 color = PD_TYPE_COLORS.get(pd_type, '#000000')
@@ -950,7 +950,7 @@ def create_stats_text(features, cluster_labels, pd_types):
             pd_type = pd_types.get(label, 'UNKNOWN')
             type_counts[pd_type] = type_counts.get(pd_type, 0) + 1
 
-        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'UNKNOWN']:
+        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
             if pd_type in type_counts:
                 count = type_counts[pd_type]
                 pct = count / total * 100
