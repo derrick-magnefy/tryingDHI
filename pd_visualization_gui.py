@@ -2958,6 +2958,14 @@ def create_app(data_dir=DATA_DIR):
                                       'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
                                       'cursor': 'pointer', 'fontWeight': 'bold', 'marginTop': '15px',
                                       'marginLeft': '10px'}),
+                    # DBSCAN Epsilon input
+                    html.Div([
+                        html.Label("DBSCAN eps:", style={'marginLeft': '20px', 'marginRight': '5px', 'fontWeight': 'bold'}),
+                        dcc.Input(id='dbscan-eps-input', type='number', placeholder='auto',
+                                  min=0.01, max=10, step=0.01,
+                                  style={'width': '80px', 'padding': '5px'}),
+                        html.Span(" (leave empty for auto)", style={'fontSize': '11px', 'color': '#666', 'marginLeft': '5px'}),
+                    ], style={'display': 'inline-flex', 'alignItems': 'center', 'marginTop': '15px'}),
                     html.Div(id='recalc-variance-result', style={'marginTop': '10px'}),
                     html.Div(id='recluster-result', style={'marginTop': '10px'})
                 ]),
@@ -3124,10 +3132,11 @@ def create_app(data_dir=DATA_DIR):
         [Input('recluster-btn', 'n_clicks')],
         [State('manual-feature-selection', 'value'),
          State('dataset-dropdown', 'value'),
-         State('clustering-method-radio', 'value')],
+         State('clustering-method-radio', 'value'),
+         State('dbscan-eps-input', 'value')],
         prevent_initial_call=True
     )
-    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method):
+    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value):
         """Run clustering with the selected features."""
         if not n_clicks:
             raise PreventUpdate
@@ -3162,6 +3171,10 @@ def create_app(data_dir=DATA_DIR):
                 '--features', features_str
             ]
 
+            # Add eps if specified
+            if eps_value is not None and eps_value > 0:
+                cmd.extend(['--eps', str(eps_value)])
+
             # Add input file for specific dataset
             input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
             if os.path.exists(input_file):
@@ -3187,9 +3200,10 @@ def create_app(data_dir=DATA_DIR):
                 ]
                 subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
+                eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
-                    html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div(f"Method: {method.upper()} | {eps_msg}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div(f"Features: {features_str}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
