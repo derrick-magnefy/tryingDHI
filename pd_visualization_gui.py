@@ -1635,9 +1635,9 @@ def create_app(data_dir=DATA_DIR):
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ], style={'marginBottom': '15px'}),
 
-                        # Row 3: Cluster Features for Classification
+                        # Row 3: Classification Decision Tree Thresholds
                         html.Details([
-                            html.Summary("Cluster Features (for classification)", style={
+                            html.Summary("Classification Decision Tree", style={
                                 'cursor': 'pointer',
                                 'fontWeight': 'bold',
                                 'padding': '8px',
@@ -1646,13 +1646,9 @@ def create_app(data_dir=DATA_DIR):
                             }),
                             html.Div([
                                 html.Div([
-                                    html.Button("Select All", id='cluster-features-select-all', n_clicks=0,
+                                    html.Button("Reset to Defaults", id='threshold-reset-btn', n_clicks=0,
                                                style={'marginRight': '10px', 'padding': '5px 10px'}),
-                                    html.Button("Select None", id='cluster-features-select-none', n_clicks=0,
-                                               style={'marginRight': '10px', 'padding': '5px 10px'}),
-                                    html.Button("Reset Defaults", id='cluster-features-reset', n_clicks=0,
-                                               style={'marginRight': '20px', 'padding': '5px 10px'}),
-                                    html.Button("Reclassify with Selected", id='reclassify-btn',
+                                    html.Button("Reclassify with Thresholds", id='reclassify-btn',
                                                style={'backgroundColor': '#9c27b0', 'color': 'white',
                                                       'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
                                                       'cursor': 'pointer', 'fontWeight': 'bold', 'marginRight': '10px'}),
@@ -1661,22 +1657,130 @@ def create_app(data_dir=DATA_DIR):
                                                       'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
                                                       'cursor': 'pointer', 'fontWeight': 'bold'}),
                                     html.Span(id='reclassify-all-progress', style={'marginLeft': '10px', 'fontStyle': 'italic', 'color': '#666'}),
-                                ], style={'marginBottom': '10px'}),
+                                ], style={'marginBottom': '15px'}),
                                 html.Div(id='reclassify-result', style={'marginBottom': '10px'}),
                                 dcc.Loading(
                                     id='reclassify-all-loading',
                                     type='circle',
                                     children=html.Div(id='reclassify-all-result', style={'marginBottom': '10px'})
                                 ),
-                                dcc.Checklist(
-                                    id='cluster-features-checklist',
-                                    options=[{'label': f, 'value': f} for f in CLUSTER_FEATURES],
-                                    value=DEFAULT_CLASSIFICATION_FEATURES,
-                                    inline=True,
-                                    style={'fontSize': '12px', 'maxHeight': '150px', 'overflowY': 'auto'},
-                                    inputStyle={'marginRight': '5px'},
-                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
-                                ),
+
+                                # Branch 1: Noise Detection
+                                html.Details([
+                                    html.Summary("Branch 1: Noise Detection", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        html.Div([
+                                            html.Label("Min Pulse Count:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-pulse-count', type='number', value=10, min=1, max=100,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (clusters with fewer pulses = NOISE)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                        html.Div([
+                                            html.Label("Max Coeff. of Variation:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-cv', type='number', value=2.0, min=0.1, max=10, step=0.1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (CV > this triggers noise warning)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
+                                # Branch 2: Phase Correlation
+                                html.Details([
+                                    html.Summary("Branch 2: Phase Correlation", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#e3f2fd', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        html.Div([
+                                            html.Label("Min Cross-Correlation (symmetric):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-cross-corr', type='number', value=0.7, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this = symmetric discharge)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                        html.Div([
+                                            html.Label("Max Asymmetry (symmetric):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-asymmetry-sym', type='number', value=0.35, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = symmetric discharge)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
+                                # Branch 3: Corona Detection
+                                html.Details([
+                                    html.Summary("Branch 3: Corona Detection", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        html.Div([
+                                            html.Label("Min Asymmetry (corona):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-asymmetry-corona', type='number', value=0.4, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (|asymmetry| > this = corona candidate)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                        html.Div([
+                                            html.Label("Min Half-cycle Dominance %:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-halfcycle-dominance', type='number', value=65, min=50, max=100, step=1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this % in one half = corona)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                        html.Div([
+                                            html.Label("Single Half-cycle Threshold %:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-single-halfcycle', type='number', value=80, min=50, max=100, step=1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this % = strong corona)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
+                                # Branch 4: Internal Detection
+                                html.Details([
+                                    html.Summary("Branch 4: Internal (Void) Detection", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        html.Div([
+                                            html.Label("Min Weibull Beta:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-weibull-beta-min', type='number', value=2.0, min=0, max=10, step=0.5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (beta > this supports internal)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                        html.Div([
+                                            html.Label("Symmetric Quadrant Min %:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-sym-quadrant-min', type='number', value=15, min=0, max=50, step=1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (each quadrant > this = symmetric)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                        html.Div([
+                                            html.Label("Symmetric Quadrant Max %:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-sym-quadrant-max', type='number', value=35, min=0, max=50, step=1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (each quadrant < this = symmetric)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
+                                # Branch 5: Surface Detection
+                                html.Details([
+                                    html.Summary("Branch 5: Surface Detection", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        html.Div([
+                                            html.Label("Surface Phase Tolerance (deg):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-phase-tol', type='number', value=45, min=10, max=90, step=5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (degrees from 0°/180° = surface)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ]),
 
@@ -2212,24 +2316,37 @@ def create_app(data_dir=DATA_DIR):
             return DEFAULT_CLUSTERING_FEATURES
         return current_value
 
-    # Callbacks for cluster features selection buttons
+    # Callback to reset decision tree thresholds to defaults
     @app.callback(
-        Output('cluster-features-checklist', 'value'),
-        [Input('cluster-features-select-all', 'n_clicks'),
-         Input('cluster-features-select-none', 'n_clicks'),
-         Input('cluster-features-reset', 'n_clicks')],
-        [State('cluster-features-checklist', 'value')],
+        [Output('thresh-min-pulse-count', 'value'),
+         Output('thresh-max-cv', 'value'),
+         Output('thresh-min-cross-corr', 'value'),
+         Output('thresh-max-asymmetry-sym', 'value'),
+         Output('thresh-min-asymmetry-corona', 'value'),
+         Output('thresh-halfcycle-dominance', 'value'),
+         Output('thresh-single-halfcycle', 'value'),
+         Output('thresh-weibull-beta-min', 'value'),
+         Output('thresh-sym-quadrant-min', 'value'),
+         Output('thresh-sym-quadrant-max', 'value'),
+         Output('thresh-surface-phase-tol', 'value')],
+        [Input('threshold-reset-btn', 'n_clicks')],
         prevent_initial_call=True
     )
-    def update_cluster_features(select_all, select_none, reset, current_value):
-        triggered = ctx.triggered_id
-        if triggered == 'cluster-features-select-all':
-            return CLUSTER_FEATURES
-        elif triggered == 'cluster-features-select-none':
-            return []
-        elif triggered == 'cluster-features-reset':
-            return DEFAULT_CLASSIFICATION_FEATURES
-        return current_value
+    def reset_thresholds(n_clicks):
+        """Reset all threshold inputs to default values."""
+        return (
+            10,    # min_pulse_count
+            2.0,   # max_cv
+            0.7,   # min_cross_corr
+            0.35,  # max_asymmetry_sym
+            0.4,   # min_asymmetry_corona
+            65,    # halfcycle_dominance
+            80,    # single_halfcycle
+            2.0,   # weibull_beta_min
+            15,    # sym_quadrant_min
+            35,    # sym_quadrant_max
+            45,    # surface_phase_tol
+        )
 
     # Save pulse features to per-dataset store when they change
     @app.callback(
@@ -2240,21 +2357,6 @@ def create_app(data_dir=DATA_DIR):
         prevent_initial_call=True
     )
     def save_pulse_features_per_dataset(features, dataset, stored_data):
-        if not dataset or features is None:
-            raise PreventUpdate
-        stored_data = stored_data or {}
-        stored_data[dataset] = features
-        return stored_data
-
-    # Save cluster features to per-dataset store when they change
-    @app.callback(
-        Output('cluster-features-per-dataset', 'data'),
-        [Input('cluster-features-checklist', 'value')],
-        [State('dataset-dropdown', 'value'),
-         State('cluster-features-per-dataset', 'data')],
-        prevent_initial_call=True
-    )
-    def save_cluster_features_per_dataset(features, dataset, stored_data):
         if not dataset or features is None:
             raise PreventUpdate
         stored_data = stored_data or {}
@@ -2294,22 +2396,6 @@ def create_app(data_dir=DATA_DIR):
                     return valid_features, f"Loaded {len(valid_features)} features from last {method.upper()} clustering"
 
         # Don't change if no saved selection and no cluster file - keeps current/default selection
-        raise PreventUpdate
-
-    # Load cluster features when dataset changes
-    @app.callback(
-        Output('cluster-features-checklist', 'value', allow_duplicate=True),
-        [Input('dataset-dropdown', 'value')],
-        [State('cluster-features-per-dataset', 'data')],
-        prevent_initial_call='initial_duplicate'
-    )
-    def load_cluster_features_for_dataset(dataset, stored_data):
-        if not dataset:
-            raise PreventUpdate
-        stored_data = stored_data or {}
-        if dataset in stored_data:
-            return stored_data[dataset]
-        # Don't change if no saved selection - keeps current/default selection
         raise PreventUpdate
 
     # Load noise threshold when dataset changes
@@ -2841,19 +2927,28 @@ def create_app(data_dir=DATA_DIR):
     @app.callback(
         Output('reclassify-result', 'children'),
         [Input('reclassify-btn', 'n_clicks')],
-        [State('cluster-features-checklist', 'value'),
-         State('dataset-dropdown', 'value'),
-         State('clustering-method-radio', 'value')],
+        [State('dataset-dropdown', 'value'),
+         State('clustering-method-radio', 'value'),
+         State('thresh-min-pulse-count', 'value'),
+         State('thresh-max-cv', 'value'),
+         State('thresh-min-cross-corr', 'value'),
+         State('thresh-max-asymmetry-sym', 'value'),
+         State('thresh-min-asymmetry-corona', 'value'),
+         State('thresh-halfcycle-dominance', 'value'),
+         State('thresh-single-halfcycle', 'value'),
+         State('thresh-weibull-beta-min', 'value'),
+         State('thresh-sym-quadrant-min', 'value'),
+         State('thresh-sym-quadrant-max', 'value'),
+         State('thresh-surface-phase-tol', 'value')],
         prevent_initial_call=True
     )
-    def reclassify_with_features(n_clicks, selected_features, prefix, clustering_method):
-        """Run classification with the selected cluster features."""
+    def reclassify_with_thresholds(n_clicks, prefix, clustering_method,
+                                    min_pulse_count, max_cv, min_cross_corr, max_asymmetry_sym,
+                                    min_asymmetry_corona, halfcycle_dominance, single_halfcycle,
+                                    weibull_beta_min, sym_quadrant_min, sym_quadrant_max, surface_phase_tol):
+        """Run classification with custom threshold values."""
         if not n_clicks:
             raise PreventUpdate
-
-        if not selected_features or len(selected_features) < 1:
-            return html.Div("Please select at least 1 feature for classification",
-                          style={'color': 'orange', 'padding': '10px'})
 
         if not prefix:
             return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
@@ -2865,21 +2960,32 @@ def create_app(data_dir=DATA_DIR):
         if not data_path or not clean_prefix:
             return html.Div("Could not determine dataset path", style={'color': 'red', 'padding': '10px'})
 
-        # Build the classification command
-        features_str = ','.join(selected_features)
         method = clustering_method or 'dbscan'
 
         import subprocess
         import sys
 
         try:
-            # Run classification with selected features
+            # Build threshold string
+            thresholds_str = (f"min_pulse_count={min_pulse_count},"
+                             f"max_cv={max_cv},"
+                             f"min_cross_corr={min_cross_corr},"
+                             f"max_asymmetry_sym={max_asymmetry_sym},"
+                             f"min_asymmetry_corona={min_asymmetry_corona},"
+                             f"halfcycle_dominance={halfcycle_dominance},"
+                             f"single_halfcycle={single_halfcycle},"
+                             f"weibull_beta_min={weibull_beta_min},"
+                             f"sym_quadrant_min={sym_quadrant_min},"
+                             f"sym_quadrant_max={sym_quadrant_max},"
+                             f"surface_phase_tol={surface_phase_tol}")
+
+            # Run classification with custom thresholds
             cmd = [
                 sys.executable, 'classify_pd_type.py',
                 '--input-dir', data_path,
                 '--method', method,
                 '--file', clean_prefix,
-                '--cluster-features', features_str
+                '--thresholds', thresholds_str
             ]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -2888,7 +2994,6 @@ def create_app(data_dir=DATA_DIR):
                 return html.Div([
                     html.Div("✓ Reclassification complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
                     html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
-                    html.Div(f"Features used: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
                 ], style={'padding': '10px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'})
@@ -3348,25 +3453,46 @@ def create_app(data_dir=DATA_DIR):
     @app.callback(
         Output('reclassify-all-result', 'children'),
         [Input('reclassify-all-btn', 'n_clicks')],
-        [State('cluster-features-checklist', 'value'),
-         State('clustering-method-radio', 'value')],
+        [State('clustering-method-radio', 'value'),
+         State('thresh-min-pulse-count', 'value'),
+         State('thresh-max-cv', 'value'),
+         State('thresh-min-cross-corr', 'value'),
+         State('thresh-max-asymmetry-sym', 'value'),
+         State('thresh-min-asymmetry-corona', 'value'),
+         State('thresh-halfcycle-dominance', 'value'),
+         State('thresh-single-halfcycle', 'value'),
+         State('thresh-weibull-beta-min', 'value'),
+         State('thresh-sym-quadrant-min', 'value'),
+         State('thresh-sym-quadrant-max', 'value'),
+         State('thresh-surface-phase-tol', 'value')],
         prevent_initial_call=True
     )
-    def reclassify_all_datasets(n_clicks, selected_features, clustering_method):
-        """Run classification on all datasets with the selected cluster features."""
+    def reclassify_all_datasets(n_clicks, clustering_method,
+                                 min_pulse_count, max_cv, min_cross_corr, max_asymmetry_sym,
+                                 min_asymmetry_corona, halfcycle_dominance, single_halfcycle,
+                                 weibull_beta_min, sym_quadrant_min, sym_quadrant_max, surface_phase_tol):
+        """Run classification on all datasets with custom thresholds."""
         if not n_clicks:
             raise PreventUpdate
-
-        if not selected_features or len(selected_features) < 1:
-            return html.Div("Please select at least 1 feature for classification",
-                          style={'color': 'orange', 'padding': '10px'})
 
         # Get all datasets
         datasets = loader.datasets
         if not datasets:
             return html.Div("No datasets available", style={'color': 'red', 'padding': '10px'})
 
-        features_str = ','.join(selected_features)
+        # Build threshold string
+        thresholds_str = (f"min_pulse_count={min_pulse_count},"
+                         f"max_cv={max_cv},"
+                         f"min_cross_corr={min_cross_corr},"
+                         f"max_asymmetry_sym={max_asymmetry_sym},"
+                         f"min_asymmetry_corona={min_asymmetry_corona},"
+                         f"halfcycle_dominance={halfcycle_dominance},"
+                         f"single_halfcycle={single_halfcycle},"
+                         f"weibull_beta_min={weibull_beta_min},"
+                         f"sym_quadrant_min={sym_quadrant_min},"
+                         f"sym_quadrant_max={sym_quadrant_max},"
+                         f"surface_phase_tol={surface_phase_tol}")
+
         method = clustering_method or 'dbscan'
 
         import subprocess
@@ -3392,13 +3518,13 @@ def create_app(data_dir=DATA_DIR):
                     results_details.append(f"✗ {dataset}: Could not determine path")
                     continue
 
-                # Run classification with selected features
+                # Run classification with custom thresholds
                 cmd = [
                     sys.executable, 'classify_pd_type.py',
                     '--input-dir', data_path,
                     '--method', method,
                     '--file', clean_prefix,
-                    '--cluster-features', features_str
+                    '--thresholds', thresholds_str
                 ]
 
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -3423,7 +3549,7 @@ def create_app(data_dir=DATA_DIR):
         return html.Div([
             html.Div(f"Reclassified {success_count}/{len(datasets)} datasets",
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
-            html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
+            html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
             html.Details([
                 html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
                 html.Div([html.Div(d, style={'fontSize': '11px'}) for d in results_details],
@@ -3686,13 +3812,12 @@ def create_app(data_dir=DATA_DIR):
          State('dbscan-min-samples', 'value'),
          State('kmeans-n-clusters', 'value'),
          State('pulse-features-checklist', 'value'),
-         State('cluster-features-checklist', 'value'),
          State('reanalysis-trigger', 'data')],
         prevent_initial_call=True
     )
     def run_reanalysis(n_clicks, prefix, polarity_method, clustering_method,
                        dbscan_min_samples, kmeans_n_clusters,
-                       pulse_features, cluster_features, current_trigger):
+                       pulse_features, current_trigger):
         """Run the full analysis pipeline with the selected options."""
         if not n_clicks or not prefix:
             return "", {'display': 'none'}, current_trigger
@@ -3706,12 +3831,6 @@ def create_app(data_dir=DATA_DIR):
         if not pulse_features:
             return html.Div([
                 "Please select at least one pulse feature for clustering"
-            ], style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'}), \
-                {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
-
-        if not cluster_features:
-            return html.Div([
-                "Please select at least one cluster feature for classification"
             ], style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'}), \
                 {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
 
@@ -3735,10 +3854,6 @@ def create_app(data_dir=DATA_DIR):
             if pulse_features:
                 cmd.extend(['--pulse-features', ','.join(pulse_features)])
 
-            # Add selected cluster features for classification
-            if cluster_features:
-                cmd.extend(['--cluster-features', ','.join(cluster_features)])
-
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -3748,7 +3863,7 @@ def create_app(data_dir=DATA_DIR):
 
             if result.returncode == 0:
                 # Increment trigger to force data reload
-                feature_info = f"Pulse features: {len(pulse_features)}, Cluster features: {len(cluster_features)}"
+                feature_info = f"Pulse features: {len(pulse_features)}"
                 return html.Div([
                     f"Re-analysis complete! ",
                     f"Polarity: {polarity_method}, Clustering: {clustering_method.upper()}. ",

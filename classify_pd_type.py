@@ -73,6 +73,43 @@ QUADRANT_THRESHOLDS = {
 }
 
 
+def apply_custom_thresholds(custom_thresholds):
+    """Apply custom threshold values to the global threshold dictionaries."""
+    global NOISE_THRESHOLDS, PHASE_CORRELATION_THRESHOLDS, SYMMETRY_THRESHOLDS
+    global AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
+
+    # Map custom threshold names to the actual dictionary keys
+    threshold_mapping = {
+        'min_pulse_count': ('NOISE_THRESHOLDS', 'min_pulse_count'),
+        'max_cv': ('NOISE_THRESHOLDS', 'max_coefficient_of_variation'),
+        'min_cross_corr': ('PHASE_CORRELATION_THRESHOLDS', 'min_cross_correlation_symmetric'),
+        'max_asymmetry_sym': ('PHASE_CORRELATION_THRESHOLDS', 'max_asymmetry_symmetric'),
+        'min_asymmetry_corona': ('SYMMETRY_THRESHOLDS', 'min_asymmetry_corona'),
+        'halfcycle_dominance': ('SYMMETRY_THRESHOLDS', 'min_halfcycle_dominance_corona'),
+        'single_halfcycle': ('QUADRANT_THRESHOLDS', 'single_halfcycle_threshold'),
+        'weibull_beta_min': ('AMPLITUDE_THRESHOLDS', 'internal_weibull_beta_min'),
+        'sym_quadrant_min': ('QUADRANT_THRESHOLDS', 'symmetric_quadrant_min'),
+        'sym_quadrant_max': ('QUADRANT_THRESHOLDS', 'symmetric_quadrant_max'),
+        'surface_phase_tol': ('SYMMETRY_THRESHOLDS', 'surface_phase_tolerance'),
+    }
+
+    # Get the actual threshold dictionaries
+    threshold_dicts = {
+        'NOISE_THRESHOLDS': NOISE_THRESHOLDS,
+        'PHASE_CORRELATION_THRESHOLDS': PHASE_CORRELATION_THRESHOLDS,
+        'SYMMETRY_THRESHOLDS': SYMMETRY_THRESHOLDS,
+        'AMPLITUDE_THRESHOLDS': AMPLITUDE_THRESHOLDS,
+        'QUADRANT_THRESHOLDS': QUADRANT_THRESHOLDS,
+    }
+
+    # Apply custom values
+    for custom_name, value in custom_thresholds.items():
+        if custom_name in threshold_mapping:
+            dict_name, key_name = threshold_mapping[custom_name]
+            threshold_dicts[dict_name][key_name] = value
+            print(f"  Custom threshold: {custom_name} = {value}")
+
+
 # =============================================================================
 # PD TYPE DEFINITIONS
 # =============================================================================
@@ -813,12 +850,33 @@ def main():
         default=None,
         help='Comma-separated list of cluster features to use for classification (default: all features)'
     )
+    parser.add_argument(
+        '--thresholds',
+        type=str,
+        default=None,
+        help='Custom threshold values as key=value pairs (e.g., min_pulse_count=10,max_cv=2.0)'
+    )
     args = parser.parse_args()
 
     # Parse cluster features list if provided
     selected_features = None
     if args.cluster_features:
         selected_features = [f.strip() for f in args.cluster_features.split(',') if f.strip()]
+
+    # Parse custom thresholds if provided
+    custom_thresholds = None
+    if args.thresholds:
+        custom_thresholds = {}
+        for pair in args.thresholds.split(','):
+            if '=' in pair:
+                key, value = pair.split('=', 1)
+                try:
+                    custom_thresholds[key.strip()] = float(value.strip())
+                except ValueError:
+                    pass
+        if custom_thresholds:
+            # Apply custom thresholds to global constants
+            apply_custom_thresholds(custom_thresholds)
 
     print("=" * 70)
     print("PD TYPE CLASSIFICATION")
