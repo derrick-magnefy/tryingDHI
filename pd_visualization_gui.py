@@ -5152,6 +5152,47 @@ def create_app(data_dir=DATA_DIR):
             ci_secondary = int(CORONA_INTERNAL_THRESHOLDS.get('secondary_weight', 2))
             ci_supporting = int(CORONA_INTERNAL_THRESHOLDS.get('supporting_weight', 1))
 
+            # Track scores
+            corona_score = 0
+            internal_score = 0
+
+            # Helper for Corona vs Internal rows - shows which type matched
+            def make_ci_row(feature_name, value, corona_thresh, internal_thresh, is_corona, is_internal, weight, unit=''):
+                nonlocal corona_score, internal_score
+                if is_corona:
+                    corona_score += weight
+                    status_text = f'+{weight} CORONA'
+                    status_color = '#e53935'  # red
+                elif is_internal:
+                    internal_score += weight
+                    status_text = f'+{weight} INTERNAL'
+                    status_color = '#1e88e5'  # blue
+                else:
+                    status_text = '—'
+                    status_color = '#999'
+
+                val_str = f"{value:.4f}" if isinstance(value, float) and abs(value) < 100 else f"{value:.1f}"
+                return html.Tr([
+                    html.Td(feature_name, style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd'}),
+                    html.Td(f"{val_str}{unit}", style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
+                                                       'fontFamily': 'monospace', 'borderBottom': '1px solid #ddd'}),
+                    html.Td(corona_thresh, style={'padding': '4px', 'fontSize': '10px', 'textAlign': 'center',
+                                                  'fontFamily': 'monospace', 'borderBottom': '1px solid #ddd', 'color': '#e53935'}),
+                    html.Td(internal_thresh, style={'padding': '4px', 'fontSize': '10px', 'textAlign': 'center',
+                                                    'fontFamily': 'monospace', 'borderBottom': '1px solid #ddd', 'color': '#1e88e5'}),
+                    html.Td(status_text, style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'center',
+                                                'color': status_color, 'fontWeight': 'bold', 'borderBottom': '1px solid #ddd'}),
+                ])
+
+            # Add header for Corona vs Internal section
+            table_rows.append(html.Tr([
+                html.Th("Feature", style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd', 'textAlign': 'left'}),
+                html.Th("Value", style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd', 'textAlign': 'right'}),
+                html.Th("Corona", style={'padding': '4px', 'fontSize': '10px', 'borderBottom': '1px solid #ddd', 'textAlign': 'center', 'color': '#e53935'}),
+                html.Th("Internal", style={'padding': '4px', 'fontSize': '10px', 'borderBottom': '1px solid #ddd', 'textAlign': 'center', 'color': '#1e88e5'}),
+                html.Th("Match", style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd', 'textAlign': 'center'}),
+            ]))
+
             # Primary (weight 4): Discharge asymmetry, Phase of max activity
             asymmetry = cluster_feats.get('discharge_asymmetry', 0)
             corona_asym_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_max_asymmetry', -0.4)
@@ -5159,9 +5200,9 @@ def create_app(data_dir=DATA_DIR):
             internal_asym_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_asymmetry', 0.3)
             asym_corona = asymmetry < corona_asym_thresh
             asym_internal = internal_asym_min <= asymmetry <= internal_asym_max
-            asym_status = f'Corona: <{corona_asym_thresh}, Internal: [{internal_asym_min},{internal_asym_max}]'
-            table_rows.append(make_row(f'Discharge Asymmetry [Primary, +{ci_primary}]', asymmetry,
-                                       asym_status, asym_corona or asym_internal))
+            table_rows.append(make_ci_row(f'Asymmetry [+{ci_primary}]', asymmetry,
+                                          f'<{corona_asym_thresh}', f'[{internal_asym_min},{internal_asym_max}]',
+                                          asym_corona, asym_internal, ci_primary))
 
             phase_max = cluster_feats.get('phase_of_max_activity', 0)
             corona_phase_min = CORONA_INTERNAL_THRESHOLDS.get('corona_phase_min', 200)
@@ -5172,8 +5213,10 @@ def create_app(data_dir=DATA_DIR):
             int_phase_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_max', 280)
             phase_corona = corona_phase_min <= phase_max <= corona_phase_max
             phase_internal = (int_phase_q1_min <= phase_max <= int_phase_q1_max) or (int_phase_q3_min <= phase_max <= int_phase_q3_max)
-            table_rows.append(make_row(f'Phase of Max Activity [Primary, +{ci_primary}]', phase_max,
-                                       f'Corona: [{corona_phase_min},{corona_phase_max}]°', phase_corona or phase_internal, '°'))
+            table_rows.append(make_ci_row(f'Phase Max [+{ci_primary}]', phase_max,
+                                          f'[{corona_phase_min},{corona_phase_max}]°',
+                                          f'[{int_phase_q1_min},{int_phase_q1_max}]° or [{int_phase_q3_min},{int_phase_q3_max}]°',
+                                          phase_corona, phase_internal, ci_primary, '°'))
 
             # Secondary (weight 2): Slew rate, Spectral power ratio, Oscillation count
             ci_slew = cluster_feats.get('mean_slew_rate', cluster_feats.get('slew_rate', 1e7))
@@ -5182,8 +5225,9 @@ def create_app(data_dir=DATA_DIR):
             int_slew_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_slew_rate', 5e7)
             slew_corona = ci_slew > corona_slew_thresh
             slew_internal = int_slew_min <= ci_slew <= int_slew_max
-            table_rows.append(make_row(f'Slew Rate [Secondary, +{ci_secondary}]', ci_slew,
-                                       f'Corona: >{corona_slew_thresh:.0e}', slew_corona or slew_internal))
+            table_rows.append(make_ci_row(f'Slew Rate [+{ci_secondary}]', ci_slew,
+                                          f'>{corona_slew_thresh:.0e}', f'[{int_slew_min:.0e},{int_slew_max:.0e}]',
+                                          slew_corona, slew_internal, ci_secondary))
 
             ci_spectral = cluster_feats.get('spectral_power_ratio', cluster_feats.get('mean_spectral_power_ratio', 1.0))
             corona_spec_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_spectral_ratio', 1.5)
@@ -5191,8 +5235,9 @@ def create_app(data_dir=DATA_DIR):
             int_spec_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_spectral_ratio', 1.5)
             spec_corona = ci_spectral > corona_spec_thresh
             spec_internal = int_spec_min <= ci_spectral <= int_spec_max
-            table_rows.append(make_row(f'Spectral Power Ratio [Secondary, +{ci_secondary}]', ci_spectral,
-                                       f'Corona: >{corona_spec_thresh}', spec_corona or spec_internal))
+            table_rows.append(make_ci_row(f'Spectral Ratio [+{ci_secondary}]', ci_spectral,
+                                          f'>{corona_spec_thresh}', f'[{int_spec_min},{int_spec_max}]',
+                                          spec_corona, spec_internal, ci_secondary))
 
             ci_osc = cluster_feats.get('mean_oscillation_count', cluster_feats.get('oscillation_count', 5))
             corona_osc_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_max_oscillation', 3)
@@ -5200,8 +5245,9 @@ def create_app(data_dir=DATA_DIR):
             int_osc_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_oscillation', 8)
             osc_corona = ci_osc < corona_osc_thresh
             osc_internal = int_osc_min <= ci_osc <= int_osc_max
-            table_rows.append(make_row(f'Oscillation Count [Secondary, +{ci_secondary}]', ci_osc,
-                                       f'Corona: <{corona_osc_thresh}', osc_corona or osc_internal))
+            table_rows.append(make_ci_row(f'Oscillation [+{ci_secondary}]', ci_osc,
+                                          f'<{corona_osc_thresh}', f'[{int_osc_min},{int_osc_max}]',
+                                          osc_corona, osc_internal, ci_secondary))
 
             # Supporting (weight 1): CV, Q3 percentage, Repetition rate
             ci_cv = cluster_feats.get('coefficient_of_variation', 0.2)
@@ -5210,8 +5256,9 @@ def create_app(data_dir=DATA_DIR):
             int_cv_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_cv', 0.35)
             cv_corona = ci_cv < corona_cv_thresh
             cv_internal = int_cv_min <= ci_cv <= int_cv_max
-            table_rows.append(make_row(f'Coeff. of Variation [Supporting, +{ci_supporting}]', ci_cv,
-                                       f'Corona: <{corona_cv_thresh}', cv_corona or cv_internal))
+            table_rows.append(make_ci_row(f'CV [+{ci_supporting}]', ci_cv,
+                                          f'<{corona_cv_thresh}', f'[{int_cv_min},{int_cv_max}]',
+                                          cv_corona, cv_internal, ci_supporting))
 
             q3 = cluster_feats.get('quadrant_3_percentage', 0)
             corona_q3_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_q3_pct', 55)
@@ -5219,8 +5266,9 @@ def create_app(data_dir=DATA_DIR):
             int_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_q3_pct', 50)
             q3_corona = q3 > corona_q3_thresh
             q3_internal = int_q3_min <= q3 <= int_q3_max
-            table_rows.append(make_row(f'Quadrant 3 % [Supporting, +{ci_supporting}]', q3,
-                                       f'Corona: >{corona_q3_thresh}%', q3_corona or q3_internal, '%'))
+            table_rows.append(make_ci_row(f'Q3 % [+{ci_supporting}]', q3,
+                                          f'>{corona_q3_thresh}%', f'[{int_q3_min},{int_q3_max}]%',
+                                          q3_corona, q3_internal, ci_supporting, '%'))
 
             rep_rate = cluster_feats.get('repetition_rate', cluster_feats.get('pulses_per_cycle', 50))
             corona_rep_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_rep_rate', 100)
@@ -5228,8 +5276,26 @@ def create_app(data_dir=DATA_DIR):
             int_rep_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_rep_rate', 100)
             rep_corona = rep_rate > corona_rep_thresh
             rep_internal = int_rep_min <= rep_rate <= int_rep_max
-            table_rows.append(make_row(f'Repetition Rate [Supporting, +{ci_supporting}]', rep_rate,
-                                       f'Corona: >{corona_rep_thresh}', rep_corona or rep_internal))
+            table_rows.append(make_ci_row(f'Rep Rate [+{ci_supporting}]', rep_rate,
+                                          f'>{corona_rep_thresh}', f'[{int_rep_min},{int_rep_max}]',
+                                          rep_corona, rep_internal, ci_supporting))
+
+            # Add score summary row
+            max_score = 2 * ci_primary + 3 * ci_secondary + 3 * ci_supporting
+            winner = 'CORONA' if corona_score > internal_score else ('INTERNAL' if internal_score > corona_score else 'TIE')
+            winner_color = '#e53935' if winner == 'CORONA' else ('#1e88e5' if winner == 'INTERNAL' else '#666')
+            table_rows.append(html.Tr([
+                html.Td("TOTAL SCORES", colSpan=2, style={'padding': '6px', 'fontSize': '12px', 'fontWeight': 'bold',
+                                                          'backgroundColor': '#f5f5f5', 'borderTop': '2px solid #333'}),
+                html.Td(f'{corona_score}/{max_score}', style={'padding': '6px', 'fontSize': '12px', 'fontWeight': 'bold',
+                                                              'textAlign': 'center', 'backgroundColor': '#ffebee', 'color': '#e53935',
+                                                              'borderTop': '2px solid #333'}),
+                html.Td(f'{internal_score}/{max_score}', style={'padding': '6px', 'fontSize': '12px', 'fontWeight': 'bold',
+                                                                 'textAlign': 'center', 'backgroundColor': '#e3f2fd', 'color': '#1e88e5',
+                                                                 'borderTop': '2px solid #333'}),
+                html.Td(winner, style={'padding': '6px', 'fontSize': '12px', 'fontWeight': 'bold',
+                                       'textAlign': 'center', 'color': winner_color, 'borderTop': '2px solid #333'}),
+            ]))
 
             # Create the table
             feature_table = html.Table(
