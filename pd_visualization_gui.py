@@ -5319,20 +5319,20 @@ def create_app(data_dir=DATA_DIR):
                                           f'[{int_freq_min/1e6:.0f},{int_freq_max/1e6:.0f}]MHz',
                                           freq_corona, freq_internal, ci_secondary, ' MHz'))
 
-            # Amplitude-Phase Correlation: Internal high (>0.5), Corona low (<0.3)
+            # Amplitude-Phase Correlation: PRIMARY FEATURE - Internal high (>0.5), Corona low (<0.3)
             amp_phase_corr = cluster_feats.get('mean_amplitude_phase_correlation',
                                                 cluster_feats.get('amplitude_phase_correlation', 0))
             int_amp_corr_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_amp_phase_corr', 0.5)
             corona_amp_corr_max = CORONA_INTERNAL_THRESHOLDS.get('corona_max_amp_phase_corr', 0.3)
             corr_corona = amp_phase_corr <= corona_amp_corr_max
             corr_internal = amp_phase_corr >= int_amp_corr_min
-            table_rows.append(make_ci_row(f'Amp-Phase Corr [+{ci_secondary}]', amp_phase_corr,
+            table_rows.append(make_ci_row(f'Amp-Phase Corr [+{ci_primary}]', amp_phase_corr,
                                           f'<={corona_amp_corr_max}',
                                           f'>={int_amp_corr_min}',
-                                          corr_corona, corr_internal, ci_secondary))
+                                          corr_corona, corr_internal, ci_primary))
 
-            # Add score summary row (2 primary + 5 secondary + 3 supporting = 8 + 10 + 3 = 21)
-            max_score = 2 * ci_primary + 5 * ci_secondary + 3 * ci_supporting
+            # Add score summary row (3 primary + 4 secondary + 3 supporting = 12 + 8 + 3 = 23)
+            max_score = 3 * ci_primary + 4 * ci_secondary + 3 * ci_supporting
             winner = 'CORONA' if corona_score > internal_score else ('INTERNAL' if internal_score > corona_score else 'TIE')
             winner_color = '#e53935' if winner == 'CORONA' else ('#1e88e5' if winner == 'INTERNAL' else '#666')
             table_rows.append(html.Tr([

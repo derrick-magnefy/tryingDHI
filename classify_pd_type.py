@@ -119,11 +119,11 @@ CORONA_INTERNAL_THRESHOLDS = {
     'min_internal_score': 8,
 
     # PRIMARY FEATURES (Weight: 4)
-    # discharge_asymmetry: Corona (positive or negative), Internal symmetric
-    'corona_neg_max_asymmetry': -0.4,         # Negative Corona: < -0.4
-    'corona_pos_min_asymmetry': 0.4,          # Positive Corona: > +0.4
-    'internal_min_asymmetry': -0.3,           # Internal: -0.3 to +0.3
-    'internal_max_asymmetry': 0.3,
+    # discharge_asymmetry: Corona (strongly asymmetric), Internal can be moderately asymmetric
+    'corona_neg_max_asymmetry': -0.6,         # Negative Corona: < -0.6 (strong negative)
+    'corona_pos_min_asymmetry': 0.6,          # Positive Corona: > +0.6 (strong positive)
+    'internal_min_asymmetry': -0.9,           # Internal: -0.9 to +0.9 (wide range)
+    'internal_max_asymmetry': 0.9,
 
     # phase_of_max_activity:
     # Negative Corona: 180-270° (expanded from 200-250°)
@@ -139,6 +139,11 @@ CORONA_INTERNAL_THRESHOLDS = {
     'internal_phase_q1_max': 90,
     'internal_phase_q3_min': 225,
     'internal_phase_q3_max': 270,
+
+    # amplitude_phase_correlation: PRIMARY FEATURE - How well amplitudes track sinusoidal reference
+    # Internal: High (>0.5), Corona: Low (<0.3) - Strong discriminator
+    'internal_min_amp_phase_corr': 0.5,       # Internal: High correlation (>0.5)
+    'corona_max_amp_phase_corr': 0.3,         # Corona: Low correlation (<0.3)
 
     # SECONDARY FEATURES (Weight: 2)
     # slew_rate: Corona very high, Internal high
@@ -159,17 +164,12 @@ CORONA_INTERNAL_THRESHOLDS = {
     # dominant_frequency:
     # Negative Corona: > 15 MHz (high frequency)
     # Positive Corona: 5-15 MHz (moderate frequency)
-    # Internal: 5-15 MHz
+    # Internal: 5-30 MHz (expanded range)
     'corona_neg_min_dominant_freq': 15e6,     # Negative Corona: >= 15 MHz
     'corona_pos_min_dominant_freq': 5e6,      # Positive Corona: 5-15 MHz
     'corona_pos_max_dominant_freq': 15e6,
-    'internal_min_dominant_freq': 5e6,        # Internal: 5-15 MHz
-    'internal_max_dominant_freq': 15e6,
-
-    # amplitude_phase_correlation: How well amplitudes track sinusoidal reference
-    # Internal: High (>0.5), Surface: Moderate (0.2-0.5), Corona: Low (<0.2), Noise: Random
-    'internal_min_amp_phase_corr': 0.5,       # Internal: High correlation (>0.5)
-    'corona_max_amp_phase_corr': 0.3,         # Corona: Low correlation (<0.3)
+    'internal_min_dominant_freq': 5e6,        # Internal: 5-30 MHz (expanded)
+    'internal_max_dominant_freq': 30e6,
 
     # SUPPORTING FEATURES (Weight: 1)
     # coefficient_of_variation: Corona < 0.15, Internal 0.15-0.35
@@ -730,21 +730,21 @@ class PDTypeClassifier:
         internal_indicators = []
 
         # PRIMARY FEATURES (Weight: 4)
-        # 1. discharge_asymmetry - Negative Corona (<-0.4), Positive Corona (>+0.4), Internal symmetric
+        # 1. discharge_asymmetry - Negative Corona (<-0.6), Positive Corona (>+0.6), Internal wide range
         is_negative_corona = False
         is_positive_corona = False
         if asymmetry < CORONA_INTERNAL_THRESHOLDS['corona_neg_max_asymmetry']:
             corona_score += primary_weight
             is_negative_corona = True
-            corona_indicators.append(f"asymmetry={asymmetry:.2f}<-0.4 (neg corona) [+{primary_weight}]")
+            corona_indicators.append(f"asymmetry={asymmetry:.2f}<-0.6 (neg corona) [+{primary_weight}]")
         elif asymmetry > CORONA_INTERNAL_THRESHOLDS['corona_pos_min_asymmetry']:
             corona_score += primary_weight
             is_positive_corona = True
-            corona_indicators.append(f"asymmetry={asymmetry:.2f}>+0.4 (pos corona) [+{primary_weight}]")
+            corona_indicators.append(f"asymmetry={asymmetry:.2f}>+0.6 (pos corona) [+{primary_weight}]")
         if (CORONA_INTERNAL_THRESHOLDS['internal_min_asymmetry'] <= asymmetry <=
             CORONA_INTERNAL_THRESHOLDS['internal_max_asymmetry']):
             internal_score += primary_weight
-            internal_indicators.append(f"asymmetry={asymmetry:.2f} in [-0.3,0.3] [+{primary_weight}]")
+            internal_indicators.append(f"asymmetry={asymmetry:.2f} in [-0.9,0.9] [+{primary_weight}]")
 
         # 2. phase_of_max_activity
         # Negative Corona: 180-270°, Positive Corona: 0-90° or 270-360°, Internal: 45-90° or 225-270°
@@ -837,21 +837,22 @@ class PDTypeClassifier:
         if (CORONA_INTERNAL_THRESHOLDS['internal_min_dominant_freq'] <= ci_dom_freq <=
             CORONA_INTERNAL_THRESHOLDS['internal_max_dominant_freq']):
             internal_score += secondary_weight
-            internal_indicators.append(f"freq={ci_dom_freq/1e6:.1f}MHz in [5-15MHz] [+{secondary_weight}]")
+            internal_indicators.append(f"freq={ci_dom_freq/1e6:.1f}MHz in [5-30MHz] [+{secondary_weight}]")
 
-        # 10. amplitude_phase_correlation: Internal high (>0.5), Corona low (<0.3)
+        # 10. amplitude_phase_correlation: PRIMARY FEATURE - Internal high (>0.5), Corona low (<0.3)
+        # This is a strong discriminator - high correlation means amplitude tracks sinusoidal reference
         amp_phase_corr = self._get_feature(cluster_features, 'mean_amplitude_phase_correlation',
                          self._get_feature(cluster_features, 'amplitude_phase_correlation', 0.0))
         if amp_phase_corr >= CORONA_INTERNAL_THRESHOLDS['internal_min_amp_phase_corr']:
-            internal_score += secondary_weight
-            internal_indicators.append(f"amp_phase_corr={amp_phase_corr:.2f}>=0.5 [+{secondary_weight}]")
+            internal_score += primary_weight
+            internal_indicators.append(f"amp_phase_corr={amp_phase_corr:.2f}>=0.5 [+{primary_weight}]")
         if amp_phase_corr <= CORONA_INTERNAL_THRESHOLDS['corona_max_amp_phase_corr']:
-            corona_score += secondary_weight
-            corona_indicators.append(f"amp_phase_corr={amp_phase_corr:.2f}<=0.3 [+{secondary_weight}]")
+            corona_score += primary_weight
+            corona_indicators.append(f"amp_phase_corr={amp_phase_corr:.2f}<=0.3 [+{primary_weight}]")
 
-        # Max possible score: 2*4 + 5*2 + 3*1 = 8 + 10 + 3 = 21
-        # (2 primary: asymmetry, phase) + (5 secondary: slew, spectral_ratio, oscillation, freq, amp_phase_corr) + (3 supporting: cv, q3, rep_rate)
-        max_score = 2 * primary_weight + 5 * secondary_weight + 3 * supporting_weight
+        # Max possible score: 3*4 + 4*2 + 3*1 = 12 + 8 + 3 = 23
+        # (3 primary: asymmetry, phase, amp_phase_corr) + (4 secondary: slew, spectral_ratio, oscillation, freq) + (3 supporting: cv, q3, rep_rate)
+        max_score = 3 * primary_weight + 4 * secondary_weight + 3 * supporting_weight
         min_corona = int(CORONA_INTERNAL_THRESHOLDS['min_corona_score'])
         min_internal = int(CORONA_INTERNAL_THRESHOLDS['min_internal_score'])
 
