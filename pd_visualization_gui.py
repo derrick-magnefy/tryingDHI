@@ -283,11 +283,12 @@ def load_dataset_metadata(data_path, prefix):
 
 # Color schemes
 PD_TYPE_COLORS = {
-    'NOISE': '#808080',      # Gray
-    'CORONA': '#FF6B6B',     # Red
-    'INTERNAL': '#4ECDC4',   # Teal
-    'SURFACE': '#FFE66D',    # Yellow
-    'UNKNOWN': '#95A5A6',    # Light gray
+    'NOISE': '#808080',           # Gray
+    'NOISE_MULTIPULSE': '#A0522D', # Sienna (brown) - multi-pulse waveforms
+    'CORONA': '#FF6B6B',          # Red
+    'INTERNAL': '#4ECDC4',        # Teal
+    'SURFACE': '#FFE66D',         # Yellow
+    'UNKNOWN': '#95A5A6',         # Light gray
 }
 
 CLUSTER_COLORS = [
@@ -1729,6 +1730,13 @@ def create_app(data_dir=DATA_DIR):
                                                      style={'width': '100px'}),
                                             html.Span(" (< this = 60Hz hum/low-freq, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '6px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+                                        html.Div([
+                                            html.Label("Min Pulses for Multi-pulse:", style={'width': '200px', 'display': 'inline-block', 'fontWeight': 'bold'}),
+                                            dcc.Input(id='thresh-min-pulses-multipulse', type='number', value=2, min=2, max=10, step=1,
+                                                     style={'width': '80px', 'backgroundColor': '#fff3e0'}),
+                                            html.Span(" (>= this = NOISE_MULTIPULSE)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
 
@@ -2496,11 +2504,12 @@ def create_app(data_dir=DATA_DIR):
                 'INTERNAL': '#4caf50',
                 'SURFACE': '#2196f3',
                 'NOISE': '#9e9e9e',
+                'NOISE_MULTIPULSE': '#A0522D',
                 'UNKNOWN': '#f44336'
             }
 
             type_badges = []
-            for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'UNKNOWN']:
+            for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
                 if pd_type in type_counts:
                     count = type_counts[pd_type]
                     pct = count / total_clusters * 100
@@ -2573,6 +2582,7 @@ def create_app(data_dir=DATA_DIR):
          Output('thresh-max-cv', 'value'),
          Output('thresh-max-bandwidth', 'value'),
          Output('thresh-max-dominant-freq', 'value'),
+         Output('thresh-min-pulses-multipulse', 'value'),
          # Branch 2: Phase Spread
          Output('thresh-surface-phase-spread-min', 'value'),
          # Branch 3: Surface Detection (8 features, weighted)
@@ -2645,6 +2655,7 @@ def create_app(data_dir=DATA_DIR):
             2.0,   # max_cv
             1e6,   # max_bandwidth
             1000,  # max_dominant_freq
+            2,     # min_pulses_multipulse
             # Branch 2: Phase Spread
             120,   # surface_phase_spread_min
             # Branch 3: Surface Detection (8 features, weighted)
@@ -3294,6 +3305,7 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-max-cv', 'value'),
          State('thresh-max-bandwidth', 'value'),
          State('thresh-max-dominant-freq', 'value'),
+         State('thresh-min-pulses-multipulse', 'value'),
          # Branch 2: Phase Spread
          State('thresh-surface-phase-spread-min', 'value'),
          # Branch 3: Surface Detection (8 features, weighted)
@@ -3356,6 +3368,7 @@ def create_app(data_dir=DATA_DIR):
                                     min_spectral_flatness, min_slew_rate, min_crest_factor,
                                     min_cross_corr_noise, max_oscillation_count, min_snr,
                                     max_cv_noise, max_bandwidth, max_dominant_freq,
+                                    min_pulses_multipulse,
                                     surface_phase_spread_min,
                                     # Branch 3: Surface Detection (8 features, weighted)
                                     surface_primary_weight, surface_secondary_weight, surface_mid_weight, surface_supporting_weight,
@@ -3410,6 +3423,7 @@ def create_app(data_dir=DATA_DIR):
                 f"max_cv_noise={max_cv_noise},"
                 f"max_bandwidth_3db={max_bandwidth},"
                 f"max_dominant_frequency={max_dominant_freq},"
+                f"min_pulses_for_multipulse={min_pulses_multipulse},"
                 # Branch 2: Phase Spread
                 f"surface_phase_spread_min={surface_phase_spread_min},"
                 # Branch 3: Surface Detection (8 features, weighted)
@@ -3953,6 +3967,7 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-max-cv', 'value'),
          State('thresh-max-bandwidth', 'value'),
          State('thresh-max-dominant-freq', 'value'),
+         State('thresh-min-pulses-multipulse', 'value'),
          # Branch 2: Phase Spread
          State('thresh-surface-phase-spread-min', 'value'),
          # Branch 3: Surface Detection (8 features, weighted)

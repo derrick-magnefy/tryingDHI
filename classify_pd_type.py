@@ -43,6 +43,8 @@ NOISE_THRESHOLDS = {
     'min_signal_to_noise_ratio': 3.0,         # Minimum SNR for valid signal (dB)
     'min_cross_correlation': 0.3,             # Shape consistency across pulses
     'max_coefficient_of_variation': 2.0,      # CV too high = random amplitude noise
+    # Multi-pulse detection
+    'min_pulses_for_multipulse': 2,           # >= 2 pulses per waveform = multi-pulse
 }
 
 # Branch 2: Phase Spread Check (Surface PD initial detection)
@@ -191,6 +193,7 @@ def apply_custom_thresholds(custom_thresholds):
         'min_snr': ('NOISE_THRESHOLDS', 'min_signal_to_noise_ratio'),
         'min_cross_corr_noise': ('NOISE_THRESHOLDS', 'min_cross_correlation'),
         'max_cv_noise': ('NOISE_THRESHOLDS', 'max_coefficient_of_variation'),
+        'min_pulses_for_multipulse': ('NOISE_THRESHOLDS', 'min_pulses_for_multipulse'),
 
         # Branch 2: Phase Spread (Surface initial detection)
         'surface_phase_spread_min': ('PHASE_SPREAD_THRESHOLDS', 'surface_phase_spread_min'),
@@ -302,6 +305,16 @@ PD_TYPES = {
             'Low pulse count or erratic distribution',
             'High coefficient of variation',
             'No clear phase correlation',
+        ]
+    },
+    'NOISE_MULTIPULSE': {
+        'code': 5,
+        'description': 'Multi-pulse waveform (multiple PD events in single acquisition)',
+        'characteristics': [
+            'Multiple distinct pulses detected in waveform',
+            'Pulse count >= 2 per waveform window',
+            'May indicate high PD activity or overlapping events',
+            'Requires separation before individual classification',
         ]
     },
     'CORONA': {
@@ -432,6 +445,21 @@ class PDTypeClassifier:
             result['confidence'] = 0.95
             result['reasoning'].append(
                 f"DBSCAN identified as noise (label={cluster_label})"
+            )
+            return result
+
+        # Check for multi-pulse waveforms
+        # Multi-pulse = multiple distinct PD events captured in a single waveform acquisition
+        pulses_per_waveform = self._get_feature(cluster_features, 'pulses_per_waveform',
+                             self._get_feature(cluster_features, 'mean_pulses_per_waveform', 1))
+        is_multi_pulse = self._get_feature(cluster_features, 'is_multi_pulse', 0)
+
+        min_pulses_multipulse = NOISE_THRESHOLDS['min_pulses_for_multipulse']
+        if is_multi_pulse or pulses_per_waveform >= min_pulses_multipulse:
+            result['pd_type'] = 'NOISE_MULTIPULSE'
+            result['confidence'] = 0.90
+            result['reasoning'].append(
+                f"Multi-pulse waveform detected: {pulses_per_waveform:.1f} pulses/waveform (threshold: {min_pulses_multipulse})"
             )
             return result
 
