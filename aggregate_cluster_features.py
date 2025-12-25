@@ -122,6 +122,7 @@ CLUSTER_FEATURE_NAMES = [
     'variance_amplitude_negative',
     'coefficient_of_variation',
     'repetition_rate',
+    'amplitude_phase_correlation',  # How well pulse amplitudes track sinusoidal reference
 ]
 
 # Generate mean and trimmed mean feature names for all waveform features
@@ -496,6 +497,38 @@ def compute_cluster_features(phases, amplitudes, trigger_times=None, ac_frequenc
         # Estimate based on AC frequency (pulses per cycle)
         # Assume data covers multiple AC cycles
         features['repetition_rate'] = n_pulses * ac_frequency / 360.0  # Approximate
+
+    # === AMPLITUDE-PHASE CORRELATION ===
+    # Measures how well pulse amplitudes track the sinusoidal AC reference
+    # Internal PD: High correlation (amplitude ~ |sin(phase)|)
+    # Surface PD: Moderate correlation
+    # Corona: Low correlation (activity concentrated in specific phase region)
+    # Noise: No correlation (random)
+    if len(phases) > 10 and len(amplitudes) > 10:
+        # Compute expected amplitude pattern based on |sin(phase)|
+        # For Internal PD, discharges are driven by electric field which is proportional to voltage
+        phases_rad = np.deg2rad(phases)
+        expected_pattern = np.abs(np.sin(phases_rad))
+
+        # Normalize actual amplitudes to [0, 1] range
+        abs_amplitudes = np.abs(amplitudes)
+        if np.max(abs_amplitudes) > 0:
+            normalized_amplitudes = abs_amplitudes / np.max(abs_amplitudes)
+        else:
+            normalized_amplitudes = abs_amplitudes
+
+        # Compute Pearson correlation between actual and expected pattern
+        # High correlation = amplitudes track the sinusoidal reference
+        if np.std(normalized_amplitudes) > 0 and np.std(expected_pattern) > 0:
+            correlation = np.corrcoef(normalized_amplitudes, expected_pattern)[0, 1]
+            # Handle NaN
+            if np.isnan(correlation):
+                correlation = 0.0
+            features['amplitude_phase_correlation'] = correlation
+        else:
+            features['amplitude_phase_correlation'] = 0.0
+    else:
+        features['amplitude_phase_correlation'] = 0.0
 
     return features
 

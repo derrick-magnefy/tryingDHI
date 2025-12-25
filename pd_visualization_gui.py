@@ -5202,27 +5202,40 @@ def create_app(data_dir=DATA_DIR):
             ]))
 
             # Primary (weight 4): Discharge asymmetry, Phase of max activity
+            # Asymmetry: Negative Corona (<-0.4), Positive Corona (>+0.4), Internal symmetric
             asymmetry = cluster_feats.get('discharge_asymmetry', 0)
-            corona_asym_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_max_asymmetry', -0.4)
+            corona_neg_asym = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_max_asymmetry', -0.4)
+            corona_pos_asym = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_min_asymmetry', 0.4)
             internal_asym_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_asymmetry', -0.3)
             internal_asym_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_asymmetry', 0.3)
-            asym_corona = asymmetry < corona_asym_thresh
+            is_neg_corona_asym = asymmetry < corona_neg_asym
+            is_pos_corona_asym = asymmetry > corona_pos_asym
+            asym_corona = is_neg_corona_asym or is_pos_corona_asym
             asym_internal = internal_asym_min <= asymmetry <= internal_asym_max
+            corona_asym_label = f'<{corona_neg_asym}(neg) or >{corona_pos_asym}(pos)'
             table_rows.append(make_ci_row(f'Asymmetry [+{ci_primary}]', asymmetry,
-                                          f'<{corona_asym_thresh}', f'[{internal_asym_min},{internal_asym_max}]',
+                                          corona_asym_label, f'[{internal_asym_min},{internal_asym_max}]',
                                           asym_corona, asym_internal, ci_primary))
 
+            # Phase: Negative Corona 180-270°, Positive Corona 0-90° or 270-360°, Internal 45-90° or 225-270°
             phase_max = cluster_feats.get('phase_of_max_activity', 0)
-            corona_phase_min = CORONA_INTERNAL_THRESHOLDS.get('corona_phase_min', 200)
-            corona_phase_max = CORONA_INTERNAL_THRESHOLDS.get('corona_phase_max', 250)
-            int_phase_q1_min = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q1_min', 80)
-            int_phase_q1_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q1_max', 100)
-            int_phase_q3_min = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_min', 260)
-            int_phase_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_max', 280)
-            phase_corona = corona_phase_min <= phase_max <= corona_phase_max
+            corona_neg_phase_min = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_phase_min', 180)
+            corona_neg_phase_max = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_phase_max', 270)
+            corona_pos_q1_min = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_phase_q1_min', 0)
+            corona_pos_q1_max = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_phase_q1_max', 90)
+            corona_pos_q4_min = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_phase_q4_min', 270)
+            corona_pos_q4_max = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_phase_q4_max', 360)
+            int_phase_q1_min = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q1_min', 45)
+            int_phase_q1_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q1_max', 90)
+            int_phase_q3_min = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_min', 225)
+            int_phase_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_max', 270)
+            is_neg_corona_phase = corona_neg_phase_min <= phase_max <= corona_neg_phase_max
+            is_pos_corona_phase = (corona_pos_q1_min <= phase_max <= corona_pos_q1_max) or (corona_pos_q4_min <= phase_max <= corona_pos_q4_max)
+            phase_corona = is_neg_corona_phase or is_pos_corona_phase
             phase_internal = (int_phase_q1_min <= phase_max <= int_phase_q1_max) or (int_phase_q3_min <= phase_max <= int_phase_q3_max)
+            corona_phase_label = f'[{corona_neg_phase_min}-{corona_neg_phase_max}](neg) or [0-90,270-360](pos)'
             table_rows.append(make_ci_row(f'Phase Max [+{ci_primary}]', phase_max,
-                                          f'[{corona_phase_min},{corona_phase_max}]°',
+                                          corona_phase_label,
                                           f'[{int_phase_q1_min},{int_phase_q1_max}]° or [{int_phase_q3_min},{int_phase_q3_max}]°',
                                           phase_corona, phase_internal, ci_primary, '°'))
 
@@ -5269,7 +5282,7 @@ def create_app(data_dir=DATA_DIR):
                                           cv_corona, cv_internal, ci_supporting))
 
             q3 = cluster_feats.get('quadrant_3_percentage', 0)
-            corona_q3_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_q3_pct', 55)
+            corona_q3_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_min_q3_pct', 55)
             int_q3_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_q3_pct', 35)
             int_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_q3_pct', 50)
             q3_corona = q3 > corona_q3_thresh
@@ -5288,20 +5301,38 @@ def create_app(data_dir=DATA_DIR):
                                           f'>{corona_rep_thresh}', f'[{int_rep_min},{int_rep_max}]',
                                           rep_corona, rep_internal, ci_supporting))
 
-            # Dominant frequency: Corona >= 10 MHz, Internal 5-15 MHz
+            # Dominant frequency: Negative Corona >= 15 MHz, Positive Corona 5-15 MHz, Internal 5-15 MHz
             ci_dom_freq = cluster_feats.get('mean_dominant_frequency', cluster_feats.get('dominant_frequency', 0))
-            corona_freq_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_dominant_freq', 10e6)
+            corona_neg_freq = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_min_dominant_freq', 15e6)
+            corona_pos_freq_min = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_min_dominant_freq', 5e6)
+            corona_pos_freq_max = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_max_dominant_freq', 15e6)
             int_freq_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_dominant_freq', 5e6)
             int_freq_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_dominant_freq', 15e6)
-            freq_corona = ci_dom_freq >= corona_freq_thresh
+            # Negative corona: >= 15 MHz, Positive corona: 5-15 MHz with positive asymmetry
+            freq_neg_corona = ci_dom_freq >= corona_neg_freq
+            freq_pos_corona = (corona_pos_freq_min <= ci_dom_freq <= corona_pos_freq_max) and is_pos_corona_asym
+            freq_corona = freq_neg_corona or freq_pos_corona
             freq_internal = int_freq_min <= ci_dom_freq <= int_freq_max
+            corona_freq_label = f'>={corona_neg_freq/1e6:.0f}MHz(neg) or 5-15MHz(pos)'
             table_rows.append(make_ci_row(f'Dom Freq [+{ci_secondary}]', ci_dom_freq / 1e6,
-                                          f'>={corona_freq_thresh/1e6:.0f}MHz',
+                                          corona_freq_label,
                                           f'[{int_freq_min/1e6:.0f},{int_freq_max/1e6:.0f}]MHz',
                                           freq_corona, freq_internal, ci_secondary, ' MHz'))
 
-            # Add score summary row (2 primary + 4 secondary + 3 supporting = 8 + 8 + 3 = 19)
-            max_score = 2 * ci_primary + 4 * ci_secondary + 3 * ci_supporting
+            # Amplitude-Phase Correlation: Internal high (>0.5), Corona low (<0.3)
+            amp_phase_corr = cluster_feats.get('mean_amplitude_phase_correlation',
+                                                cluster_feats.get('amplitude_phase_correlation', 0))
+            int_amp_corr_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_amp_phase_corr', 0.5)
+            corona_amp_corr_max = CORONA_INTERNAL_THRESHOLDS.get('corona_max_amp_phase_corr', 0.3)
+            corr_corona = amp_phase_corr <= corona_amp_corr_max
+            corr_internal = amp_phase_corr >= int_amp_corr_min
+            table_rows.append(make_ci_row(f'Amp-Phase Corr [+{ci_secondary}]', amp_phase_corr,
+                                          f'<={corona_amp_corr_max}',
+                                          f'>={int_amp_corr_min}',
+                                          corr_corona, corr_internal, ci_secondary))
+
+            # Add score summary row (2 primary + 5 secondary + 3 supporting = 8 + 10 + 3 = 21)
+            max_score = 2 * ci_primary + 5 * ci_secondary + 3 * ci_supporting
             winner = 'CORONA' if corona_score > internal_score else ('INTERNAL' if internal_score > corona_score else 'TIE')
             winner_color = '#e53935' if winner == 'CORONA' else ('#1e88e5' if winner == 'INTERNAL' else '#666')
             table_rows.append(html.Tr([
