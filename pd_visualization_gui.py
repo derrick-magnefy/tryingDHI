@@ -774,6 +774,22 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
         fig.add_vline(x=phase, line_dash="dash", line_color="gray", opacity=0.3)
     fig.add_hline(y=0, line_color="gray", opacity=0.5)
 
+    # Add sinusoidal wave overlay
+    # Scale sine wave so peak/trough match the absolute maximum amplitude
+    max_abs_amplitude = np.max(np.abs(amplitudes))
+    sine_phases = np.linspace(0, 360, 361)
+    sine_values = max_abs_amplitude * np.sin(np.radians(sine_phases))
+
+    fig.add_trace(go.Scatter(
+        x=sine_phases,
+        y=sine_values,
+        mode='lines',
+        line=dict(color='rgba(100, 100, 100, 0.5)', width=2, dash='dot'),
+        name='AC Reference',
+        hoverinfo='skip',
+        showlegend=True
+    ))
+
     title = "PRPD by Cluster" if color_by == 'cluster' else "PRPD by PD Type"
     fig.update_layout(
         title=title,
