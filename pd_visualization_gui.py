@@ -1732,31 +1732,127 @@ def create_app(data_dir=DATA_DIR):
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
 
-                                # Branch 2: Phase Correlation
+                                # Branch 2: Phase Spread Check
                                 html.Details([
-                                    html.Summary("Branch 2: Phase Correlation", style={
+                                    html.Summary("Branch 2: Phase Spread (Surface Initial)", style={
                                         'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
                                         'padding': '5px', 'backgroundColor': '#e3f2fd', 'borderRadius': '4px'
                                     }),
                                     html.Div([
                                         html.Div([
-                                            html.Label("Min Cross-Correlation (symmetric):", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-min-cross-corr', type='number', value=0.7, min=0, max=1, step=0.05,
+                                            html.Label("Surface Phase Spread Min (deg):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-phase-spread-min', type='number', value=120, min=60, max=180, step=5,
                                                      style={'width': '80px'}),
-                                            html.Span(" (> this = symmetric discharge)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
-                                        html.Div([
-                                            html.Label("Max Asymmetry (symmetric):", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-max-asymmetry-sym', type='number', value=0.35, min=0, max=1, step=0.05,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (< this = symmetric discharge)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                            html.Span(" (> this = immediate SURFACE PD)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '8px'}),
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
 
-                                # Branch 3: Corona Detection
+                                # Branch 3: Surface Detection (10 features)
                                 html.Details([
-                                    html.Summary("Branch 3: Corona Detection", style={
+                                    html.Summary("Branch 3: Surface Detection (10 features)", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        html.Div([
+                                            html.Label("Min Surface Features Required:", style={'width': '220px', 'display': 'inline-block', 'fontWeight': 'bold'}),
+                                            dcc.Input(id='thresh-min-surface-features', type='number', value=5, min=1, max=10, step=1,
+                                                     style={'width': '80px', 'backgroundColor': '#fff3e0'}),
+                                            html.Span(" (need X/10 features to classify as Surface)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '10px', 'padding': '5px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+                                        # Feature 1: Phase spread
+                                        html.Div([
+                                            html.Label("Surface Phase Spread (deg):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-phase-spread', type='number', value=120, min=60, max=180, step=5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: >120°, Corona: <100°)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Corona Phase Spread (deg):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-corona-phase-spread', type='number', value=100, min=30, max=150, step=5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = Corona/Internal)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 2: Slew rate
+                                        html.Div([
+                                            html.Label("Surface Max Slew Rate:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-max-slew-rate', type='number', value=5e6, min=1e5, max=1e8, step=1e6,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: Low slew rate)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 3: Spectral power ratio
+                                        html.Div([
+                                            html.Label("Surface Max Spectral Power Ratio:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-max-spectral-ratio', type='number', value=0.5, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: <0.5)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 4: CV
+                                        html.Div([
+                                            html.Label("Surface Min CV:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-cv', type='number', value=0.4, min=0, max=2, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: >0.4)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 5: Dominant frequency
+                                        html.Div([
+                                            html.Label("Surface Max Dominant Freq (Hz):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-max-dom-freq', type='number', value=5e6, min=1e5, max=1e8, step=1e6,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: <5 MHz)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 6: Crest factor
+                                        html.Div([
+                                            html.Label("Surface Crest Factor Range:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-crest', type='number', value=4.0, min=1, max=10, step=0.5,
+                                                     style={'width': '60px'}),
+                                            html.Span(" - ", style={'margin': '0 5px'}),
+                                            dcc.Input(id='thresh-surface-max-crest', type='number', value=6.0, min=1, max=10, step=0.5,
+                                                     style={'width': '60px'}),
+                                            html.Span(" (Surface: 4-6)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 7: Cross-correlation
+                                        html.Div([
+                                            html.Label("Surface Cross-Corr Range:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-cross-corr', type='number', value=0.4, min=0, max=1, step=0.05,
+                                                     style={'width': '60px'}),
+                                            html.Span(" - ", style={'margin': '0 5px'}),
+                                            dcc.Input(id='thresh-surface-max-cross-corr', type='number', value=0.6, min=0, max=1, step=0.05,
+                                                     style={'width': '60px'}),
+                                            html.Span(" (Surface: 0.4-0.6)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 8: Spectral flatness
+                                        html.Div([
+                                            html.Label("Surface Spectral Flatness Range:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-flatness', type='number', value=0.4, min=0, max=1, step=0.05,
+                                                     style={'width': '60px'}),
+                                            html.Span(" - ", style={'margin': '0 5px'}),
+                                            dcc.Input(id='thresh-surface-max-flatness', type='number', value=0.5, min=0, max=1, step=0.05,
+                                                     style={'width': '60px'}),
+                                            html.Span(" (Surface: 0.4-0.5)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 9: Bandwidth
+                                        html.Div([
+                                            html.Label("Surface Max Bandwidth (Hz):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-max-bandwidth', type='number', value=2e6, min=1e5, max=1e8, step=1e6,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: Narrower)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 10: Rep rate variance
+                                        html.Div([
+                                            html.Label("Surface Min Rep Rate Variance:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-rep-var', type='number', value=0.5, min=0, max=2, step=0.1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: High variance)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
+                                # Branch 4: Corona vs Internal
+                                html.Details([
+                                    html.Summary("Branch 4: Corona vs Internal", style={
                                         'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
                                         'padding': '5px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'
                                     }),
@@ -1765,7 +1861,7 @@ def create_app(data_dir=DATA_DIR):
                                             html.Label("Min Asymmetry (corona):", style={'width': '220px', 'display': 'inline-block'}),
                                             dcc.Input(id='thresh-min-asymmetry-corona', type='number', value=0.4, min=0, max=1, step=0.05,
                                                      style={'width': '80px'}),
-                                            html.Span(" (|asymmetry| > this = corona candidate)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                            html.Span(" (|asymmetry| > this = corona)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '8px'}),
                                         html.Div([
                                             html.Label("Min Half-cycle Dominance %:", style={'width': '220px', 'display': 'inline-block'}),
@@ -1779,12 +1875,25 @@ def create_app(data_dir=DATA_DIR):
                                                      style={'width': '80px'}),
                                             html.Span(" (> this % = strong corona)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '8px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+                                        html.Div([
+                                            html.Label("Min Cross-Corr (symmetric):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-cross-corr-symmetric', type='number', value=0.7, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this = internal)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                        html.Div([
+                                            html.Label("Max Asymmetry (symmetric):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-asymmetry-symmetric', type='number', value=0.35, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = internal)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
 
-                                # Branch 4: Internal Detection
+                                # Branch 5: Internal Detection
                                 html.Details([
-                                    html.Summary("Branch 4: Internal (Void) Detection", style={
+                                    html.Summary("Branch 5: Internal (Amplitude)", style={
                                         'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
                                         'padding': '5px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'
                                     }),
@@ -1806,22 +1915,6 @@ def create_app(data_dir=DATA_DIR):
                                             dcc.Input(id='thresh-sym-quadrant-max', type='number', value=35, min=0, max=50, step=1,
                                                      style={'width': '80px'}),
                                             html.Span(" (each quadrant < this = symmetric)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '8px'}),
-                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
-                                ], style={'marginBottom': '10px'}),
-
-                                # Branch 5: Surface Detection
-                                html.Details([
-                                    html.Summary("Branch 5: Surface Detection", style={
-                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
-                                        'padding': '5px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'
-                                    }),
-                                    html.Div([
-                                        html.Div([
-                                            html.Label("Surface Phase Tolerance (deg):", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-surface-phase-tol', type='number', value=45, min=10, max=90, step=5,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (degrees from 0°/180° = surface)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '8px'}),
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
@@ -2373,19 +2466,34 @@ def create_app(data_dir=DATA_DIR):
          Output('thresh-max-cv', 'value'),
          Output('thresh-max-bandwidth', 'value'),
          Output('thresh-max-dominant-freq', 'value'),
-         # Branch 2: Phase Correlation
-         Output('thresh-min-cross-corr', 'value'),
-         Output('thresh-max-asymmetry-sym', 'value'),
-         # Branch 3: Corona
+         # Branch 2: Phase Spread
+         Output('thresh-surface-phase-spread-min', 'value'),
+         # Branch 3: Surface Detection (10 features)
+         Output('thresh-min-surface-features', 'value'),
+         Output('thresh-surface-phase-spread', 'value'),
+         Output('thresh-corona-phase-spread', 'value'),
+         Output('thresh-surface-max-slew-rate', 'value'),
+         Output('thresh-surface-max-spectral-ratio', 'value'),
+         Output('thresh-surface-min-cv', 'value'),
+         Output('thresh-surface-max-dom-freq', 'value'),
+         Output('thresh-surface-min-crest', 'value'),
+         Output('thresh-surface-max-crest', 'value'),
+         Output('thresh-surface-min-cross-corr', 'value'),
+         Output('thresh-surface-max-cross-corr', 'value'),
+         Output('thresh-surface-min-flatness', 'value'),
+         Output('thresh-surface-max-flatness', 'value'),
+         Output('thresh-surface-max-bandwidth', 'value'),
+         Output('thresh-surface-min-rep-var', 'value'),
+         # Branch 4: Corona vs Internal
          Output('thresh-min-asymmetry-corona', 'value'),
          Output('thresh-halfcycle-dominance', 'value'),
          Output('thresh-single-halfcycle', 'value'),
-         # Branch 4: Internal
+         Output('thresh-min-cross-corr-symmetric', 'value'),
+         Output('thresh-max-asymmetry-symmetric', 'value'),
+         # Branch 5: Internal
          Output('thresh-weibull-beta-min', 'value'),
          Output('thresh-sym-quadrant-min', 'value'),
-         Output('thresh-sym-quadrant-max', 'value'),
-         # Branch 5: Surface
-         Output('thresh-surface-phase-tol', 'value')],
+         Output('thresh-sym-quadrant-max', 'value')],
         [Input('threshold-reset-btn', 'n_clicks')],
         prevent_initial_call=True
     )
@@ -2402,19 +2510,34 @@ def create_app(data_dir=DATA_DIR):
             2.0,   # max_cv
             1e6,   # max_bandwidth
             1000,  # max_dominant_freq
-            # Branch 2: Phase Correlation
-            0.7,   # min_cross_corr
-            0.35,  # max_asymmetry_sym
-            # Branch 3: Corona
+            # Branch 2: Phase Spread
+            120,   # surface_phase_spread_min
+            # Branch 3: Surface Detection (10 features)
+            5,     # min_surface_features
+            120,   # surface_phase_spread
+            100,   # corona_phase_spread
+            5e6,   # surface_max_slew_rate
+            0.5,   # surface_max_spectral_ratio
+            0.4,   # surface_min_cv
+            5e6,   # surface_max_dom_freq
+            4.0,   # surface_min_crest
+            6.0,   # surface_max_crest
+            0.4,   # surface_min_cross_corr
+            0.6,   # surface_max_cross_corr
+            0.4,   # surface_min_flatness
+            0.5,   # surface_max_flatness
+            2e6,   # surface_max_bandwidth
+            0.5,   # surface_min_rep_var
+            # Branch 4: Corona vs Internal
             0.4,   # min_asymmetry_corona
             65,    # halfcycle_dominance
             80,    # single_halfcycle
-            # Branch 4: Internal
+            0.7,   # min_cross_corr_symmetric
+            0.35,  # max_asymmetry_symmetric
+            # Branch 5: Internal
             2.0,   # weibull_beta_min
             15,    # sym_quadrant_min
             35,    # sym_quadrant_max
-            # Branch 5: Surface
-            45,    # surface_phase_tol
         )
 
     # Save pulse features to per-dataset store when they change
@@ -3008,25 +3131,50 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-max-cv', 'value'),
          State('thresh-max-bandwidth', 'value'),
          State('thresh-max-dominant-freq', 'value'),
-         # Branch 2-5
-         State('thresh-min-cross-corr', 'value'),
-         State('thresh-max-asymmetry-sym', 'value'),
+         # Branch 2: Phase Spread
+         State('thresh-surface-phase-spread-min', 'value'),
+         # Branch 3: Surface Detection
+         State('thresh-min-surface-features', 'value'),
+         State('thresh-surface-phase-spread', 'value'),
+         State('thresh-corona-phase-spread', 'value'),
+         State('thresh-surface-max-slew-rate', 'value'),
+         State('thresh-surface-max-spectral-ratio', 'value'),
+         State('thresh-surface-min-cv', 'value'),
+         State('thresh-surface-max-dom-freq', 'value'),
+         State('thresh-surface-min-crest', 'value'),
+         State('thresh-surface-max-crest', 'value'),
+         State('thresh-surface-min-cross-corr', 'value'),
+         State('thresh-surface-max-cross-corr', 'value'),
+         State('thresh-surface-min-flatness', 'value'),
+         State('thresh-surface-max-flatness', 'value'),
+         State('thresh-surface-max-bandwidth', 'value'),
+         State('thresh-surface-min-rep-var', 'value'),
+         # Branch 4: Corona vs Internal
          State('thresh-min-asymmetry-corona', 'value'),
          State('thresh-halfcycle-dominance', 'value'),
          State('thresh-single-halfcycle', 'value'),
+         State('thresh-min-cross-corr-symmetric', 'value'),
+         State('thresh-max-asymmetry-symmetric', 'value'),
+         # Branch 5: Internal
          State('thresh-weibull-beta-min', 'value'),
          State('thresh-sym-quadrant-min', 'value'),
-         State('thresh-sym-quadrant-max', 'value'),
-         State('thresh-surface-phase-tol', 'value')],
+         State('thresh-sym-quadrant-max', 'value')],
         prevent_initial_call=True
     )
     def reclassify_with_thresholds(n_clicks, prefix, clustering_method,
                                     min_spectral_flatness, min_slew_rate, min_crest_factor,
                                     min_cross_corr_noise, max_oscillation_count, min_snr,
-                                    max_cv, max_bandwidth, max_dominant_freq,
-                                    min_cross_corr, max_asymmetry_sym,
+                                    max_cv_noise, max_bandwidth, max_dominant_freq,
+                                    surface_phase_spread_min,
+                                    min_surface_features, surface_phase_spread, corona_phase_spread,
+                                    surface_max_slew_rate, surface_max_spectral_ratio, surface_min_cv,
+                                    surface_max_dom_freq, surface_min_crest, surface_max_crest,
+                                    surface_min_cross_corr, surface_max_cross_corr,
+                                    surface_min_flatness, surface_max_flatness,
+                                    surface_max_bandwidth, surface_min_rep_var,
                                     min_asymmetry_corona, halfcycle_dominance, single_halfcycle,
-                                    weibull_beta_min, sym_quadrant_min, sym_quadrant_max, surface_phase_tol):
+                                    min_cross_corr_symmetric, max_asymmetry_symmetric,
+                                    weibull_beta_min, sym_quadrant_min, sym_quadrant_max):
         """Run classification with custom threshold values."""
         if not n_clicks:
             raise PreventUpdate
@@ -3048,24 +3196,46 @@ def create_app(data_dir=DATA_DIR):
 
         try:
             # Build threshold string
-            thresholds_str = (f"min_spectral_flatness={min_spectral_flatness},"
-                             f"min_slew_rate={min_slew_rate},"
-                             f"min_crest_factor={min_crest_factor},"
-                             f"min_cross_corr_noise={min_cross_corr_noise},"
-                             f"max_oscillation_count={max_oscillation_count},"
-                             f"min_snr={min_snr},"
-                             f"max_cv={max_cv},"
-                             f"max_bandwidth_3db={max_bandwidth},"
-                             f"max_dominant_frequency={max_dominant_freq},"
-                             f"min_cross_corr={min_cross_corr},"
-                             f"max_asymmetry_sym={max_asymmetry_sym},"
-                             f"min_asymmetry_corona={min_asymmetry_corona},"
-                             f"halfcycle_dominance={halfcycle_dominance},"
-                             f"single_halfcycle={single_halfcycle},"
-                             f"weibull_beta_min={weibull_beta_min},"
-                             f"sym_quadrant_min={sym_quadrant_min},"
-                             f"sym_quadrant_max={sym_quadrant_max},"
-                             f"surface_phase_tol={surface_phase_tol}")
+            thresholds_str = (
+                # Branch 1: Noise Detection
+                f"min_spectral_flatness={min_spectral_flatness},"
+                f"min_slew_rate={min_slew_rate},"
+                f"min_crest_factor={min_crest_factor},"
+                f"min_cross_corr_noise={min_cross_corr_noise},"
+                f"max_oscillation_count={max_oscillation_count},"
+                f"min_snr={min_snr},"
+                f"max_cv_noise={max_cv_noise},"
+                f"max_bandwidth_3db={max_bandwidth},"
+                f"max_dominant_frequency={max_dominant_freq},"
+                # Branch 2: Phase Spread
+                f"surface_phase_spread_min={surface_phase_spread_min},"
+                # Branch 3: Surface Detection
+                f"min_surface_features={min_surface_features},"
+                f"surface_phase_spread={surface_phase_spread},"
+                f"corona_phase_spread={corona_phase_spread},"
+                f"surface_max_slew_rate={surface_max_slew_rate},"
+                f"surface_max_spectral_power_ratio={surface_max_spectral_ratio},"
+                f"surface_min_cv={surface_min_cv},"
+                f"surface_max_dominant_freq={surface_max_dom_freq},"
+                f"surface_min_crest_factor={surface_min_crest},"
+                f"surface_max_crest_factor={surface_max_crest},"
+                f"surface_min_cross_corr={surface_min_cross_corr},"
+                f"surface_max_cross_corr={surface_max_cross_corr},"
+                f"surface_min_spectral_flatness={surface_min_flatness},"
+                f"surface_max_spectral_flatness={surface_max_flatness},"
+                f"surface_max_bandwidth={surface_max_bandwidth},"
+                f"surface_min_rep_rate_var={surface_min_rep_var},"
+                # Branch 4: Corona vs Internal
+                f"min_asymmetry_corona={min_asymmetry_corona},"
+                f"halfcycle_dominance={halfcycle_dominance},"
+                f"single_halfcycle={single_halfcycle},"
+                f"min_cross_corr_symmetric={min_cross_corr_symmetric},"
+                f"max_asymmetry_symmetric={max_asymmetry_symmetric},"
+                # Branch 5: Internal
+                f"weibull_beta_min={weibull_beta_min},"
+                f"sym_quadrant_min={sym_quadrant_min},"
+                f"sym_quadrant_max={sym_quadrant_max}"
+            )
 
             # Run classification with custom thresholds
             cmd = [
@@ -3552,25 +3722,50 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-max-cv', 'value'),
          State('thresh-max-bandwidth', 'value'),
          State('thresh-max-dominant-freq', 'value'),
-         # Branch 2-5
-         State('thresh-min-cross-corr', 'value'),
-         State('thresh-max-asymmetry-sym', 'value'),
+         # Branch 2: Phase Spread
+         State('thresh-surface-phase-spread-min', 'value'),
+         # Branch 3: Surface Detection
+         State('thresh-min-surface-features', 'value'),
+         State('thresh-surface-phase-spread', 'value'),
+         State('thresh-corona-phase-spread', 'value'),
+         State('thresh-surface-max-slew-rate', 'value'),
+         State('thresh-surface-max-spectral-ratio', 'value'),
+         State('thresh-surface-min-cv', 'value'),
+         State('thresh-surface-max-dom-freq', 'value'),
+         State('thresh-surface-min-crest', 'value'),
+         State('thresh-surface-max-crest', 'value'),
+         State('thresh-surface-min-cross-corr', 'value'),
+         State('thresh-surface-max-cross-corr', 'value'),
+         State('thresh-surface-min-flatness', 'value'),
+         State('thresh-surface-max-flatness', 'value'),
+         State('thresh-surface-max-bandwidth', 'value'),
+         State('thresh-surface-min-rep-var', 'value'),
+         # Branch 4: Corona vs Internal
          State('thresh-min-asymmetry-corona', 'value'),
          State('thresh-halfcycle-dominance', 'value'),
          State('thresh-single-halfcycle', 'value'),
+         State('thresh-min-cross-corr-symmetric', 'value'),
+         State('thresh-max-asymmetry-symmetric', 'value'),
+         # Branch 5: Internal
          State('thresh-weibull-beta-min', 'value'),
          State('thresh-sym-quadrant-min', 'value'),
-         State('thresh-sym-quadrant-max', 'value'),
-         State('thresh-surface-phase-tol', 'value')],
+         State('thresh-sym-quadrant-max', 'value')],
         prevent_initial_call=True
     )
     def reclassify_all_datasets(n_clicks, clustering_method,
                                  min_spectral_flatness, min_slew_rate, min_crest_factor,
                                  min_cross_corr_noise, max_oscillation_count, min_snr,
-                                 max_cv, max_bandwidth, max_dominant_freq,
-                                 min_cross_corr, max_asymmetry_sym,
+                                 max_cv_noise, max_bandwidth, max_dominant_freq,
+                                 surface_phase_spread_min,
+                                 min_surface_features, surface_phase_spread, corona_phase_spread,
+                                 surface_max_slew_rate, surface_max_spectral_ratio, surface_min_cv,
+                                 surface_max_dom_freq, surface_min_crest, surface_max_crest,
+                                 surface_min_cross_corr, surface_max_cross_corr,
+                                 surface_min_flatness, surface_max_flatness,
+                                 surface_max_bandwidth, surface_min_rep_var,
                                  min_asymmetry_corona, halfcycle_dominance, single_halfcycle,
-                                 weibull_beta_min, sym_quadrant_min, sym_quadrant_max, surface_phase_tol):
+                                 min_cross_corr_symmetric, max_asymmetry_symmetric,
+                                 weibull_beta_min, sym_quadrant_min, sym_quadrant_max):
         """Run classification on all datasets with custom thresholds."""
         if not n_clicks:
             raise PreventUpdate
@@ -3581,24 +3776,46 @@ def create_app(data_dir=DATA_DIR):
             return html.Div("No datasets available", style={'color': 'red', 'padding': '10px'})
 
         # Build threshold string
-        thresholds_str = (f"min_spectral_flatness={min_spectral_flatness},"
-                         f"min_slew_rate={min_slew_rate},"
-                         f"min_crest_factor={min_crest_factor},"
-                         f"min_cross_corr_noise={min_cross_corr_noise},"
-                         f"max_oscillation_count={max_oscillation_count},"
-                         f"min_snr={min_snr},"
-                         f"max_cv={max_cv},"
-                         f"max_bandwidth_3db={max_bandwidth},"
-                         f"max_dominant_frequency={max_dominant_freq},"
-                         f"min_cross_corr={min_cross_corr},"
-                         f"max_asymmetry_sym={max_asymmetry_sym},"
-                         f"min_asymmetry_corona={min_asymmetry_corona},"
-                         f"halfcycle_dominance={halfcycle_dominance},"
-                         f"single_halfcycle={single_halfcycle},"
-                         f"weibull_beta_min={weibull_beta_min},"
-                         f"sym_quadrant_min={sym_quadrant_min},"
-                         f"sym_quadrant_max={sym_quadrant_max},"
-                         f"surface_phase_tol={surface_phase_tol}")
+        thresholds_str = (
+            # Branch 1: Noise Detection
+            f"min_spectral_flatness={min_spectral_flatness},"
+            f"min_slew_rate={min_slew_rate},"
+            f"min_crest_factor={min_crest_factor},"
+            f"min_cross_corr_noise={min_cross_corr_noise},"
+            f"max_oscillation_count={max_oscillation_count},"
+            f"min_snr={min_snr},"
+            f"max_cv_noise={max_cv_noise},"
+            f"max_bandwidth_3db={max_bandwidth},"
+            f"max_dominant_frequency={max_dominant_freq},"
+            # Branch 2: Phase Spread
+            f"surface_phase_spread_min={surface_phase_spread_min},"
+            # Branch 3: Surface Detection
+            f"min_surface_features={min_surface_features},"
+            f"surface_phase_spread={surface_phase_spread},"
+            f"corona_phase_spread={corona_phase_spread},"
+            f"surface_max_slew_rate={surface_max_slew_rate},"
+            f"surface_max_spectral_power_ratio={surface_max_spectral_ratio},"
+            f"surface_min_cv={surface_min_cv},"
+            f"surface_max_dominant_freq={surface_max_dom_freq},"
+            f"surface_min_crest_factor={surface_min_crest},"
+            f"surface_max_crest_factor={surface_max_crest},"
+            f"surface_min_cross_corr={surface_min_cross_corr},"
+            f"surface_max_cross_corr={surface_max_cross_corr},"
+            f"surface_min_spectral_flatness={surface_min_flatness},"
+            f"surface_max_spectral_flatness={surface_max_flatness},"
+            f"surface_max_bandwidth={surface_max_bandwidth},"
+            f"surface_min_rep_rate_var={surface_min_rep_var},"
+            # Branch 4: Corona vs Internal
+            f"min_asymmetry_corona={min_asymmetry_corona},"
+            f"halfcycle_dominance={halfcycle_dominance},"
+            f"single_halfcycle={single_halfcycle},"
+            f"min_cross_corr_symmetric={min_cross_corr_symmetric},"
+            f"max_asymmetry_symmetric={max_asymmetry_symmetric},"
+            # Branch 5: Internal
+            f"weibull_beta_min={weibull_beta_min},"
+            f"sym_quadrant_min={sym_quadrant_min},"
+            f"sym_quadrant_max={sym_quadrant_max}"
+        )
 
         method = clustering_method or 'dbscan'
 
