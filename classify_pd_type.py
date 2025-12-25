@@ -50,12 +50,23 @@ PHASE_SPREAD_THRESHOLDS = {
     'surface_phase_spread_min': 120.0,        # Phase spread > 120° → Surface PD
 }
 
-# Branch 3: Surface PD vs Corona/Internal (10-feature score-based)
+# Branch 3: Surface PD vs Corona/Internal (8-feature weighted score-based)
 SURFACE_DETECTION_THRESHOLDS = {
+    # Weights for scoring (max score: 4 + 3*3 + 2*2 + 1*2 = 4 + 9 + 4 + 2 = 19)
+    'primary_weight': 4,      # phase_spread
+    'secondary_weight': 3,    # slew_rate, spectral_power_ratio, cv
+    'mid_weight': 2,          # crest_factor, cross_correlation
+    'supporting_weight': 1,   # spectral_flatness, repetition_rate_variance
+
+    # Minimum score to classify as Surface PD (out of max possible 19)
+    'min_surface_score': 10,
+
+    # PRIMARY FEATURE (Weight: 4)
     # Feature 1: Phase spread (already checked in Branch 2, but included for scoring)
     'surface_phase_spread': 120.0,            # >120° suggests Surface PD
     'corona_phase_spread': 100.0,             # <100° suggests Corona/Internal
 
+    # SECONDARY FEATURES (Weight: 3)
     # Feature 2: Slew rate (V/s) - Surface has slower rise
     'surface_max_slew_rate': 5e6,             # Surface: Low slew rate
     'corona_min_slew_rate': 1e7,              # Corona/Internal: High slew rate
@@ -68,35 +79,26 @@ SURFACE_DETECTION_THRESHOLDS = {
     'surface_min_cv': 0.4,                    # Surface: >0.4
     'corona_max_cv': 0.3,                     # Corona/Internal: <0.3
 
-    # Feature 5: Dominant frequency (Hz)
-    'surface_max_dominant_freq': 5e6,         # Surface: <5 MHz
-    'corona_min_dominant_freq': 5e6,          # Corona/Internal: >5 MHz
-
-    # Feature 6: Crest factor
+    # MID-WEIGHT FEATURES (Weight: 2)
+    # Feature 5: Crest factor
     'surface_min_crest_factor': 4.0,          # Surface: Moderate (4-6)
     'surface_max_crest_factor': 6.0,
     'corona_min_crest_factor': 6.0,           # Corona/Internal: High (>6)
 
-    # Feature 7: Cross-correlation
+    # Feature 6: Cross-correlation
     'surface_min_cross_corr': 0.4,            # Surface: Lower (0.4-0.6)
     'surface_max_cross_corr': 0.6,
     'corona_min_cross_corr': 0.7,             # Corona/Internal: Higher (>0.7)
 
-    # Feature 8: Spectral flatness
+    # SUPPORTING FEATURES (Weight: 1)
+    # Feature 7: Spectral flatness
     'surface_min_spectral_flatness': 0.4,     # Surface: Higher (0.4-0.5)
     'surface_max_spectral_flatness': 0.5,
     'corona_max_spectral_flatness': 0.35,     # Corona/Internal: Lower (<0.35)
 
-    # Feature 9: Bandwidth 3dB (Hz)
-    'surface_max_bandwidth': 2e6,             # Surface: Narrower
-    'corona_min_bandwidth': 5e6,              # Corona/Internal: Wider
-
-    # Feature 10: Repetition rate variance
+    # Feature 8: Repetition rate variance
     'surface_min_rep_rate_var': 0.5,          # Surface: High variance
     'corona_max_rep_rate_var': 0.3,           # Corona/Internal: Low variance
-
-    # Minimum features needed to classify as Surface PD
-    'min_surface_features': 5,                # Configurable in GUI
 }
 
 # Branch 4: Corona vs Internal (Score-based detection)
@@ -106,9 +108,9 @@ CORONA_INTERNAL_THRESHOLDS = {
     'secondary_weight': 2,
     'supporting_weight': 1,
 
-    # Minimum score to classify (out of max possible 20)
-    'min_corona_score': 10,
-    'min_internal_score': 10,
+    # Minimum score to classify (out of max possible 17)
+    'min_corona_score': 8,
+    'min_internal_score': 8,
 
     # PRIMARY FEATURES (Weight: 4)
     # discharge_asymmetry: Corona < -0.4, Internal -0.3 to +0.3
@@ -135,11 +137,6 @@ CORONA_INTERNAL_THRESHOLDS = {
     'internal_min_spectral_ratio': 0.8,       # Internal: 0.8-1.5
     'internal_max_spectral_ratio': 1.5,
 
-    # quadrant_3_percentage: Corona > 55%, Internal 35-50%
-    'corona_min_q3_pct': 55,                  # Corona: > 55%
-    'internal_min_q3_pct': 35,                # Internal: 35-50%
-    'internal_max_q3_pct': 50,
-
     # oscillation_count: Corona low (<3), Internal moderate (3-8)
     'corona_max_oscillation': 3,              # Corona: < 3 oscillations
     'internal_min_oscillation': 3,            # Internal: 3-8 oscillations
@@ -151,10 +148,10 @@ CORONA_INTERNAL_THRESHOLDS = {
     'internal_min_cv': 0.15,                  # Internal: 0.15-0.35
     'internal_max_cv': 0.35,
 
-    # amplitude_ratio (pos/neg): Corona < 0.5, Internal 0.7-1.3
-    'corona_max_amp_ratio': 0.5,              # Corona: < 0.5
-    'internal_min_amp_ratio': 0.7,            # Internal: 0.7-1.3
-    'internal_max_amp_ratio': 1.3,
+    # quadrant_3_percentage: Corona > 55%, Internal 35-50%
+    'corona_min_q3_pct': 55,                  # Corona: > 55%
+    'internal_min_q3_pct': 35,                # Internal: 35-50%
+    'internal_max_q3_pct': 50,
 
     # repetition_rate: Corona high, Internal moderate
     'corona_min_rep_rate': 100,               # Corona: High (>100 pulses/cycle)
@@ -198,7 +195,13 @@ def apply_custom_thresholds(custom_thresholds):
         # Branch 2: Phase Spread (Surface initial detection)
         'surface_phase_spread_min': ('PHASE_SPREAD_THRESHOLDS', 'surface_phase_spread_min'),
 
-        # Branch 3: Surface PD vs Corona/Internal
+        # Branch 3: Surface PD vs Corona/Internal (Weights)
+        'surface_primary_weight': ('SURFACE_DETECTION_THRESHOLDS', 'primary_weight'),
+        'surface_secondary_weight': ('SURFACE_DETECTION_THRESHOLDS', 'secondary_weight'),
+        'surface_mid_weight': ('SURFACE_DETECTION_THRESHOLDS', 'mid_weight'),
+        'surface_supporting_weight': ('SURFACE_DETECTION_THRESHOLDS', 'supporting_weight'),
+        'min_surface_score': ('SURFACE_DETECTION_THRESHOLDS', 'min_surface_score'),
+        # Branch 3: Surface PD vs Corona/Internal (Thresholds)
         'surface_phase_spread': ('SURFACE_DETECTION_THRESHOLDS', 'surface_phase_spread'),
         'corona_phase_spread': ('SURFACE_DETECTION_THRESHOLDS', 'corona_phase_spread'),
         'surface_max_slew_rate': ('SURFACE_DETECTION_THRESHOLDS', 'surface_max_slew_rate'),
@@ -207,8 +210,6 @@ def apply_custom_thresholds(custom_thresholds):
         'corona_min_spectral_power_ratio': ('SURFACE_DETECTION_THRESHOLDS', 'corona_min_spectral_power_ratio'),
         'surface_min_cv': ('SURFACE_DETECTION_THRESHOLDS', 'surface_min_cv'),
         'corona_max_cv': ('SURFACE_DETECTION_THRESHOLDS', 'corona_max_cv'),
-        'surface_max_dominant_freq': ('SURFACE_DETECTION_THRESHOLDS', 'surface_max_dominant_freq'),
-        'corona_min_dominant_freq': ('SURFACE_DETECTION_THRESHOLDS', 'corona_min_dominant_freq'),
         'surface_min_crest_factor': ('SURFACE_DETECTION_THRESHOLDS', 'surface_min_crest_factor'),
         'surface_max_crest_factor': ('SURFACE_DETECTION_THRESHOLDS', 'surface_max_crest_factor'),
         'corona_min_crest_factor': ('SURFACE_DETECTION_THRESHOLDS', 'corona_min_crest_factor'),
@@ -218,11 +219,8 @@ def apply_custom_thresholds(custom_thresholds):
         'surface_min_spectral_flatness': ('SURFACE_DETECTION_THRESHOLDS', 'surface_min_spectral_flatness'),
         'surface_max_spectral_flatness': ('SURFACE_DETECTION_THRESHOLDS', 'surface_max_spectral_flatness'),
         'corona_max_spectral_flatness': ('SURFACE_DETECTION_THRESHOLDS', 'corona_max_spectral_flatness'),
-        'surface_max_bandwidth': ('SURFACE_DETECTION_THRESHOLDS', 'surface_max_bandwidth'),
-        'corona_min_bandwidth': ('SURFACE_DETECTION_THRESHOLDS', 'corona_min_bandwidth'),
         'surface_min_rep_rate_var': ('SURFACE_DETECTION_THRESHOLDS', 'surface_min_rep_rate_var'),
         'corona_max_rep_rate_var': ('SURFACE_DETECTION_THRESHOLDS', 'corona_max_rep_rate_var'),
-        'min_surface_features': ('SURFACE_DETECTION_THRESHOLDS', 'min_surface_features'),
 
         # Branch 4: Corona vs Internal (Score-based)
         # Weights
@@ -250,7 +248,7 @@ def apply_custom_thresholds(custom_thresholds):
         'ci_corona_min_spectral_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_spectral_ratio'),
         'ci_internal_min_spectral_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_spectral_ratio'),
         'ci_internal_max_spectral_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_spectral_ratio'),
-        # Secondary: Q3 percentage
+        # Supporting: Q3 percentage
         'corona_min_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_q3_pct'),
         'internal_min_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_q3_pct'),
         'internal_max_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_q3_pct'),
@@ -262,10 +260,6 @@ def apply_custom_thresholds(custom_thresholds):
         'ci_corona_max_cv': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_cv'),
         'ci_internal_min_cv': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_cv'),
         'ci_internal_max_cv': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_cv'),
-        # Supporting: Amplitude ratio
-        'corona_max_amp_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_amp_ratio'),
-        'internal_min_amp_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_amp_ratio'),
-        'internal_max_amp_ratio': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_amp_ratio'),
         # Supporting: Repetition rate
         'corona_min_rep_rate': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_rep_rate'),
         'internal_min_rep_rate': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_rep_rate'),
@@ -545,7 +539,7 @@ class PDTypeClassifier:
             return result
 
         # =====================================================================
-        # BRANCH 3: SURFACE PD vs CORONA/INTERNAL (10-feature scoring)
+        # BRANCH 3: SURFACE PD vs CORONA/INTERNAL (8-feature weighted scoring)
         # =====================================================================
         result['branch_path'].append('Branch 3: Surface Detection')
 
@@ -555,88 +549,86 @@ class PDTypeClassifier:
         spectral_power_ratio = self._get_feature(cluster_features, 'spectral_power_ratio',
                               self._get_feature(cluster_features, 'mean_spectral_power_ratio', 0.5))
         cv = self._get_feature(cluster_features, 'coefficient_of_variation', 0.3)
-        dominant_freq = self._get_feature(cluster_features, 'mean_dominant_frequency',
-                       self._get_feature(cluster_features, 'dominant_frequency', 5e6))
         crest_factor = self._get_feature(cluster_features, 'mean_crest_factor',
                       self._get_feature(cluster_features, 'crest_factor', 5))
         cross_corr = self._get_feature(cluster_features, 'cross_correlation', 0.5)
         spectral_flatness = self._get_feature(cluster_features, 'mean_spectral_flatness',
                            self._get_feature(cluster_features, 'spectral_flatness', 0.4))
-        bandwidth = self._get_feature(cluster_features, 'mean_bandwidth_3db',
-                   self._get_feature(cluster_features, 'bandwidth_3db', 3e6))
         rep_rate_var = self._get_feature(cluster_features, 'repetition_rate_variance',
                       self._get_feature(cluster_features, 'rep_rate_variance', 0.4))
 
-        # Score Surface PD indicators (each feature adds 1 point if indicates Surface)
+        # Get weights
+        primary_weight = int(SURFACE_DETECTION_THRESHOLDS['primary_weight'])
+        secondary_weight = int(SURFACE_DETECTION_THRESHOLDS['secondary_weight'])
+        mid_weight = int(SURFACE_DETECTION_THRESHOLDS['mid_weight'])
+        supporting_weight = int(SURFACE_DETECTION_THRESHOLDS['supporting_weight'])
+
+        # Score Surface PD indicators with weights
         surface_score = 0
         surface_indicators = []
 
+        # PRIMARY FEATURE (Weight: 4)
         # Feature 1: Phase spread (>120° already handled, 100-120° is borderline)
         if phase_spread > SURFACE_DETECTION_THRESHOLDS['surface_phase_spread']:
-            surface_score += 1
-            surface_indicators.append(f"phase_spread={phase_spread:.1f}°>120°")
+            surface_score += primary_weight
+            surface_indicators.append(f"phase_spread={phase_spread:.1f}°>120° [+{primary_weight}]")
         elif phase_spread < SURFACE_DETECTION_THRESHOLDS['corona_phase_spread']:
             surface_indicators.append(f"phase_spread={phase_spread:.1f}°<100° (Corona/Internal)")
 
+        # SECONDARY FEATURES (Weight: 3)
         # Feature 2: Slew rate - Surface has low slew rate
         if slew_rate < SURFACE_DETECTION_THRESHOLDS['surface_max_slew_rate']:
-            surface_score += 1
-            surface_indicators.append(f"low_slew_rate={slew_rate:.2e}")
+            surface_score += secondary_weight
+            surface_indicators.append(f"low_slew_rate={slew_rate:.2e} [+{secondary_weight}]")
 
         # Feature 3: Spectral power ratio - Surface has lower ratio
         if spectral_power_ratio < SURFACE_DETECTION_THRESHOLDS['surface_max_spectral_power_ratio']:
-            surface_score += 1
-            surface_indicators.append(f"low_spectral_ratio={spectral_power_ratio:.2f}")
+            surface_score += secondary_weight
+            surface_indicators.append(f"low_spectral_ratio={spectral_power_ratio:.2f} [+{secondary_weight}]")
 
         # Feature 4: Coefficient of variation - Surface has higher CV
         if cv > SURFACE_DETECTION_THRESHOLDS['surface_min_cv']:
-            surface_score += 1
-            surface_indicators.append(f"high_cv={cv:.2f}")
+            surface_score += secondary_weight
+            surface_indicators.append(f"high_cv={cv:.2f} [+{secondary_weight}]")
 
-        # Feature 5: Dominant frequency - Surface has lower frequency
-        if dominant_freq < SURFACE_DETECTION_THRESHOLDS['surface_max_dominant_freq']:
-            surface_score += 1
-            surface_indicators.append(f"low_freq={dominant_freq/1e6:.1f}MHz")
-
-        # Feature 6: Crest factor - Surface has moderate crest factor (4-6)
+        # MID-WEIGHT FEATURES (Weight: 2)
+        # Feature 5: Crest factor - Surface has moderate crest factor (4-6)
         if (SURFACE_DETECTION_THRESHOLDS['surface_min_crest_factor'] <= crest_factor <=
             SURFACE_DETECTION_THRESHOLDS['surface_max_crest_factor']):
-            surface_score += 1
-            surface_indicators.append(f"moderate_crest={crest_factor:.1f}")
+            surface_score += mid_weight
+            surface_indicators.append(f"moderate_crest={crest_factor:.1f} [+{mid_weight}]")
 
-        # Feature 7: Cross-correlation - Surface has lower correlation (0.4-0.6)
+        # Feature 6: Cross-correlation - Surface has lower correlation (0.4-0.6)
         if (SURFACE_DETECTION_THRESHOLDS['surface_min_cross_corr'] <= cross_corr <=
             SURFACE_DETECTION_THRESHOLDS['surface_max_cross_corr']):
-            surface_score += 1
-            surface_indicators.append(f"lower_corr={cross_corr:.2f}")
+            surface_score += mid_weight
+            surface_indicators.append(f"lower_corr={cross_corr:.2f} [+{mid_weight}]")
 
-        # Feature 8: Spectral flatness - Surface has higher flatness (0.4-0.5)
+        # SUPPORTING FEATURES (Weight: 1)
+        # Feature 7: Spectral flatness - Surface has higher flatness (0.4-0.5)
         if (SURFACE_DETECTION_THRESHOLDS['surface_min_spectral_flatness'] <= spectral_flatness <=
             SURFACE_DETECTION_THRESHOLDS['surface_max_spectral_flatness']):
-            surface_score += 1
-            surface_indicators.append(f"higher_flatness={spectral_flatness:.2f}")
+            surface_score += supporting_weight
+            surface_indicators.append(f"higher_flatness={spectral_flatness:.2f} [+{supporting_weight}]")
 
-        # Feature 9: Bandwidth - Surface has narrower bandwidth
-        if bandwidth < SURFACE_DETECTION_THRESHOLDS['surface_max_bandwidth']:
-            surface_score += 1
-            surface_indicators.append(f"narrow_bw={bandwidth/1e6:.1f}MHz")
-
-        # Feature 10: Repetition rate variance - Surface has high variance
+        # Feature 8: Repetition rate variance - Surface has high variance
         if rep_rate_var > SURFACE_DETECTION_THRESHOLDS['surface_min_rep_rate_var']:
-            surface_score += 1
-            surface_indicators.append(f"high_rep_var={rep_rate_var:.2f}")
+            surface_score += supporting_weight
+            surface_indicators.append(f"high_rep_var={rep_rate_var:.2f} [+{supporting_weight}]")
 
-        min_surface_features = int(SURFACE_DETECTION_THRESHOLDS['min_surface_features'])
+        # Max possible score: 4 + 3*3 + 2*2 + 1*2 = 4 + 9 + 4 + 2 = 19
+        max_score = primary_weight + 3 * secondary_weight + 2 * mid_weight + 2 * supporting_weight
+        min_surface = int(SURFACE_DETECTION_THRESHOLDS['min_surface_score'])
         result['reasoning'].append(
-            f"Surface score: {surface_score}/10 (need {min_surface_features}): {', '.join(surface_indicators[:3])}..."
+            f"Surface score: {surface_score}/{max_score} (need {min_surface}): {', '.join(surface_indicators[:3])}..."
         )
 
-        # Classify as Surface if enough features indicate Surface PD
-        if surface_score >= min_surface_features:
+        # Classify as Surface if score meets threshold
+        if surface_score >= min_surface:
             result['pd_type'] = 'SURFACE'
-            result['confidence'] = min(0.5 + (surface_score / 10) * 0.4, 0.90)
+            result['confidence'] = min(0.5 + (surface_score / max_score) * 0.4, 0.90)
             result['reasoning'].append(
-                f"Classified as SURFACE: {surface_score}/{10} features ({', '.join(surface_indicators)})"
+                f"Classified as SURFACE: {surface_score}/{max_score} ({', '.join(surface_indicators)})"
             )
             return result
 
@@ -654,9 +646,6 @@ class PDTypeClassifier:
         ci_spectral_ratio = self._get_feature(cluster_features, 'spectral_power_ratio',
                            self._get_feature(cluster_features, 'mean_spectral_power_ratio', 1.0))
         ci_cv = self._get_feature(cluster_features, 'coefficient_of_variation', 0.2)
-        mean_amp_pos = self._get_feature(cluster_features, 'mean_amplitude_positive', 1)
-        mean_amp_neg = self._get_feature(cluster_features, 'mean_amplitude_negative', 1)
-        amp_ratio_pos_neg = mean_amp_pos / mean_amp_neg if mean_amp_neg > 0 else 1.0
         rep_rate = self._get_feature(cluster_features, 'repetition_rate',
                    self._get_feature(cluster_features, 'pulses_per_cycle', 50))
         ci_oscillation = self._get_feature(cluster_features, 'mean_oscillation_count',
@@ -714,16 +703,7 @@ class PDTypeClassifier:
             internal_score += secondary_weight
             internal_indicators.append(f"spectral_ratio={ci_spectral_ratio:.2f} in [0.8,1.5] [+{secondary_weight}]")
 
-        # 5. quadrant_3_percentage
-        if q3 > CORONA_INTERNAL_THRESHOLDS['corona_min_q3_pct']:
-            corona_score += secondary_weight
-            corona_indicators.append(f"q3={q3:.1f}%>55% [+{secondary_weight}]")
-        if (CORONA_INTERNAL_THRESHOLDS['internal_min_q3_pct'] <= q3 <=
-            CORONA_INTERNAL_THRESHOLDS['internal_max_q3_pct']):
-            internal_score += secondary_weight
-            internal_indicators.append(f"q3={q3:.1f}% in [35,50] [+{secondary_weight}]")
-
-        # 6. oscillation_count
+        # 5. oscillation_count
         if ci_oscillation < CORONA_INTERNAL_THRESHOLDS['corona_max_oscillation']:
             corona_score += secondary_weight
             corona_indicators.append(f"oscillation={ci_oscillation:.0f}<3 [+{secondary_weight}]")
@@ -733,7 +713,7 @@ class PDTypeClassifier:
             internal_indicators.append(f"oscillation={ci_oscillation:.0f} in [3,8] [+{secondary_weight}]")
 
         # SUPPORTING FEATURES (Weight: 1)
-        # 7. coefficient_of_variation
+        # 6. coefficient_of_variation
         if ci_cv < CORONA_INTERNAL_THRESHOLDS['corona_max_cv']:
             corona_score += supporting_weight
             corona_indicators.append(f"cv={ci_cv:.2f}<0.15 [+{supporting_weight}]")
@@ -742,16 +722,16 @@ class PDTypeClassifier:
             internal_score += supporting_weight
             internal_indicators.append(f"cv={ci_cv:.2f} in [0.15,0.35] [+{supporting_weight}]")
 
-        # 8. amplitude_ratio (pos/neg)
-        if amp_ratio_pos_neg < CORONA_INTERNAL_THRESHOLDS['corona_max_amp_ratio']:
+        # 7. quadrant_3_percentage
+        if q3 > CORONA_INTERNAL_THRESHOLDS['corona_min_q3_pct']:
             corona_score += supporting_weight
-            corona_indicators.append(f"amp_ratio={amp_ratio_pos_neg:.2f}<0.5 [+{supporting_weight}]")
-        if (CORONA_INTERNAL_THRESHOLDS['internal_min_amp_ratio'] <= amp_ratio_pos_neg <=
-            CORONA_INTERNAL_THRESHOLDS['internal_max_amp_ratio']):
+            corona_indicators.append(f"q3={q3:.1f}%>55% [+{supporting_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_q3_pct'] <= q3 <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_q3_pct']):
             internal_score += supporting_weight
-            internal_indicators.append(f"amp_ratio={amp_ratio_pos_neg:.2f} in [0.7,1.3] [+{supporting_weight}]")
+            internal_indicators.append(f"q3={q3:.1f}% in [35,50] [+{supporting_weight}]")
 
-        # 9. repetition_rate
+        # 8. repetition_rate
         if rep_rate > CORONA_INTERNAL_THRESHOLDS['corona_min_rep_rate']:
             corona_score += supporting_weight
             corona_indicators.append(f"rep_rate={rep_rate:.0f}>100 [+{supporting_weight}]")
@@ -760,8 +740,8 @@ class PDTypeClassifier:
             internal_score += supporting_weight
             internal_indicators.append(f"rep_rate={rep_rate:.0f} in [20,100] [+{supporting_weight}]")
 
-        # Max possible score: 2*4 + 4*2 + 3*1 = 8 + 8 + 3 = 19
-        max_score = 2 * primary_weight + 4 * secondary_weight + 3 * supporting_weight
+        # Max possible score: 2*4 + 3*2 + 3*1 = 8 + 6 + 3 = 17
+        max_score = 2 * primary_weight + 3 * secondary_weight + 3 * supporting_weight
         min_corona = int(CORONA_INTERNAL_THRESHOLDS['min_corona_score'])
         min_internal = int(CORONA_INTERNAL_THRESHOLDS['min_internal_score'])
 

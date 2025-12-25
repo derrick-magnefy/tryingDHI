@@ -1748,19 +1748,39 @@ def create_app(data_dir=DATA_DIR):
                                     ], style={'padding': '10px', 'backgroundColor': '#fff'})
                                 ], style={'marginBottom': '10px'}),
 
-                                # Branch 3: Surface Detection (10 features)
+                                # Branch 3: Surface Detection (8 features, weighted)
                                 html.Details([
-                                    html.Summary("Branch 3: Surface Detection (10 features)", style={
+                                    html.Summary("Branch 3: Surface Detection (8 features, weighted)", style={
                                         'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
                                         'padding': '5px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'
                                     }),
                                     html.Div([
+                                        # Weights and minimum score
                                         html.Div([
-                                            html.Label("Min Surface Features Required:", style={'width': '220px', 'display': 'inline-block', 'fontWeight': 'bold'}),
-                                            dcc.Input(id='thresh-min-surface-features', type='number', value=5, min=1, max=10, step=1,
-                                                     style={'width': '80px', 'backgroundColor': '#fff3e0'}),
-                                            html.Span(" (need X/10 features to classify as Surface)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '10px', 'padding': '5px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'}),
+                                            html.Strong("Weights & Minimum Score", style={'marginBottom': '5px', 'display': 'block'}),
+                                            html.Div([
+                                                html.Label("Primary (phase):", style={'width': '110px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-surface-primary-weight', type='number', value=4, min=1, max=10, step=1,
+                                                         style={'width': '50px'}),
+                                                html.Label("Secondary (slew,ratio,cv):", style={'width': '145px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-surface-secondary-weight', type='number', value=3, min=1, max=10, step=1,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '6px'}),
+                                            html.Div([
+                                                html.Label("Mid (crest,corr):", style={'width': '110px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-surface-mid-weight', type='number', value=2, min=1, max=10, step=1,
+                                                         style={'width': '50px'}),
+                                                html.Label("Supporting (flat,rep):", style={'width': '145px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-surface-supporting-weight', type='number', value=1, min=1, max=10, step=1,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '6px'}),
+                                            html.Div([
+                                                html.Label("Min Surface Score:", style={'width': '140px', 'display': 'inline-block', 'fontWeight': 'bold'}),
+                                                dcc.Input(id='thresh-min-surface-score', type='number', value=10, min=1, max=19, step=1,
+                                                         style={'width': '60px', 'backgroundColor': '#fff3e0'}),
+                                                html.Span(" (max=19: 4 + 3×3 + 2×2 + 1×2)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                            ], style={'marginBottom': '6px'}),
+                                        ], style={'marginBottom': '10px', 'padding': '8px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'}),
                                         html.Hr(style={'margin': '10px 0'}),
                                         # Feature 1: Phase spread
                                         html.Div([
@@ -1796,14 +1816,7 @@ def create_app(data_dir=DATA_DIR):
                                                      style={'width': '80px'}),
                                             html.Span(" (Surface: >0.4)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '6px'}),
-                                        # Feature 5: Dominant frequency
-                                        html.Div([
-                                            html.Label("Surface Max Dominant Freq (Hz):", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-surface-max-dom-freq', type='number', value=5e6, min=1e5, max=1e8, step=1e6,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (Surface: <5 MHz)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '6px'}),
-                                        # Feature 6: Crest factor
+                                        # Feature 5: Crest factor
                                         html.Div([
                                             html.Label("Surface Crest Factor Range:", style={'width': '220px', 'display': 'inline-block'}),
                                             dcc.Input(id='thresh-surface-min-crest', type='number', value=4.0, min=1, max=10, step=0.5,
@@ -1813,7 +1826,7 @@ def create_app(data_dir=DATA_DIR):
                                                      style={'width': '60px'}),
                                             html.Span(" (Surface: 4-6)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '6px'}),
-                                        # Feature 7: Cross-correlation
+                                        # Feature 6: Cross-correlation
                                         html.Div([
                                             html.Label("Surface Cross-Corr Range:", style={'width': '220px', 'display': 'inline-block'}),
                                             dcc.Input(id='thresh-surface-min-cross-corr', type='number', value=0.4, min=0, max=1, step=0.05,
@@ -1823,7 +1836,7 @@ def create_app(data_dir=DATA_DIR):
                                                      style={'width': '60px'}),
                                             html.Span(" (Surface: 0.4-0.6)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '6px'}),
-                                        # Feature 8: Spectral flatness
+                                        # Feature 7: Spectral flatness
                                         html.Div([
                                             html.Label("Surface Spectral Flatness Range:", style={'width': '220px', 'display': 'inline-block'}),
                                             dcc.Input(id='thresh-surface-min-flatness', type='number', value=0.4, min=0, max=1, step=0.05,
@@ -1833,14 +1846,7 @@ def create_app(data_dir=DATA_DIR):
                                                      style={'width': '60px'}),
                                             html.Span(" (Surface: 0.4-0.5)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                         ], style={'marginBottom': '6px'}),
-                                        # Feature 9: Bandwidth
-                                        html.Div([
-                                            html.Label("Surface Max Bandwidth (Hz):", style={'width': '220px', 'display': 'inline-block'}),
-                                            dcc.Input(id='thresh-surface-max-bandwidth', type='number', value=2e6, min=1e5, max=1e8, step=1e6,
-                                                     style={'width': '80px'}),
-                                            html.Span(" (Surface: Narrower)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
-                                        ], style={'marginBottom': '6px'}),
-                                        # Feature 10: Rep rate variance
+                                        # Feature 8: Rep rate variance
                                         html.Div([
                                             html.Label("Surface Min Rep Rate Variance:", style={'width': '220px', 'display': 'inline-block'}),
                                             dcc.Input(id='thresh-surface-min-rep-var', type='number', value=0.5, min=0, max=2, step=0.1,
@@ -1878,7 +1884,7 @@ def create_app(data_dir=DATA_DIR):
                                                 html.Label("Min Internal:", style={'width': '100px', 'display': 'inline-block', 'marginLeft': '10px'}),
                                                 dcc.Input(id='thresh-min-internal-score', type='number', value=12, min=1, max=28, step=1,
                                                          style={'width': '60px', 'backgroundColor': '#e8f5e9'}),
-                                                html.Span(" (max=19)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                                html.Span(" (max=17)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                             ], style={'marginBottom': '6px'}),
                                         ], style={'marginBottom': '10px', 'padding': '8px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'}),
                                         html.Hr(style={'margin': '10px 0'}),
@@ -2003,21 +2009,8 @@ def create_app(data_dir=DATA_DIR):
                                                 dcc.Input(id='thresh-ci-internal-max-cv', type='number', value=0.35, min=0, max=2, step=0.05,
                                                          style={'width': '50px'}),
                                             ], style={'marginBottom': '4px'}),
-                                            # 8. amplitude_ratio (pos/neg)
-                                            html.Div("8. amplitude_ratio (pos/neg)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
-                                            html.Div([
-                                                html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
-                                                dcc.Input(id='thresh-corona-max-amp-ratio', type='number', value=0.5, min=0, max=2, step=0.1,
-                                                         style={'width': '60px'}),
-                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
-                                                dcc.Input(id='thresh-internal-min-amp-ratio', type='number', value=0.7, min=0, max=2, step=0.1,
-                                                         style={'width': '50px'}),
-                                                html.Span("-", style={'margin': '0 3px'}),
-                                                dcc.Input(id='thresh-internal-max-amp-ratio', type='number', value=1.3, min=0, max=2, step=0.1,
-                                                         style={'width': '50px'}),
-                                            ], style={'marginBottom': '4px'}),
-                                            # 9. repetition_rate
-                                            html.Div("9. repetition_rate (pulses/cycle)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            # 8. repetition_rate
+                                            html.Div("8. repetition_rate (pulses/cycle)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
                                             html.Div([
                                                 html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
                                                 dcc.Input(id='thresh-corona-min-rep-rate', type='number', value=100, min=0, max=1000, step=10,
@@ -2582,21 +2575,23 @@ def create_app(data_dir=DATA_DIR):
          Output('thresh-max-dominant-freq', 'value'),
          # Branch 2: Phase Spread
          Output('thresh-surface-phase-spread-min', 'value'),
-         # Branch 3: Surface Detection (10 features)
-         Output('thresh-min-surface-features', 'value'),
+         # Branch 3: Surface Detection (8 features, weighted)
+         Output('thresh-surface-primary-weight', 'value'),
+         Output('thresh-surface-secondary-weight', 'value'),
+         Output('thresh-surface-mid-weight', 'value'),
+         Output('thresh-surface-supporting-weight', 'value'),
+         Output('thresh-min-surface-score', 'value'),
          Output('thresh-surface-phase-spread', 'value'),
          Output('thresh-corona-phase-spread', 'value'),
          Output('thresh-surface-max-slew-rate', 'value'),
          Output('thresh-surface-max-spectral-ratio', 'value'),
          Output('thresh-surface-min-cv', 'value'),
-         Output('thresh-surface-max-dom-freq', 'value'),
          Output('thresh-surface-min-crest', 'value'),
          Output('thresh-surface-max-crest', 'value'),
          Output('thresh-surface-min-cross-corr', 'value'),
          Output('thresh-surface-max-cross-corr', 'value'),
          Output('thresh-surface-min-flatness', 'value'),
          Output('thresh-surface-max-flatness', 'value'),
-         Output('thresh-surface-max-bandwidth', 'value'),
          Output('thresh-surface-min-rep-var', 'value'),
          # Branch 4: Corona vs Internal - Weights and Scores
          Output('thresh-primary-weight', 'value'),
@@ -2631,9 +2626,6 @@ def create_app(data_dir=DATA_DIR):
          Output('thresh-ci-corona-max-cv', 'value'),
          Output('thresh-ci-internal-min-cv', 'value'),
          Output('thresh-ci-internal-max-cv', 'value'),
-         Output('thresh-corona-max-amp-ratio', 'value'),
-         Output('thresh-internal-min-amp-ratio', 'value'),
-         Output('thresh-internal-max-amp-ratio', 'value'),
          Output('thresh-corona-min-rep-rate', 'value'),
          Output('thresh-internal-min-rep-rate', 'value'),
          Output('thresh-internal-max-rep-rate', 'value')],
@@ -2655,21 +2647,23 @@ def create_app(data_dir=DATA_DIR):
             1000,  # max_dominant_freq
             # Branch 2: Phase Spread
             120,   # surface_phase_spread_min
-            # Branch 3: Surface Detection (10 features)
-            5,     # min_surface_features
+            # Branch 3: Surface Detection (8 features, weighted)
+            4,     # surface_primary_weight
+            3,     # surface_secondary_weight
+            2,     # surface_mid_weight
+            1,     # surface_supporting_weight
+            10,    # min_surface_score
             120,   # surface_phase_spread
             100,   # corona_phase_spread
             5e6,   # surface_max_slew_rate
             0.5,   # surface_max_spectral_ratio
             0.4,   # surface_min_cv
-            5e6,   # surface_max_dom_freq
             4.0,   # surface_min_crest
             6.0,   # surface_max_crest
             0.4,   # surface_min_cross_corr
             0.6,   # surface_max_cross_corr
             0.4,   # surface_min_flatness
             0.5,   # surface_max_flatness
-            2e6,   # surface_max_bandwidth
             0.5,   # surface_min_rep_var
             # Branch 4: Corona vs Internal - Weights and Scores
             4,     # primary_weight
@@ -2704,9 +2698,6 @@ def create_app(data_dir=DATA_DIR):
             0.15,  # ci_corona_max_cv
             0.15,  # ci_internal_min_cv
             0.35,  # ci_internal_max_cv
-            0.5,   # corona_max_amp_ratio
-            0.7,   # internal_min_amp_ratio
-            1.3,   # internal_max_amp_ratio
             100,   # corona_min_rep_rate
             20,    # internal_min_rep_rate
             100,   # internal_max_rep_rate
@@ -3305,21 +3296,23 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-max-dominant-freq', 'value'),
          # Branch 2: Phase Spread
          State('thresh-surface-phase-spread-min', 'value'),
-         # Branch 3: Surface Detection
-         State('thresh-min-surface-features', 'value'),
+         # Branch 3: Surface Detection (8 features, weighted)
+         State('thresh-surface-primary-weight', 'value'),
+         State('thresh-surface-secondary-weight', 'value'),
+         State('thresh-surface-mid-weight', 'value'),
+         State('thresh-surface-supporting-weight', 'value'),
+         State('thresh-min-surface-score', 'value'),
          State('thresh-surface-phase-spread', 'value'),
          State('thresh-corona-phase-spread', 'value'),
          State('thresh-surface-max-slew-rate', 'value'),
          State('thresh-surface-max-spectral-ratio', 'value'),
          State('thresh-surface-min-cv', 'value'),
-         State('thresh-surface-max-dom-freq', 'value'),
          State('thresh-surface-min-crest', 'value'),
          State('thresh-surface-max-crest', 'value'),
          State('thresh-surface-min-cross-corr', 'value'),
          State('thresh-surface-max-cross-corr', 'value'),
          State('thresh-surface-min-flatness', 'value'),
          State('thresh-surface-max-flatness', 'value'),
-         State('thresh-surface-max-bandwidth', 'value'),
          State('thresh-surface-min-rep-var', 'value'),
          # Branch 4: Corona vs Internal - Weights and Scores
          State('thresh-primary-weight', 'value'),
@@ -3354,9 +3347,6 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-ci-corona-max-cv', 'value'),
          State('thresh-ci-internal-min-cv', 'value'),
          State('thresh-ci-internal-max-cv', 'value'),
-         State('thresh-corona-max-amp-ratio', 'value'),
-         State('thresh-internal-min-amp-ratio', 'value'),
-         State('thresh-internal-max-amp-ratio', 'value'),
          State('thresh-corona-min-rep-rate', 'value'),
          State('thresh-internal-min-rep-rate', 'value'),
          State('thresh-internal-max-rep-rate', 'value')],
@@ -3367,12 +3357,14 @@ def create_app(data_dir=DATA_DIR):
                                     min_cross_corr_noise, max_oscillation_count, min_snr,
                                     max_cv_noise, max_bandwidth, max_dominant_freq,
                                     surface_phase_spread_min,
-                                    min_surface_features, surface_phase_spread, corona_phase_spread,
+                                    # Branch 3: Surface Detection (8 features, weighted)
+                                    surface_primary_weight, surface_secondary_weight, surface_mid_weight, surface_supporting_weight,
+                                    min_surface_score, surface_phase_spread, corona_phase_spread,
                                     surface_max_slew_rate, surface_max_spectral_ratio, surface_min_cv,
-                                    surface_max_dom_freq, surface_min_crest, surface_max_crest,
+                                    surface_min_crest, surface_max_crest,
                                     surface_min_cross_corr, surface_max_cross_corr,
                                     surface_min_flatness, surface_max_flatness,
-                                    surface_max_bandwidth, surface_min_rep_var,
+                                    surface_min_rep_var,
                                     # Branch 4: Corona vs Internal
                                     primary_weight, secondary_weight, supporting_weight,
                                     min_corona_score, min_internal_score,
@@ -3385,7 +3377,6 @@ def create_app(data_dir=DATA_DIR):
                                     corona_min_q3_pct, internal_min_q3_pct, internal_max_q3_pct,
                                     corona_max_oscillation, internal_min_oscillation, internal_max_oscillation,
                                     ci_corona_max_cv, ci_internal_min_cv, ci_internal_max_cv,
-                                    corona_max_amp_ratio, internal_min_amp_ratio, internal_max_amp_ratio,
                                     corona_min_rep_rate, internal_min_rep_rate, internal_max_rep_rate):
         """Run classification with custom threshold values."""
         if not n_clicks:
@@ -3421,21 +3412,23 @@ def create_app(data_dir=DATA_DIR):
                 f"max_dominant_frequency={max_dominant_freq},"
                 # Branch 2: Phase Spread
                 f"surface_phase_spread_min={surface_phase_spread_min},"
-                # Branch 3: Surface Detection
-                f"min_surface_features={min_surface_features},"
+                # Branch 3: Surface Detection (8 features, weighted)
+                f"surface_primary_weight={surface_primary_weight},"
+                f"surface_secondary_weight={surface_secondary_weight},"
+                f"surface_mid_weight={surface_mid_weight},"
+                f"surface_supporting_weight={surface_supporting_weight},"
+                f"min_surface_score={min_surface_score},"
                 f"surface_phase_spread={surface_phase_spread},"
                 f"corona_phase_spread={corona_phase_spread},"
                 f"surface_max_slew_rate={surface_max_slew_rate},"
                 f"surface_max_spectral_power_ratio={surface_max_spectral_ratio},"
                 f"surface_min_cv={surface_min_cv},"
-                f"surface_max_dominant_freq={surface_max_dom_freq},"
                 f"surface_min_crest_factor={surface_min_crest},"
                 f"surface_max_crest_factor={surface_max_crest},"
                 f"surface_min_cross_corr={surface_min_cross_corr},"
                 f"surface_max_cross_corr={surface_max_cross_corr},"
                 f"surface_min_spectral_flatness={surface_min_flatness},"
                 f"surface_max_spectral_flatness={surface_max_flatness},"
-                f"surface_max_bandwidth={surface_max_bandwidth},"
                 f"surface_min_rep_rate_var={surface_min_rep_var},"
                 # Branch 4: Corona vs Internal - Weights and Scores
                 f"primary_weight={primary_weight},"
@@ -3470,9 +3463,6 @@ def create_app(data_dir=DATA_DIR):
                 f"ci_corona_max_cv={ci_corona_max_cv},"
                 f"ci_internal_min_cv={ci_internal_min_cv},"
                 f"ci_internal_max_cv={ci_internal_max_cv},"
-                f"corona_max_amp_ratio={corona_max_amp_ratio},"
-                f"internal_min_amp_ratio={internal_min_amp_ratio},"
-                f"internal_max_amp_ratio={internal_max_amp_ratio},"
                 f"corona_min_rep_rate={corona_min_rep_rate},"
                 f"internal_min_rep_rate={internal_min_rep_rate},"
                 f"internal_max_rep_rate={internal_max_rep_rate}"
@@ -3965,21 +3955,23 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-max-dominant-freq', 'value'),
          # Branch 2: Phase Spread
          State('thresh-surface-phase-spread-min', 'value'),
-         # Branch 3: Surface Detection
-         State('thresh-min-surface-features', 'value'),
+         # Branch 3: Surface Detection (8 features, weighted)
+         State('thresh-surface-primary-weight', 'value'),
+         State('thresh-surface-secondary-weight', 'value'),
+         State('thresh-surface-mid-weight', 'value'),
+         State('thresh-surface-supporting-weight', 'value'),
+         State('thresh-min-surface-score', 'value'),
          State('thresh-surface-phase-spread', 'value'),
          State('thresh-corona-phase-spread', 'value'),
          State('thresh-surface-max-slew-rate', 'value'),
          State('thresh-surface-max-spectral-ratio', 'value'),
          State('thresh-surface-min-cv', 'value'),
-         State('thresh-surface-max-dom-freq', 'value'),
          State('thresh-surface-min-crest', 'value'),
          State('thresh-surface-max-crest', 'value'),
          State('thresh-surface-min-cross-corr', 'value'),
          State('thresh-surface-max-cross-corr', 'value'),
          State('thresh-surface-min-flatness', 'value'),
          State('thresh-surface-max-flatness', 'value'),
-         State('thresh-surface-max-bandwidth', 'value'),
          State('thresh-surface-min-rep-var', 'value'),
          # Branch 4: Corona vs Internal - Weights and Scores
          State('thresh-primary-weight', 'value'),
@@ -4014,9 +4006,6 @@ def create_app(data_dir=DATA_DIR):
          State('thresh-ci-corona-max-cv', 'value'),
          State('thresh-ci-internal-min-cv', 'value'),
          State('thresh-ci-internal-max-cv', 'value'),
-         State('thresh-corona-max-amp-ratio', 'value'),
-         State('thresh-internal-min-amp-ratio', 'value'),
-         State('thresh-internal-max-amp-ratio', 'value'),
          State('thresh-corona-min-rep-rate', 'value'),
          State('thresh-internal-min-rep-rate', 'value'),
          State('thresh-internal-max-rep-rate', 'value')],
@@ -4027,12 +4016,14 @@ def create_app(data_dir=DATA_DIR):
                                  min_cross_corr_noise, max_oscillation_count, min_snr,
                                  max_cv_noise, max_bandwidth, max_dominant_freq,
                                  surface_phase_spread_min,
-                                 min_surface_features, surface_phase_spread, corona_phase_spread,
+                                 # Branch 3: Surface Detection (8 features, weighted)
+                                 surface_primary_weight, surface_secondary_weight, surface_mid_weight, surface_supporting_weight,
+                                 min_surface_score, surface_phase_spread, corona_phase_spread,
                                  surface_max_slew_rate, surface_max_spectral_ratio, surface_min_cv,
-                                 surface_max_dom_freq, surface_min_crest, surface_max_crest,
+                                 surface_min_crest, surface_max_crest,
                                  surface_min_cross_corr, surface_max_cross_corr,
                                  surface_min_flatness, surface_max_flatness,
-                                 surface_max_bandwidth, surface_min_rep_var,
+                                 surface_min_rep_var,
                                  # Branch 4: Corona vs Internal
                                  primary_weight, secondary_weight, supporting_weight,
                                  min_corona_score, min_internal_score,
@@ -4045,7 +4036,6 @@ def create_app(data_dir=DATA_DIR):
                                  corona_min_q3_pct, internal_min_q3_pct, internal_max_q3_pct,
                                  corona_max_oscillation, internal_min_oscillation, internal_max_oscillation,
                                  ci_corona_max_cv, ci_internal_min_cv, ci_internal_max_cv,
-                                 corona_max_amp_ratio, internal_min_amp_ratio, internal_max_amp_ratio,
                                  corona_min_rep_rate, internal_min_rep_rate, internal_max_rep_rate):
         """Run classification on all datasets with custom thresholds."""
         if not n_clicks:
@@ -4070,21 +4060,23 @@ def create_app(data_dir=DATA_DIR):
             f"max_dominant_frequency={max_dominant_freq},"
             # Branch 2: Phase Spread
             f"surface_phase_spread_min={surface_phase_spread_min},"
-            # Branch 3: Surface Detection
-            f"min_surface_features={min_surface_features},"
+            # Branch 3: Surface Detection (8 features, weighted)
+            f"surface_primary_weight={surface_primary_weight},"
+            f"surface_secondary_weight={surface_secondary_weight},"
+            f"surface_mid_weight={surface_mid_weight},"
+            f"surface_supporting_weight={surface_supporting_weight},"
+            f"min_surface_score={min_surface_score},"
             f"surface_phase_spread={surface_phase_spread},"
             f"corona_phase_spread={corona_phase_spread},"
             f"surface_max_slew_rate={surface_max_slew_rate},"
             f"surface_max_spectral_power_ratio={surface_max_spectral_ratio},"
             f"surface_min_cv={surface_min_cv},"
-            f"surface_max_dominant_freq={surface_max_dom_freq},"
             f"surface_min_crest_factor={surface_min_crest},"
             f"surface_max_crest_factor={surface_max_crest},"
             f"surface_min_cross_corr={surface_min_cross_corr},"
             f"surface_max_cross_corr={surface_max_cross_corr},"
             f"surface_min_spectral_flatness={surface_min_flatness},"
             f"surface_max_spectral_flatness={surface_max_flatness},"
-            f"surface_max_bandwidth={surface_max_bandwidth},"
             f"surface_min_rep_rate_var={surface_min_rep_var},"
             # Branch 4: Corona vs Internal - Weights and Scores
             f"primary_weight={primary_weight},"
@@ -4119,9 +4111,6 @@ def create_app(data_dir=DATA_DIR):
             f"ci_corona_max_cv={ci_corona_max_cv},"
             f"ci_internal_min_cv={ci_internal_min_cv},"
             f"ci_internal_max_cv={ci_internal_max_cv},"
-            f"corona_max_amp_ratio={corona_max_amp_ratio},"
-            f"internal_min_amp_ratio={internal_min_amp_ratio},"
-            f"internal_max_amp_ratio={internal_max_amp_ratio},"
             f"corona_min_rep_rate={corona_min_rep_rate},"
             f"internal_min_rep_rate={internal_min_rep_rate},"
             f"internal_max_rep_rate={internal_max_rep_rate}"
