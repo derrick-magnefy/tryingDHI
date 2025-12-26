@@ -2000,7 +2000,7 @@ def create_app(data_dir=DATA_DIR):
                                                 html.Label("Min Internal:", style={'width': '100px', 'display': 'inline-block', 'marginLeft': '10px'}),
                                                 dcc.Input(id='thresh-min-internal-score', type='number', value=12, min=1, max=28, step=1,
                                                          style={'width': '60px', 'backgroundColor': '#e8f5e9'}),
-                                                html.Span(" (max=23)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                                html.Span(" (max=31)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
                                             ], style={'marginBottom': '6px'}),
                                         ], style={'marginBottom': '10px', 'padding': '8px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'}),
                                         html.Hr(style={'margin': '10px 0'}),
@@ -2059,14 +2059,26 @@ def create_app(data_dir=DATA_DIR):
                                                          style={'width': '60px'}),
                                                 html.Span(" (<= this)", style={'color': '#666', 'fontSize': '10px'}),
                                             ], style={'marginBottom': '4px'}),
+                                            # 4. spectral_power_low (PRIMARY) - fraction of power in low frequencies
+                                            html.Div("4. spectral_power_low (strongest discriminator!)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Internal min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-internal-min-spectral-power-low', type='number', value=0.85, min=0, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Corona max:", style={'width': '85px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-corona-max-spectral-power-low', type='number', value=0.60, min=0, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (<= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                            ], style={'marginBottom': '4px'}),
                                         ], style={'marginBottom': '10px'}),
                                         html.Hr(style={'margin': '10px 0'}),
 
                                         # SECONDARY FEATURES (Weight: 2)
                                         html.Div([
                                             html.Strong("SECONDARY Features (Weight: 2)", style={'color': '#f57c00', 'marginBottom': '5px', 'display': 'block'}),
-                                            # 4. slew_rate
-                                            html.Div("4. slew_rate (V/s)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            # 5. slew_rate
+                                            html.Div("5. slew_rate (V/s)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
                                             html.Div([
                                                 html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
                                                 dcc.Input(id='thresh-ci-corona-min-slew', type='number', value=5e7, min=1e6, max=1e9, step=1e7,
@@ -2078,8 +2090,20 @@ def create_app(data_dir=DATA_DIR):
                                                 dcc.Input(id='thresh-ci-internal-max-slew', type='number', value=5e7, min=1e6, max=1e9, step=1e7,
                                                          style={'width': '70px'}),
                                             ], style={'marginBottom': '4px'}),
-                                            # 5. spectral_power_ratio
-                                            html.Div("5. spectral_power_ratio", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            # 6. norm_slew_rate (normalized)
+                                            html.Div("6. norm_slew_rate (normalized)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-norm-slew', type='number', value=8.0, min=0, max=50, step=0.5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Internal max:", style={'width': '85px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-max-norm-slew', type='number', value=5.0, min=0, max=20, step=0.5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (<= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 7. spectral_power_ratio
+                                            html.Div("7. spectral_power_ratio", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
                                             html.Div([
                                                 html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
                                                 dcc.Input(id='thresh-ci-corona-min-spectral-ratio', type='number', value=1.5, min=0, max=5, step=0.1,
@@ -2091,22 +2115,34 @@ def create_app(data_dir=DATA_DIR):
                                                 dcc.Input(id='thresh-ci-internal-max-spectral-ratio', type='number', value=1.5, min=0, max=5, step=0.1,
                                                          style={'width': '60px'}),
                                             ], style={'marginBottom': '4px'}),
-                                            # 6. oscillation_count
-                                            html.Div("6. oscillation_count", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            # 8. oscillation_count (Corona HIGH, Internal LOW)
+                                            html.Div("8. oscillation_count (Corona=high ringing)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
                                             html.Div([
-                                                html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
-                                                dcc.Input(id='thresh-corona-max-oscillation', type='number', value=3, min=0, max=20, step=1,
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-oscillation', type='number', value=90, min=0, max=200, step=5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Internal max:", style={'width': '85px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-max-oscillation', type='number', value=90, min=0, max=200, step=5,
                                                          style={'width': '60px'}),
                                                 html.Span(" (< this)", style={'color': '#666', 'fontSize': '10px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 9. crest_factor
+                                            html.Div("9. crest_factor", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-crest', type='number', value=7.0, min=1, max=20, step=0.5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
                                                 html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
-                                                dcc.Input(id='thresh-internal-min-oscillation', type='number', value=3, min=0, max=20, step=1,
+                                                dcc.Input(id='thresh-internal-min-crest', type='number', value=4.0, min=1, max=15, step=0.5,
                                                          style={'width': '50px'}),
                                                 html.Span("-", style={'margin': '0 3px'}),
-                                                dcc.Input(id='thresh-internal-max-oscillation', type='number', value=8, min=0, max=20, step=1,
+                                                dcc.Input(id='thresh-internal-max-crest', type='number', value=6.5, min=1, max=15, step=0.5,
                                                          style={'width': '50px'}),
                                             ], style={'marginBottom': '4px'}),
-                                            # 7. dominant_frequency
-                                            html.Div("7. dominant_frequency (MHz)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            # 10. dominant_frequency
+                                            html.Div("10. dominant_frequency (MHz)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
                                             html.Div([
                                                 html.Label("Neg Corona:", style={'width': '100px', 'display': 'inline-block'}),
                                                 dcc.Input(id='thresh-corona-neg-min-freq', type='number', value=15, min=1, max=100, step=1,
@@ -2134,8 +2170,8 @@ def create_app(data_dir=DATA_DIR):
                                         # SUPPORTING FEATURES (Weight: 1)
                                         html.Div([
                                             html.Strong("SUPPORTING Features (Weight: 1)", style={'color': '#388e3c', 'marginBottom': '5px', 'display': 'block'}),
-                                            # 8. coefficient_of_variation
-                                            html.Div("8. coefficient_of_variation", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            # 11. coefficient_of_variation
+                                            html.Div("11. coefficient_of_variation", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
                                             html.Div([
                                                 html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
                                                 dcc.Input(id='thresh-ci-corona-max-cv', type='number', value=0.15, min=0, max=2, step=0.05,
@@ -2147,8 +2183,8 @@ def create_app(data_dir=DATA_DIR):
                                                 dcc.Input(id='thresh-ci-internal-max-cv', type='number', value=0.35, min=0, max=2, step=0.05,
                                                          style={'width': '50px'}),
                                             ], style={'marginBottom': '4px'}),
-                                            # 9. quadrant_3_percentage
-                                            html.Div("9. quadrant_3_percentage (%)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            # 12. quadrant_3_percentage
+                                            html.Div("12. quadrant_3_percentage (%)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
                                             html.Div([
                                                 html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
                                                 dcc.Input(id='thresh-corona-min-q3-pct', type='number', value=55, min=0, max=100, step=1,
@@ -2160,8 +2196,8 @@ def create_app(data_dir=DATA_DIR):
                                                 dcc.Input(id='thresh-internal-max-q3-pct', type='number', value=50, min=0, max=100, step=1,
                                                          style={'width': '50px'}),
                                             ], style={'marginBottom': '4px'}),
-                                            # 10. repetition_rate
-                                            html.Div("10. repetition_rate (pulses/cycle)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            # 13. repetition_rate
+                                            html.Div("13. repetition_rate (pulses/cycle)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
                                             html.Div([
                                                 html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
                                                 dcc.Input(id='thresh-corona-min-rep-rate', type='number', value=100, min=0, max=1000, step=10,

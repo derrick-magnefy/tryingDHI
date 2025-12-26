@@ -145,21 +145,34 @@ CORONA_INTERNAL_THRESHOLDS = {
     'internal_min_amp_phase_corr': 0.5,       # Internal: High correlation (>0.5)
     'corona_max_amp_phase_corr': 0.3,         # Corona: Low correlation (<0.3)
 
+    # spectral_power_low: PRIMARY FEATURE - Fraction of power in low frequencies
+    # Internal: High (>0.85 = most power in low freq), Corona: Low (<0.60 = significant high freq)
+    'internal_min_spectral_power_low': 0.85,  # Internal: >85% power in low frequencies
+    'corona_max_spectral_power_low': 0.60,    # Corona: <60% power in low frequencies
+
     # SECONDARY FEATURES (Weight: 2)
-    # slew_rate: Corona very high, Internal high
+    # slew_rate: Corona very high, Internal moderate
     'corona_min_slew_rate': 5e7,              # Corona: Very high (>50 MV/s)
-    'internal_min_slew_rate': 1e7,            # Internal: High (10-50 MV/s)
+    'internal_min_slew_rate': 1e7,            # Internal: Moderate (10-50 MV/s)
     'internal_max_slew_rate': 5e7,
+
+    # norm_slew_rate: Normalized slew rate (alternative to raw)
+    'corona_min_norm_slew_rate': 8.0,         # Corona: >8.0 (normalized)
+    'internal_max_norm_slew_rate': 5.0,       # Internal: <5.0 (normalized)
 
     # spectral_power_ratio: Corona > 1.5, Internal 0.8-1.5
     'corona_min_spectral_ratio': 1.5,         # Corona: > 1.5
     'internal_min_spectral_ratio': 0.8,       # Internal: 0.8-1.5
     'internal_max_spectral_ratio': 1.5,
 
-    # oscillation_count: Corona low (<3), Internal moderate (3-8)
-    'corona_max_oscillation': 3,              # Corona: < 3 oscillations
-    'internal_min_oscillation': 3,            # Internal: 3-8 oscillations
-    'internal_max_oscillation': 8,
+    # oscillation_count: Corona HIGH (>=90, more ringing), Internal LOW (<90)
+    'corona_min_oscillation': 90,             # Corona: >= 90 oscillations (ringing after spike)
+    'internal_max_oscillation': 90,           # Internal: < 90 oscillations
+
+    # crest_factor: Corona higher (>=7.0), Internal moderate (4.0-6.5)
+    'corona_min_crest_factor': 7.0,           # Corona: >= 7.0 (very impulsive)
+    'internal_min_crest_factor': 4.0,         # Internal: 4.0-6.5
+    'internal_max_crest_factor': 6.5,
 
     # dominant_frequency:
     # Negative Corona: > 15 MHz (high frequency)
@@ -282,10 +295,19 @@ def apply_custom_thresholds(custom_thresholds):
         'corona_min_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_q3_pct'),
         'internal_min_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_q3_pct'),
         'internal_max_q3_pct': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_q3_pct'),
-        # Secondary: Oscillation count
-        'corona_max_oscillation': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_oscillation'),
-        'internal_min_oscillation': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_oscillation'),
+        # Secondary: Oscillation count (Corona HIGH, Internal LOW)
+        'corona_min_oscillation': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_oscillation'),
         'internal_max_oscillation': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_oscillation'),
+        # Primary: Spectral power low
+        'internal_min_spectral_power_low': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_spectral_power_low'),
+        'corona_max_spectral_power_low': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_spectral_power_low'),
+        # Secondary: Norm slew rate
+        'corona_min_norm_slew_rate': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_norm_slew_rate'),
+        'internal_max_norm_slew_rate': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_norm_slew_rate'),
+        # Secondary: Crest factor
+        'corona_min_crest_factor': ('CORONA_INTERNAL_THRESHOLDS', 'corona_min_crest_factor'),
+        'internal_min_crest_factor': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_crest_factor'),
+        'internal_max_crest_factor': ('CORONA_INTERNAL_THRESHOLDS', 'internal_max_crest_factor'),
         # Supporting: CV
         'ci_corona_max_cv': ('CORONA_INTERNAL_THRESHOLDS', 'corona_max_cv'),
         'ci_internal_min_cv': ('CORONA_INTERNAL_THRESHOLDS', 'internal_min_cv'),
@@ -784,14 +806,13 @@ class PDTypeClassifier:
             internal_score += secondary_weight
             internal_indicators.append(f"spectral_ratio={ci_spectral_ratio:.2f} in [0.8,1.5] [+{secondary_weight}]")
 
-        # 5. oscillation_count
-        if ci_oscillation < CORONA_INTERNAL_THRESHOLDS['corona_max_oscillation']:
+        # 5. oscillation_count: Corona has MORE oscillations (ringing), Internal has fewer
+        if ci_oscillation >= CORONA_INTERNAL_THRESHOLDS['corona_min_oscillation']:
             corona_score += secondary_weight
-            corona_indicators.append(f"oscillation={ci_oscillation:.0f}<3 [+{secondary_weight}]")
-        if (CORONA_INTERNAL_THRESHOLDS['internal_min_oscillation'] <= ci_oscillation <=
-            CORONA_INTERNAL_THRESHOLDS['internal_max_oscillation']):
+            corona_indicators.append(f"oscillation={ci_oscillation:.0f}>=90 [+{secondary_weight}]")
+        if ci_oscillation < CORONA_INTERNAL_THRESHOLDS['internal_max_oscillation']:
             internal_score += secondary_weight
-            internal_indicators.append(f"oscillation={ci_oscillation:.0f} in [3,8] [+{secondary_weight}]")
+            internal_indicators.append(f"oscillation={ci_oscillation:.0f}<90 [+{secondary_weight}]")
 
         # SUPPORTING FEATURES (Weight: 1)
         # 6. coefficient_of_variation
@@ -850,9 +871,43 @@ class PDTypeClassifier:
             corona_score += primary_weight
             corona_indicators.append(f"amp_phase_corr={amp_phase_corr:.2f}<=0.3 [+{primary_weight}]")
 
-        # Max possible score: 3*4 + 4*2 + 3*1 = 12 + 8 + 3 = 23
-        # (3 primary: asymmetry, phase, amp_phase_corr) + (4 secondary: slew, spectral_ratio, oscillation, freq) + (3 supporting: cv, q3, rep_rate)
-        max_score = 3 * primary_weight + 4 * secondary_weight + 3 * supporting_weight
+        # 11. spectral_power_low: PRIMARY FEATURE - Internal high (>0.85), Corona low (<0.60)
+        # This is a very strong discriminator - Internal has most power in low freq, Corona has high freq content
+        spectral_power_low = self._get_feature(cluster_features, 'mean_spectral_power_low',
+                             self._get_feature(cluster_features, 'spectral_power_low', 0.5))
+        if spectral_power_low >= CORONA_INTERNAL_THRESHOLDS['internal_min_spectral_power_low']:
+            internal_score += primary_weight
+            internal_indicators.append(f"spectral_power_low={spectral_power_low:.2f}>=0.85 [+{primary_weight}]")
+        if spectral_power_low <= CORONA_INTERNAL_THRESHOLDS['corona_max_spectral_power_low']:
+            corona_score += primary_weight
+            corona_indicators.append(f"spectral_power_low={spectral_power_low:.2f}<=0.60 [+{primary_weight}]")
+
+        # 12. norm_slew_rate: SECONDARY FEATURE - Corona very high (>8), Internal low (<5)
+        norm_slew_rate = self._get_feature(cluster_features, 'mean_norm_slew_rate',
+                         self._get_feature(cluster_features, 'norm_slew_rate', 3.0))
+        if norm_slew_rate >= CORONA_INTERNAL_THRESHOLDS['corona_min_norm_slew_rate']:
+            corona_score += secondary_weight
+            corona_indicators.append(f"norm_slew={norm_slew_rate:.1f}>=8.0 [+{secondary_weight}]")
+        if norm_slew_rate <= CORONA_INTERNAL_THRESHOLDS['internal_max_norm_slew_rate']:
+            internal_score += secondary_weight
+            internal_indicators.append(f"norm_slew={norm_slew_rate:.1f}<=5.0 [+{secondary_weight}]")
+
+        # 13. crest_factor: SECONDARY FEATURE - Corona high (>=7), Internal moderate (4-6.5)
+        crest_factor = self._get_feature(cluster_features, 'mean_crest_factor',
+                       self._get_feature(cluster_features, 'crest_factor', 5.0))
+        if crest_factor >= CORONA_INTERNAL_THRESHOLDS['corona_min_crest_factor']:
+            corona_score += secondary_weight
+            corona_indicators.append(f"crest={crest_factor:.1f}>=7.0 [+{secondary_weight}]")
+        if (CORONA_INTERNAL_THRESHOLDS['internal_min_crest_factor'] <= crest_factor <=
+            CORONA_INTERNAL_THRESHOLDS['internal_max_crest_factor']):
+            internal_score += secondary_weight
+            internal_indicators.append(f"crest={crest_factor:.1f} in [4.0,6.5] [+{secondary_weight}]")
+
+        # Max possible score: 4*4 + 6*2 + 3*1 = 16 + 12 + 3 = 31
+        # (4 primary: asymmetry, phase, amp_phase_corr, spectral_power_low)
+        # (6 secondary: slew, spectral_ratio, oscillation, freq, norm_slew, crest)
+        # (3 supporting: cv, q3, rep_rate)
+        max_score = 4 * primary_weight + 6 * secondary_weight + 3 * supporting_weight
         min_corona = int(CORONA_INTERNAL_THRESHOLDS['min_corona_score'])
         min_internal = int(CORONA_INTERNAL_THRESHOLDS['min_internal_score'])
 
