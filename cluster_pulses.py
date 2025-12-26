@@ -2,17 +2,17 @@
 """
 PD Pulse Clustering Script
 
-Clusters partial discharge pulses using DBSCAN or K-means based on extracted features.
+Clusters partial discharge pulses using DBSCAN, HDBSCAN, or K-means based on extracted features.
 
 Usage:
-    python cluster_pulses.py [--method dbscan|kmeans] [--input FILE] [--n-clusters N]
+    python cluster_pulses.py [--method dbscan|hdbscan|kmeans] [--input FILE] [--n-clusters N]
 
 Options:
-    --method        Clustering method: 'dbscan' or 'kmeans' (default: dbscan)
+    --method        Clustering method: 'dbscan', 'hdbscan', or 'kmeans' (default: dbscan)
     --input FILE    Input features CSV file (default: process all *-features.csv)
     --n-clusters N  Number of clusters for K-means (default: 5)
     --eps EPS       DBSCAN epsilon parameter (default: auto)
-    --min-samples N DBSCAN min_samples parameter (default: 5)
+    --min-samples N DBSCAN/HDBSCAN min_samples parameter (default: 5)
     --features      Comma-separated list of features to use (default: all)
 """
 
@@ -26,6 +26,13 @@ from sklearn.cluster import DBSCAN, KMeans
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import silhouette_score
 import warnings
+
+# Try to import HDBSCAN (optional dependency)
+try:
+    import hdbscan
+    HDBSCAN_AVAILABLE = True
+except ImportError:
+    HDBSCAN_AVAILABLE = False
 
 DATA_DIR = "Rugged Data Files"
 
@@ -152,6 +159,60 @@ def run_kmeans(X_scaled, n_clusters=5):
     return labels, info
 
 
+def run_hdbscan(X_scaled, min_samples=5, min_cluster_size=None):
+    """
+    Run HDBSCAN clustering.
+
+    HDBSCAN automatically determines the number of clusters and handles varying
+    density better than DBSCAN. No eps parameter needed.
+
+    Args:
+        X_scaled: Scaled feature matrix
+        min_samples: Minimum samples for core point (default: 5)
+        min_cluster_size: Minimum cluster size (default: same as min_samples)
+
+    Returns:
+        labels: Cluster labels (-1 for noise)
+        info: Dict with clustering info
+    """
+    if not HDBSCAN_AVAILABLE:
+        raise ImportError("HDBSCAN not installed. Install with: pip install hdbscan")
+
+    if min_cluster_size is None:
+        min_cluster_size = min_samples
+
+    clusterer = hdbscan.HDBSCAN(
+        min_samples=min_samples,
+        min_cluster_size=min_cluster_size,
+        metric='euclidean',
+        cluster_selection_method='eom'  # Excess of Mass (more conservative)
+    )
+    labels = clusterer.fit_predict(X_scaled)
+
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_noise = list(labels).count(-1)
+
+    info = {
+        'method': 'HDBSCAN',
+        'min_samples': min_samples,
+        'min_cluster_size': min_cluster_size,
+        'n_clusters': n_clusters,
+        'n_noise': n_noise,
+        'noise_ratio': n_noise / len(labels) if len(labels) > 0 else 0
+    }
+
+    # Calculate silhouette score if we have valid clusters
+    if n_clusters > 1:
+        mask = labels != -1
+        if mask.sum() > 1:
+            try:
+                info['silhouette_score'] = silhouette_score(X_scaled[mask], labels[mask])
+            except:
+                info['silhouette_score'] = None
+
+    return labels, info
+
+
 def save_cluster_labels(labels, output_path, feature_file, info, used_features=None):
     """Save cluster labels and metadata to file."""
     with open(output_path, 'w') as f:
@@ -165,6 +226,11 @@ def save_cluster_labels(labels, output_path, feature_file, info, used_features=N
         if 'eps' in info:
             f.write(f"# DBSCAN_eps: {info['eps']}\n")
             f.write(f"# DBSCAN_min_samples: {info['min_samples']}\n")
+            f.write(f"# Noise_points: {info['n_noise']}\n")
+
+        if info['method'] == 'HDBSCAN':
+            f.write(f"# HDBSCAN_min_samples: {info['min_samples']}\n")
+            f.write(f"# HDBSCAN_min_cluster_size: {info['min_cluster_size']}\n")
             f.write(f"# Noise_points: {info['n_noise']}\n")
 
         if 'silhouette_score' in info and info['silhouette_score'] is not None:
@@ -238,6 +304,9 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
     if method == 'dbscan':
         print(f"  Running DBSCAN (min_samples={min_samples}, auto_percentile={auto_percentile})...")
         labels, info = run_dbscan(X_scaled, eps=eps, min_samples=min_samples, auto_percentile=auto_percentile)
+    elif method == 'hdbscan':
+        print(f"  Running HDBSCAN (min_samples={min_samples})...")
+        labels, info = run_hdbscan(X_scaled, min_samples=min_samples)
     else:
         print(f"  Running K-means (k={n_clusters})...")
         labels, info = run_kmeans(X_scaled, n_clusters=n_clusters)
@@ -272,7 +341,7 @@ def main():
     parser.add_argument(
         '--method',
         type=str,
-        choices=['dbscan', 'kmeans'],
+        choices=['dbscan', 'hdbscan', 'kmeans'],
         default='dbscan',
         help='Clustering method (default: dbscan)'
     )

@@ -734,7 +734,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                 x=phases[mask],
                 y=amplitudes[mask],
                 mode='markers',
-                marker=dict(size=3, color=color, opacity=0.7),
+                marker=dict(size=7, color=color, opacity=0.8),
                 name=name,
                 customdata=original_indices,
                 hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
@@ -754,7 +754,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                     x=phases[mask],
                     y=amplitudes[mask],
                     mode='markers',
-                    marker=dict(size=3, color=color, opacity=0.7),
+                    marker=dict(size=7, color=color, opacity=0.8),
                     name=pd_type,
                     customdata=original_indices,
                     hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
@@ -764,7 +764,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
             x=phases,
             y=amplitudes,
             mode='markers',
-            marker=dict(size=3, color='blue', opacity=0.7),
+            marker=dict(size=7, color='blue', opacity=0.8),
             name='All pulses',
             customdata=np.arange(len(phases)),
             hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
@@ -1012,7 +1012,7 @@ def create_pca_plot(features, feature_names, cluster_labels):
                 x=pca_result[mask, 0],
                 y=pca_result[mask, 1],
                 mode='markers',
-                marker=dict(size=5, color=color, opacity=0.7),
+                marker=dict(size=7, color=color, opacity=0.8),
                 name=name,
                 customdata=original_indices,
                 hovertemplate='PC1: %{x:.3f}<br>PC2: %{y:.3f}<br>Index: %{customdata}<extra></extra>'
@@ -1022,7 +1022,7 @@ def create_pca_plot(features, feature_names, cluster_labels):
             x=pca_result[:, 0],
             y=pca_result[:, 1],
             mode='markers',
-            marker=dict(size=5, color='blue', opacity=0.7),
+            marker=dict(size=7, color='blue', opacity=0.8),
             name='All pulses'
         ))
 
@@ -1509,21 +1509,22 @@ def create_app(data_dir=DATA_DIR):
                                     dcc.RadioItems(
                                         id='clustering-method-radio',
                                         options=[
-                                            {'label': 'DBSCAN (density-based)', 'value': 'dbscan'},
-                                            {'label': 'K-Means (centroid-based)', 'value': 'kmeans'}
+                                            {'label': 'DBSCAN', 'value': 'dbscan'},
+                                            {'label': 'HDBSCAN (auto-eps)', 'value': 'hdbscan'},
+                                            {'label': 'K-Means', 'value': 'kmeans'}
                                         ],
                                         value=DEFAULT_CLUSTERING_METHOD,
                                         inline=True,
                                         style={'display': 'inline-block'},
                                         inputStyle={'marginRight': '5px'},
-                                        labelStyle={'marginRight': '20px'},
+                                        labelStyle={'marginRight': '15px'},
                                         persistence=True,
                                         persistence_type='local'
                                     ),
                                 ], style={'marginBottom': '10px'}),
                                 html.Div([
                                     html.Div([
-                                        html.Label("DBSCAN min_samples:", style={'marginRight': '10px'}),
+                                        html.Label("min_samples:", style={'marginRight': '10px'}),
                                         dcc.Input(
                                             id='dbscan-min-samples',
                                             type='number',
@@ -1532,7 +1533,7 @@ def create_app(data_dir=DATA_DIR):
                                             max=50,
                                             style={'width': '80px'}
                                         ),
-                                    ], style={'display': 'inline-block', 'marginRight': '30px'}),
+                                    ], style={'display': 'inline-block', 'marginRight': '20px'}),
                                     html.Div([
                                         html.Label("DBSCAN eps:", style={'marginRight': '10px'}),
                                         dcc.Input(
@@ -2507,6 +2508,7 @@ def create_app(data_dir=DATA_DIR):
 
             # Read PD types
             type_counts = {}
+            cluster_to_type = {}  # Map cluster label to PD type
             total_clusters = 0
 
             with open(pd_types_file, 'r') as f:
@@ -2515,8 +2517,10 @@ def create_app(data_dir=DATA_DIR):
                         continue
                     parts = line.strip().split(',')
                     if len(parts) >= 2:
+                        cluster_label = parts[0]
                         pd_type = parts[1]
                         type_counts[pd_type] = type_counts.get(pd_type, 0) + 1
+                        cluster_to_type[cluster_label] = pd_type
                         total_clusters += 1
 
             if total_clusters == 0:
@@ -2570,7 +2574,31 @@ def create_app(data_dir=DATA_DIR):
                         'minWidth': '100px'
                     }))
 
-            summary_items.append(html.Div(type_badges, style={'marginBottom': '10px'}))
+            summary_items.append(html.Div(type_badges, style={'marginBottom': '15px'}))
+
+            # Cluster-to-Classification mapping (show which clusters belong to which type)
+            summary_items.append(html.Div([
+                html.Span("Cluster → Classification: ", style={'fontWeight': 'bold', 'fontSize': '13px', 'color': '#333'})
+            ], style={'marginBottom': '8px'}))
+
+            # Group clusters by PD type for display
+            type_to_clusters = {}
+            for cluster_label, pd_type in cluster_to_type.items():
+                if pd_type not in type_to_clusters:
+                    type_to_clusters[pd_type] = []
+                type_to_clusters[pd_type].append(cluster_label)
+
+            cluster_mapping_items = []
+            for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
+                if pd_type in type_to_clusters:
+                    clusters = sorted(type_to_clusters[pd_type], key=lambda x: int(x) if x.lstrip('-').isdigit() else 999)
+                    color = type_colors.get(pd_type, '#666')
+                    cluster_mapping_items.append(html.Span([
+                        html.Span(f"{pd_type}: ", style={'fontWeight': 'bold', 'color': color}),
+                        html.Span(', '.join([f"C{c}" for c in clusters]), style={'color': '#444'})
+                    ], style={'marginRight': '20px', 'fontSize': '12px'}))
+
+            summary_items.append(html.Div(cluster_mapping_items, style={'marginBottom': '10px', 'lineHeight': '1.8'}))
 
             # Total count
             summary_items.append(html.Div(f"Total: {total_clusters} clusters analyzed",
@@ -3223,17 +3251,24 @@ def create_app(data_dir=DATA_DIR):
                 ]
                 subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
-                eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
-                # Extract auto-estimated eps from output if available
-                if not eps_value and result.stdout:
-                    import re
-                    match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
-                    if match:
-                        eps_msg = f"eps: auto ({match.group(1)})"
+                # Build method info message
+                if method == 'hdbscan':
+                    method_info = "Method: HDBSCAN (auto-eps)"
+                elif method == 'kmeans':
+                    method_info = "Method: K-MEANS"
+                else:
+                    eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
+                    # Extract auto-estimated eps from output if available
+                    if not eps_value and result.stdout:
+                        import re
+                        match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
+                        if match:
+                            eps_msg = f"eps: auto ({match.group(1)})"
+                    method_info = f"Method: DBSCAN | {eps_msg}"
 
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
-                    html.Div(f"Method: {method.upper()} | {eps_msg}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div(method_info, style={'fontSize': '12px', 'color': '#666'}),
                     html.Div(f"Features: {features_str}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
@@ -3326,17 +3361,24 @@ def create_app(data_dir=DATA_DIR):
                 ]
                 subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
-                eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
-                # Extract auto-estimated eps from output if available
-                if not eps_value and result.stdout:
-                    import re
-                    match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
-                    if match:
-                        eps_msg = f"eps: auto ({match.group(1)})"
+                # Build method info message
+                if method == 'hdbscan':
+                    method_info = f"Method: HDBSCAN (auto-eps) | Features: {len(selected_features)}"
+                elif method == 'kmeans':
+                    method_info = f"Method: K-MEANS | Features: {len(selected_features)}"
+                else:
+                    eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
+                    # Extract auto-estimated eps from output if available
+                    if not eps_value and result.stdout:
+                        import re
+                        match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
+                        if match:
+                            eps_msg = f"eps: auto ({match.group(1)})"
+                    method_info = f"Method: DBSCAN | {eps_msg} | Features: {len(selected_features)}"
 
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
-                    html.Div(f"Method: {method.upper()} | {eps_msg} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div(method_info, style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
                 ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
@@ -5752,7 +5794,7 @@ def create_app(data_dir=DATA_DIR):
                 x=phases[unassigned_mask],
                 y=amplitudes[unassigned_mask],
                 mode='markers',
-                marker=dict(size=4, color='#cccccc', opacity=0.6),
+                marker=dict(size=6, color='#cccccc', opacity=0.6),
                 name='Unassigned',
                 customdata=unassigned_indices,
                 hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra>Unassigned</extra>'
@@ -5773,7 +5815,7 @@ def create_app(data_dir=DATA_DIR):
                         x=phases[mask],
                         y=amplitudes[mask],
                         mode='markers',
-                        marker=dict(size=5, color=cluster_colors.get(cluster_num, '#000'), opacity=0.8),
+                        marker=dict(size=7, color=cluster_colors.get(cluster_num, '#000'), opacity=0.8),
                         name=f'Cluster {cluster_num}',
                         customdata=cluster_idx_list,
                         hovertemplate=f'Phase: %{{x:.1f}}°<br>Amplitude: %{{y:.4f}} V<br>Index: %{{customdata}}<extra>Cluster {cluster_num}</extra>'
