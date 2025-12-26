@@ -775,10 +775,12 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                 x=phases[mask],
                 y=amplitudes[mask],
                 mode='markers',
-                marker=dict(size=7, color=color, opacity=0.8),
+                marker=dict(size=3, color=color, opacity=0.7),
                 name=name,
                 customdata=original_indices,
-                hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
+                hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>',
+                legendgroup=name,
+                showlegend=False  # Hide from legend, use larger marker trace instead
             ))
 
     elif color_by == 'pdtype' and cluster_labels is not None and pd_types is not None:
@@ -795,17 +797,19 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                     x=phases[mask],
                     y=amplitudes[mask],
                     mode='markers',
-                    marker=dict(size=7, color=color, opacity=0.8),
+                    marker=dict(size=3, color=color, opacity=0.7),
                     name=pd_type,
                     customdata=original_indices,
-                    hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
+                    hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>',
+                    legendgroup=pd_type,
+                    showlegend=False  # Hide from legend, use larger marker trace instead
                 ))
     else:
         fig.add_trace(go.Scatter(
             x=phases,
             y=amplitudes,
             mode='markers',
-            marker=dict(size=7, color='blue', opacity=0.8),
+            marker=dict(size=3, color='blue', opacity=0.7),
             name='All pulses',
             customdata=np.arange(len(phases)),
             hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
@@ -832,6 +836,38 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
         showlegend=True
     ))
 
+    # Add invisible traces with larger markers for legend display
+    if color_by == 'cluster' and cluster_labels is not None:
+        unique_labels = sorted(set(cluster_labels))
+        for label in unique_labels:
+            if label == -1:
+                color = '#808080'
+                name = 'Noise'
+            else:
+                color = CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
+                name = f'Cluster {label}'
+            # Add invisible trace with larger marker for legend
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(size=12, color=color),
+                name=name,
+                showlegend=True,
+                legendgroup=name
+            ))
+    elif color_by == 'pdtype' and cluster_labels is not None and pd_types is not None:
+        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
+            if any(pd_types.get(l, 'UNKNOWN') == pd_type for l in set(cluster_labels)):
+                color = PD_TYPE_COLORS.get(pd_type, '#000000')
+                fig.add_trace(go.Scatter(
+                    x=[None], y=[None],
+                    mode='markers',
+                    marker=dict(size=12, color=color),
+                    name=pd_type,
+                    showlegend=True,
+                    legendgroup=pd_type
+                ))
+
     title = "PRPD by Cluster" if color_by == 'cluster' else "PRPD by PD Type"
     fig.update_layout(
         title=title,
@@ -839,7 +875,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
         yaxis_title="Amplitude (V)",
         xaxis=dict(range=[0, 360]),
         showlegend=True,
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.02),
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.02, itemsizing='constant'),
         margin=dict(r=150),
         dragmode='select'  # Enable box selection by default
     )
@@ -1053,7 +1089,7 @@ def create_pca_plot(features, feature_names, cluster_labels):
                 x=pca_result[mask, 0],
                 y=pca_result[mask, 1],
                 mode='markers',
-                marker=dict(size=7, color=color, opacity=0.8),
+                marker=dict(size=5, color=color, opacity=0.7),
                 name=name,
                 customdata=original_indices,
                 hovertemplate='PC1: %{x:.3f}<br>PC2: %{y:.3f}<br>Index: %{customdata}<extra></extra>'
@@ -1063,7 +1099,7 @@ def create_pca_plot(features, feature_names, cluster_labels):
             x=pca_result[:, 0],
             y=pca_result[:, 1],
             mode='markers',
-            marker=dict(size=7, color='blue', opacity=0.8),
+            marker=dict(size=5, color='blue', opacity=0.7),
             name='All pulses'
         ))
 
@@ -5894,7 +5930,7 @@ def create_app(data_dir=DATA_DIR):
                 x=phases[unassigned_mask],
                 y=amplitudes[unassigned_mask],
                 mode='markers',
-                marker=dict(size=6, color='#cccccc', opacity=0.6),
+                marker=dict(size=4, color='#cccccc', opacity=0.6),
                 name='Unassigned',
                 customdata=unassigned_indices,
                 hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra>Unassigned</extra>'
@@ -5915,7 +5951,7 @@ def create_app(data_dir=DATA_DIR):
                         x=phases[mask],
                         y=amplitudes[mask],
                         mode='markers',
-                        marker=dict(size=7, color=cluster_colors.get(cluster_num, '#000'), opacity=0.8),
+                        marker=dict(size=5, color=cluster_colors.get(cluster_num, '#000'), opacity=0.8),
                         name=f'Cluster {cluster_num}',
                         customdata=cluster_idx_list,
                         hovertemplate=f'Phase: %{{x:.1f}}°<br>Amplitude: %{{y:.4f}} V<br>Index: %{{customdata}}<extra>Cluster {cluster_num}</extra>'
