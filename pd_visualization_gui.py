@@ -311,11 +311,8 @@ FEATURE_GROUPS = {
     'Shape': ['rise_fall_ratio', 'zero_crossing_count', 'oscillation_count']
 }
 
-# Default visible features
-DEFAULT_VISIBLE_FEATURES = [
-    'phase_angle', 'peak_amplitude_positive', 'peak_amplitude_negative',
-    'rise_time', 'energy', 'dominant_frequency'
-]
+# Default visible features (match default pulse features for consistency)
+DEFAULT_VISIBLE_FEATURES = DEFAULT_CLUSTERING_FEATURES.copy()
 
 
 def format_feature_value(name, value):
