@@ -1696,6 +1696,18 @@ def create_app(data_dir=DATA_DIR):
                                     inputStyle={'marginRight': '5px'},
                                     labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
                                 ),
+                                # Feature Weights Section
+                                html.Div([
+                                    html.Label("Feature Weights (optional):", style={'fontWeight': 'bold', 'fontSize': '12px', 'marginTop': '10px'}),
+                                    html.P("Increase importance of specific features in clustering. Format: feature:weight,feature:weight (e.g., energy:2.0,phase_angle:1.5). Default weight is 1.0.",
+                                          style={'fontSize': '11px', 'color': '#666', 'marginBottom': '5px', 'fontStyle': 'italic'}),
+                                    dcc.Input(
+                                        id='feature-weights-input',
+                                        type='text',
+                                        placeholder='e.g., energy:2.0,phase_angle:1.5,dominant_frequency:2.0',
+                                        style={'width': '100%', 'padding': '8px', 'fontSize': '12px', 'borderRadius': '4px', 'border': '1px solid #ddd'}
+                                    ),
+                                ], style={'marginTop': '10px'}),
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ], style={'marginBottom': '15px'}),
 
@@ -3351,10 +3363,11 @@ def create_app(data_dir=DATA_DIR):
          State('dataset-dropdown', 'value'),
          State('clustering-method-radio', 'value'),
          State('dbscan-eps-input', 'value'),
-         State('dbscan-auto-percentile', 'value')],
+         State('dbscan-auto-percentile', 'value'),
+         State('feature-weights-input', 'value')],
         prevent_initial_call=True
     )
-    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value, auto_percentile):
+    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value, auto_percentile, feature_weights_str):
         """Run clustering with the selected features."""
         if not n_clicks:
             raise PreventUpdate
@@ -3394,6 +3407,10 @@ def create_app(data_dir=DATA_DIR):
                 cmd.extend(['--eps', str(eps_value)])
             elif auto_percentile:
                 cmd.extend(['--auto-percentile', str(auto_percentile)])
+
+            # Add feature weights if specified
+            if feature_weights_str and feature_weights_str.strip():
+                cmd.extend(['--feature-weights', feature_weights_str.strip()])
 
             # Add input file for specific dataset
             input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
@@ -3435,9 +3452,12 @@ def create_app(data_dir=DATA_DIR):
                             eps_msg = f"eps: auto ({match.group(1)})"
                     method_info = f"Method: DBSCAN | {eps_msg}"
 
+                # Include weights info if specified
+                weights_info = f" | Weights: {feature_weights_str.strip()}" if feature_weights_str and feature_weights_str.strip() else ""
+
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
-                    html.Div(method_info, style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div(method_info + weights_info, style={'fontSize': '12px', 'color': '#666'}),
                     html.Div(f"Features: {features_str}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
@@ -3461,10 +3481,11 @@ def create_app(data_dir=DATA_DIR):
          State('dataset-dropdown', 'value'),
          State('clustering-method-radio', 'value'),
          State('dbscan-eps-input', 'value'),
-         State('dbscan-auto-percentile', 'value')],
+         State('dbscan-auto-percentile', 'value'),
+         State('feature-weights-input', 'value')],
         prevent_initial_call=True
     )
-    def recluster_main_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value, auto_percentile):
+    def recluster_main_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value, auto_percentile, feature_weights_str):
         """Run clustering with the selected pulse features from Advanced Options."""
         if not n_clicks:
             raise PreventUpdate
@@ -3505,6 +3526,10 @@ def create_app(data_dir=DATA_DIR):
             elif auto_percentile:
                 cmd.extend(['--auto-percentile', str(auto_percentile)])
 
+            # Add feature weights if specified
+            if feature_weights_str and feature_weights_str.strip():
+                cmd.extend(['--feature-weights', feature_weights_str.strip()])
+
             # Add input file for specific dataset
             input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
             if os.path.exists(input_file):
@@ -3531,10 +3556,11 @@ def create_app(data_dir=DATA_DIR):
                 subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
                 # Build method info message
+                weights_info = f" | Weights applied" if feature_weights_str and feature_weights_str.strip() else ""
                 if method == 'hdbscan':
-                    method_info = f"Method: HDBSCAN (auto-eps) | Features: {len(selected_features)}"
+                    method_info = f"Method: HDBSCAN (auto-eps) | Features: {len(selected_features)}{weights_info}"
                 elif method == 'kmeans':
-                    method_info = f"Method: K-MEANS | Features: {len(selected_features)}"
+                    method_info = f"Method: K-MEANS | Features: {len(selected_features)}{weights_info}"
                 else:
                     eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
                     # Extract auto-estimated eps from output if available
@@ -3543,7 +3569,7 @@ def create_app(data_dir=DATA_DIR):
                         match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
                         if match:
                             eps_msg = f"eps: auto ({match.group(1)})"
-                    method_info = f"Method: DBSCAN | {eps_msg} | Features: {len(selected_features)}"
+                    method_info = f"Method: DBSCAN | {eps_msg} | Features: {len(selected_features)}{weights_info}"
 
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
@@ -4048,10 +4074,11 @@ def create_app(data_dir=DATA_DIR):
         [Input('recluster-all-btn', 'n_clicks')],
         [State('pulse-features-checklist', 'value'),
          State('clustering-method-radio', 'value'),
-         State('pulse-features-per-dataset', 'data')],
+         State('pulse-features-per-dataset', 'data'),
+         State('feature-weights-input', 'value')],
         prevent_initial_call=True
     )
-    def recluster_all_datasets(n_clicks, selected_features, clustering_method, stored_features_data):
+    def recluster_all_datasets(n_clicks, selected_features, clustering_method, stored_features_data, feature_weights_str):
         """Run clustering on all datasets with the selected features."""
         if not n_clicks:
             raise PreventUpdate
@@ -4149,6 +4176,10 @@ def create_app(data_dir=DATA_DIR):
                     '--input', input_file
                 ]
 
+                # Add feature weights if specified
+                if feature_weights_str and feature_weights_str.strip():
+                    cmd.extend(['--feature-weights', feature_weights_str.strip()])
+
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
                 if result.returncode == 0:
@@ -4211,10 +4242,11 @@ def create_app(data_dir=DATA_DIR):
         else:
             summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets"
 
+        weights_info = " | Weights applied" if feature_weights_str and feature_weights_str.strip() else ""
         result_div = html.Div([
             html.Div(summary_msg,
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
-            html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
+            html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}{weights_info}", style={'fontSize': '12px', 'color': '#666'}),
             html.Details([
                 html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
                 html.Div([html.Div(d, style={'fontSize': '11px'}) for d in results_details],

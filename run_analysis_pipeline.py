@@ -4,7 +4,7 @@ PD Analysis Pipeline Runner
 
 Runs the complete partial discharge analysis pipeline:
 1. Feature extraction from waveforms
-2. Pulse clustering (DBSCAN or K-means)
+2. Pulse clustering (HDBSCAN, DBSCAN, or K-means)
 3. Cluster feature aggregation
 4. PD type classification
 5. Summary report generation
@@ -14,7 +14,7 @@ Usage:
 
 Options:
     --input-dir DIR         Directory containing data files (default: "Rugged Data Files")
-    --clustering-method     Clustering method: 'dbscan' or 'kmeans' (default: dbscan)
+    --clustering-method     Clustering method: 'hdbscan', 'dbscan', or 'kmeans' (default: hdbscan)
     --n-clusters N          Number of clusters for K-means (default: 5)
     --polarity-method       Method for polarity calculation (default: peak)
                             Options: peak, first_peak, integrated_charge,
@@ -315,9 +315,9 @@ def main():
     parser.add_argument(
         '--clustering-method',
         type=str,
-        choices=['dbscan', 'kmeans', 'both'],
-        default='dbscan',
-        help='Clustering method (default: dbscan, use "both" for both methods)'
+        choices=['hdbscan', 'dbscan', 'kmeans', 'both', 'all'],
+        default='hdbscan',
+        help='Clustering method (default: hdbscan, use "both" for dbscan+kmeans, "all" for all three)'
     )
     parser.add_argument(
         '--n-clusters',
@@ -388,6 +388,13 @@ def main():
         default=None,
         help='Comma-separated list of cluster features to use for classification (default: all)'
     )
+    parser.add_argument(
+        '--feature-weights',
+        type=str,
+        default=None,
+        help='Feature weights for clustering as feature:weight pairs, e.g., "energy:2.0,phase_angle:1.5". '
+             'Higher weights increase feature importance in clustering.'
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -397,6 +404,8 @@ def main():
     print(f"Input directory: {args.input_dir}")
     print(f"Clustering method: {args.clustering_method}")
     print(f"Polarity method: {args.polarity_method}")
+    if args.feature_weights:
+        print(f"Feature weights: {args.feature_weights}")
     print("=" * 70)
 
     # Track overall success
@@ -404,7 +413,9 @@ def main():
     steps_completed = []
 
     # Determine which clustering methods to use
-    if args.clustering_method == 'both':
+    if args.clustering_method == 'all':
+        clustering_methods = ['hdbscan', 'dbscan', 'kmeans']
+    elif args.clustering_method == 'both':
         clustering_methods = ['dbscan', 'kmeans']
     else:
         clustering_methods = [args.clustering_method]
@@ -436,7 +447,9 @@ def main():
 
             if method == 'kmeans':
                 cmd.extend(['--n-clusters', str(args.n_clusters)])
-            else:
+            elif method == 'hdbscan':
+                cmd.extend(['--min-samples', str(args.min_samples)])
+            else:  # dbscan
                 cmd.extend(['--min-samples', str(args.min_samples)])
                 if args.eps is not None:
                     cmd.extend(['--eps', str(args.eps)])
@@ -444,6 +457,10 @@ def main():
             # Add pulse features selection if specified
             if args.pulse_features:
                 cmd.extend(['--features', args.pulse_features])
+
+            # Add feature weights if specified
+            if args.feature_weights:
+                cmd.extend(['--feature-weights', args.feature_weights])
 
             if args.file:
                 # Need to specify input file with features suffix

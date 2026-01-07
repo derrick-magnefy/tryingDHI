@@ -14,6 +14,7 @@ Options:
     --eps EPS       DBSCAN epsilon parameter (default: auto)
     --min-samples N DBSCAN/HDBSCAN min_samples parameter (default: 5)
     --features      Comma-separated list of features to use (default: all)
+    --feature-weights   Feature weights as feature:weight pairs (e.g., "energy:2.0,phase_angle:1.5")
 """
 
 import numpy as np
@@ -213,7 +214,7 @@ def run_hdbscan(X_scaled, min_samples=5, min_cluster_size=None):
     return labels, info
 
 
-def save_cluster_labels(labels, output_path, feature_file, info, used_features=None):
+def save_cluster_labels(labels, output_path, feature_file, info, used_features=None, feature_weights=None):
     """Save cluster labels and metadata to file."""
     with open(output_path, 'w') as f:
         # Write header with metadata
@@ -240,6 +241,11 @@ def save_cluster_labels(labels, output_path, feature_file, info, used_features=N
         if used_features:
             f.write(f"# Features_used: {','.join(used_features)}\n")
 
+        # Save feature weights if specified
+        if feature_weights:
+            weights_str = ','.join([f"{k}:{v}" for k, v in feature_weights.items()])
+            f.write(f"# Feature_weights: {weights_str}\n")
+
         f.write("#\n")
         f.write("waveform_index,cluster_label\n")
 
@@ -247,18 +253,19 @@ def save_cluster_labels(labels, output_path, feature_file, info, used_features=N
             f.write(f"{i},{label}\n")
 
 
-def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=5, auto_percentile=60, selected_features=None):
+def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=5, auto_percentile=60, selected_features=None, feature_weights=None):
     """
     Process a single features file and perform clustering.
 
     Args:
         filepath: Path to features CSV file
-        method: 'dbscan' or 'kmeans'
+        method: 'dbscan', 'hdbscan', or 'kmeans'
         n_clusters: Number of clusters for K-means
         eps: DBSCAN epsilon (auto if None)
-        min_samples: DBSCAN min_samples
+        min_samples: DBSCAN/HDBSCAN min_samples
         auto_percentile: Percentile for auto eps estimation (default 60)
         selected_features: List of feature names to use (None = all)
+        feature_weights: Dict mapping feature names to weights (default: all 1.0)
 
     Returns:
         tuple: (labels, info, output_path)
@@ -300,6 +307,24 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(features)
 
+    # Apply feature weights if specified
+    applied_weights = None
+    if feature_weights:
+        applied_weights = {}
+        weight_array = np.ones(len(used_features))
+        for i, feat_name in enumerate(used_features):
+            if feat_name in feature_weights:
+                weight_array[i] = feature_weights[feat_name]
+                applied_weights[feat_name] = feature_weights[feat_name]
+
+        # Apply weights to scaled features (multiply each column by its weight)
+        X_scaled = X_scaled * weight_array
+
+        # Show which weights were applied
+        if applied_weights:
+            weights_summary = ', '.join([f"{k}:{v}" for k, v in applied_weights.items()])
+            print(f"  Applied feature weights: {weights_summary}")
+
     # Run clustering
     if method == 'dbscan':
         print(f"  Running DBSCAN (min_samples={min_samples}, auto_percentile={auto_percentile})...")
@@ -328,7 +353,7 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
 
     # Save results
     output_path = filepath.replace('-features.csv', f'-clusters-{method}.csv')
-    save_cluster_labels(labels, output_path, filepath, info, used_features)
+    save_cluster_labels(labels, output_path, filepath, info, used_features, applied_weights)
     print(f"  Saved to: {output_path}")
 
     return labels, info, output_path
@@ -387,12 +412,32 @@ def main():
         default=None,
         help='Comma-separated list of features to use for clustering (default: all features)'
     )
+    parser.add_argument(
+        '--feature-weights',
+        type=str,
+        default=None,
+        help='Feature weights as feature:weight pairs, e.g., "energy:2.0,phase_angle:1.5". '
+             'Higher weights increase feature importance in clustering.'
+    )
     args = parser.parse_args()
 
     # Parse features list if provided
     selected_features = None
     if args.features:
         selected_features = [f.strip() for f in args.features.split(',') if f.strip()]
+
+    # Parse feature weights if provided
+    feature_weights = None
+    if args.feature_weights:
+        feature_weights = {}
+        for pair in args.feature_weights.split(','):
+            pair = pair.strip()
+            if ':' in pair:
+                feat, weight = pair.split(':', 1)
+                try:
+                    feature_weights[feat.strip()] = float(weight.strip())
+                except ValueError:
+                    print(f"Warning: Invalid weight for '{feat}', skipping")
 
     print("=" * 70)
     print("PD PULSE CLUSTERING")
@@ -410,6 +455,8 @@ def main():
         print(f"Features: {len(selected_features)} selected")
     else:
         print("Features: all")
+    if feature_weights:
+        print(f"Feature weights: {len(feature_weights)} custom weights")
     print("=" * 70)
 
     # Find files to process
@@ -435,7 +482,8 @@ def main():
                 eps=args.eps,
                 min_samples=args.min_samples,
                 auto_percentile=args.auto_percentile,
-                selected_features=selected_features
+                selected_features=selected_features,
+                feature_weights=feature_weights
             )
             results.append({
                 'file': filepath,
