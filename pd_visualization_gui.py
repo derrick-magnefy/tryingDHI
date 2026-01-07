@@ -54,6 +54,21 @@ from classify_pd_type import (
     CORONA_INTERNAL_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
 )
 
+# Import pdlib modules for direct function calls (replaces subprocess calls)
+try:
+    from pdlib.features import PDFeatureExtractor, FEATURE_NAMES as PDLIB_FEATURE_NAMES
+    from pdlib.clustering import (
+        cluster_pulses as pdlib_cluster_pulses,
+        compute_cluster_features as pdlib_compute_cluster_features,
+        HDBSCAN_AVAILABLE
+    )
+    from pdlib.classification import PDTypeClassifier as PDLibClassifier, PD_TYPES
+    from middleware.formats import RuggedLoader
+    PDLIB_AVAILABLE = True
+except ImportError as e:
+    PDLIB_AVAILABLE = False
+    print(f"pdlib not fully available: {e}. Using subprocess fallback.")
+
 # Try to import the Tektronix WFM parser
 try:
     from wfm_parser import TektronixWFMParser, load_tu_delft_timing, convert_timing_to_phase
@@ -716,6 +731,128 @@ class PDDataLoader:
             'waveforms': waveforms,
             'sample_interval': sample_interval
         }
+
+
+def run_pdlib_pipeline(data_path, prefix, method, selected_features, eps=None,
+                       min_samples=5, feature_weights=None):
+    """
+    Run clustering, aggregation, and classification using pdlib modules directly.
+
+    This replaces subprocess calls to cluster_pulses.py, aggregate_cluster_features.py,
+    and classify_pd_type.py with direct pdlib function calls.
+
+    Args:
+        data_path: Directory containing data files
+        prefix: Dataset prefix (clean, without path)
+        method: Clustering method ('dbscan', 'hdbscan', 'kmeans')
+        selected_features: List of feature names to use for clustering
+        eps: DBSCAN epsilon (None for auto)
+        min_samples: Min samples for DBSCAN/HDBSCAN
+        feature_weights: Optional dict of feature weights
+
+    Returns:
+        dict with 'success', 'message', 'n_clusters', 'n_noise', 'eps_used'
+    """
+    import pandas as pd
+
+    if not PDLIB_AVAILABLE:
+        return {'success': False, 'message': 'pdlib not available, use subprocess fallback'}
+
+    try:
+        # Load features
+        features_path = os.path.join(data_path, f"{prefix}-features.csv")
+        if not os.path.exists(features_path):
+            return {'success': False, 'message': f'Features file not found: {features_path}'}
+
+        features_df = pd.read_csv(features_path, index_col=0)
+        feature_names = list(features_df.columns)
+
+        # Select features for clustering
+        valid_features = [f for f in selected_features if f in feature_names]
+        if len(valid_features) < 2:
+            return {'success': False, 'message': 'Need at least 2 valid features'}
+
+        X = features_df[valid_features].values
+
+        # Build clustering kwargs
+        kwargs = {}
+        if method == 'kmeans':
+            kwargs['n_clusters'] = 5  # default
+        else:
+            kwargs['min_samples'] = min_samples
+            if method == 'dbscan' and eps is not None:
+                kwargs['eps'] = eps
+
+        # Run clustering
+        labels, info = pdlib_cluster_pulses(
+            X,
+            feature_names=valid_features,
+            method=method,
+            feature_weights=feature_weights,
+            **kwargs
+        )
+
+        # Save cluster results
+        cluster_path = os.path.join(data_path, f"{prefix}-clusters-{method}.csv")
+        cluster_df = pd.DataFrame({'cluster': labels})
+        cluster_df.index.name = 'pulse_id'
+        cluster_df.to_csv(cluster_path)
+
+        # Load settings for AC frequency
+        loader = RuggedLoader(data_path)
+        settings = loader.load_settings(prefix)
+        ac_frequency = settings.get('ac_frequency', 60.0)
+
+        # Compute cluster features
+        cluster_features_dict = pdlib_compute_cluster_features(
+            features_matrix=features_df.values,
+            feature_names=feature_names,
+            labels=labels,
+            trigger_times=None,
+            ac_frequency=ac_frequency
+        )
+
+        # Save cluster features
+        cluster_features_path = os.path.join(data_path, f"{prefix}-cluster-features-{method}.csv")
+        cluster_features_df = pd.DataFrame.from_dict(cluster_features_dict, orient='index')
+        cluster_features_df.index.name = 'cluster'
+        cluster_features_df.to_csv(cluster_features_path)
+
+        # Run classification
+        classifier = PDLibClassifier()
+        classifications = []
+        for cluster_label in sorted(cluster_features_dict.keys()):
+            result = classifier.classify(cluster_features_dict[cluster_label], int(cluster_label))
+            classifications.append({
+                'cluster': cluster_label,
+                'pd_type': result['pd_type'],
+                'pd_type_code': result.get('pd_type_code', PD_TYPES.get(result['pd_type'], {}).get('code', -1)),
+                'confidence': result['confidence'],
+                'n_warnings': len(result.get('warnings', []))
+            })
+
+        # Save classification results
+        pd_types_path = os.path.join(data_path, f"{prefix}-pd-types-{method}.csv")
+        pd_types_df = pd.DataFrame(classifications)
+        pd_types_df.to_csv(pd_types_path, index=False)
+
+        # Compute summary stats
+        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+        n_noise = int(np.sum(labels == -1))
+        eps_used = info.get('eps', None)
+
+        return {
+            'success': True,
+            'message': 'Pipeline completed successfully',
+            'n_clusters': n_clusters,
+            'n_noise': n_noise,
+            'eps_used': eps_used,
+            'method': method
+        }
+
+    except Exception as e:
+        import traceback
+        return {'success': False, 'message': f'Error: {str(e)}\n{traceback.format_exc()}'}
 
 
 def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by='cluster',
@@ -3398,91 +3535,93 @@ def create_app(data_dir=DATA_DIR):
         if not data_path or not clean_prefix:
             return html.Div("Could not determine dataset path", style={'color': 'red', 'padding': '10px'})
 
-        # Build the clustering command
+        # Build the clustering parameters
         features_str = ','.join(selected_features)
         method = clustering_method or 'dbscan'
 
-        import subprocess
-        import sys
+        # Parse feature weights if specified
+        feature_weights = None
+        if feature_weights_str and feature_weights_str.strip():
+            feature_weights = {}
+            for pair in feature_weights_str.strip().split(','):
+                if ':' in pair:
+                    name, weight = pair.split(':')
+                    feature_weights[name.strip()] = float(weight.strip())
+
+        # Determine eps value
+        eps = eps_value if eps_value is not None and eps_value > 0 else None
 
         try:
-            # Run clustering
-            cmd = [
-                sys.executable, 'cluster_pulses.py',
-                '--input-dir', data_path,
-                '--method', method,
-                '--features', features_str
-            ]
+            # Use pdlib directly if available, otherwise fall back to subprocess
+            if PDLIB_AVAILABLE:
+                result = run_pdlib_pipeline(
+                    data_path=data_path,
+                    prefix=clean_prefix,
+                    method=method,
+                    selected_features=selected_features,
+                    eps=eps,
+                    min_samples=5,
+                    feature_weights=feature_weights
+                )
 
-            # Add eps if specified, otherwise use auto with percentile
-            if eps_value is not None and eps_value > 0:
-                cmd.extend(['--eps', str(eps_value)])
-            elif auto_percentile:
-                cmd.extend(['--auto-percentile', str(auto_percentile)])
+                if result['success']:
+                    # Build method info message
+                    if method == 'hdbscan':
+                        method_info = "Method: HDBSCAN (auto-eps)"
+                    elif method == 'kmeans':
+                        method_info = "Method: K-MEANS"
+                    else:
+                        eps_used = result.get('eps_used')
+                        eps_msg = f"eps: {eps}" if eps else f"eps: auto ({eps_used:.4f})" if eps_used else "eps: auto"
+                        method_info = f"Method: DBSCAN | {eps_msg}"
 
-            # Add feature weights if specified
-            if feature_weights_str and feature_weights_str.strip():
-                cmd.extend(['--feature-weights', feature_weights_str.strip()])
+                    weights_info = f" | Weights: {feature_weights_str.strip()}" if feature_weights_str and feature_weights_str.strip() else ""
+                    stats_info = f"Clusters: {result['n_clusters']}, Noise: {result['n_noise']}"
 
-            # Add input file for specific dataset
-            input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
-            if os.path.exists(input_file):
-                cmd.extend(['--input', input_file])
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-
-            if result.returncode == 0:
-                # Also run aggregation and classification
-                agg_cmd = [
-                    sys.executable, 'aggregate_cluster_features.py',
-                    '--input-dir', data_path,
-                    '--method', method,
-                    '--file', clean_prefix
-                ]
-                subprocess.run(agg_cmd, capture_output=True, text=True, timeout=60)
-
-                class_cmd = [
-                    sys.executable, 'classify_pd_type.py',
-                    '--input-dir', data_path,
-                    '--method', method,
-                    '--file', clean_prefix
-                ]
-                subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
-
-                # Build method info message
-                if method == 'hdbscan':
-                    method_info = "Method: HDBSCAN (auto-eps)"
-                elif method == 'kmeans':
-                    method_info = "Method: K-MEANS"
+                    return html.Div([
+                        html.Div("✓ Reclustering complete! (pdlib)", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
+                        html.Div(method_info + weights_info, style={'fontSize': '12px', 'color': '#666'}),
+                        html.Div(stats_info, style={'fontSize': '12px', 'color': '#666'}),
+                        html.Div(f"Features: {features_str}", style={'fontSize': '12px', 'color': '#666'}),
+                        html.Div("Refresh the page or change dataset and back to see updated results.",
+                                style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
+                    ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
                 else:
-                    eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
-                    # Extract auto-estimated eps from output if available
-                    if not eps_value and result.stdout:
-                        import re
-                        match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
-                        if match:
-                            eps_msg = f"eps: auto ({match.group(1)})"
-                    method_info = f"Method: DBSCAN | {eps_msg}"
-
-                # Include weights info if specified
-                weights_info = f" | Weights: {feature_weights_str.strip()}" if feature_weights_str and feature_weights_str.strip() else ""
-
-                return html.Div([
-                    html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
-                    html.Div(method_info + weights_info, style={'fontSize': '12px', 'color': '#666'}),
-                    html.Div(f"Features: {features_str}", style={'fontSize': '12px', 'color': '#666'}),
-                    html.Div("Refresh the page or change dataset and back to see updated results.",
-                            style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
-                ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+                    return html.Div([
+                        html.Div("✗ Clustering failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
+                        html.Pre(result['message'][:500], style={'fontSize': '10px', 'color': '#666', 'whiteSpace': 'pre-wrap'})
+                    ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
             else:
-                error_msg = result.stderr[:500] if result.stderr else "Unknown error"
-                return html.Div([
-                    html.Div("✗ Clustering failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
-                    html.Pre(error_msg, style={'fontSize': '10px', 'color': '#666', 'whiteSpace': 'pre-wrap'})
-                ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
+                # Fallback to subprocess
+                import subprocess
+                import sys
 
-        except subprocess.TimeoutExpired:
-            return html.Div("Clustering timed out (>120s)", style={'color': 'red', 'padding': '10px'})
+                cmd = [
+                    sys.executable, 'cluster_pulses.py',
+                    '--input-dir', data_path,
+                    '--method', method,
+                    '--features', features_str
+                ]
+                if eps:
+                    cmd.extend(['--eps', str(eps)])
+                if feature_weights_str and feature_weights_str.strip():
+                    cmd.extend(['--feature-weights', feature_weights_str.strip()])
+
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if result.returncode == 0:
+                    # Run aggregation and classification
+                    subprocess.run([sys.executable, 'aggregate_cluster_features.py', '--input-dir', data_path, '--method', method, '--file', clean_prefix], capture_output=True, text=True, timeout=60)
+                    subprocess.run([sys.executable, 'classify_pd_type.py', '--input-dir', data_path, '--method', method, '--file', clean_prefix], capture_output=True, text=True, timeout=60)
+                    return html.Div([
+                        html.Div("✓ Reclustering complete! (subprocess)", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
+                        html.Div("Refresh the page to see updated results.", style={'fontSize': '12px', 'color': '#1976d2'})
+                    ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+                else:
+                    return html.Div([
+                        html.Div("✗ Clustering failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
+                        html.Pre(result.stderr[:500] if result.stderr else "Unknown error", style={'fontSize': '10px', 'color': '#666'})
+                    ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
+
         except Exception as e:
             return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
 
@@ -3516,88 +3655,77 @@ def create_app(data_dir=DATA_DIR):
         if not data_path or not clean_prefix:
             return html.Div("Could not determine dataset path", style={'color': 'red', 'padding': '10px'})
 
-        # Build the clustering command
+        # Build the clustering parameters
         features_str = ','.join(selected_features)
         method = clustering_method or 'dbscan'
 
-        import subprocess
-        import sys
+        # Parse feature weights if specified
+        feature_weights = None
+        if feature_weights_str and feature_weights_str.strip():
+            feature_weights = {}
+            for pair in feature_weights_str.strip().split(','):
+                if ':' in pair:
+                    name, weight = pair.split(':')
+                    feature_weights[name.strip()] = float(weight.strip())
+
+        eps = eps_value if eps_value is not None and eps_value > 0 else None
 
         try:
-            # Run clustering
-            cmd = [
-                sys.executable, 'cluster_pulses.py',
-                '--input-dir', data_path,
-                '--method', method,
-                '--features', features_str
-            ]
+            if PDLIB_AVAILABLE:
+                result = run_pdlib_pipeline(
+                    data_path=data_path,
+                    prefix=clean_prefix,
+                    method=method,
+                    selected_features=selected_features,
+                    eps=eps,
+                    min_samples=5,
+                    feature_weights=feature_weights
+                )
 
-            # Add eps if specified, otherwise use auto with percentile
-            if eps_value is not None and eps_value > 0:
-                cmd.extend(['--eps', str(eps_value)])
-            elif auto_percentile:
-                cmd.extend(['--auto-percentile', str(auto_percentile)])
+                if result['success']:
+                    weights_info = " | Weights applied" if feature_weights else ""
+                    if method == 'hdbscan':
+                        method_info = f"Method: HDBSCAN | Features: {len(selected_features)}{weights_info}"
+                    elif method == 'kmeans':
+                        method_info = f"Method: K-MEANS | Features: {len(selected_features)}{weights_info}"
+                    else:
+                        eps_used = result.get('eps_used')
+                        eps_msg = f"eps: {eps}" if eps else f"eps: auto ({eps_used:.4f})" if eps_used else "eps: auto"
+                        method_info = f"Method: DBSCAN | {eps_msg} | Features: {len(selected_features)}{weights_info}"
 
-            # Add feature weights if specified
-            if feature_weights_str and feature_weights_str.strip():
-                cmd.extend(['--feature-weights', feature_weights_str.strip()])
-
-            # Add input file for specific dataset
-            input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
-            if os.path.exists(input_file):
-                cmd.extend(['--input', input_file])
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-
-            if result.returncode == 0:
-                # Also run aggregation and classification
-                agg_cmd = [
-                    sys.executable, 'aggregate_cluster_features.py',
-                    '--input-dir', data_path,
-                    '--method', method,
-                    '--file', clean_prefix
-                ]
-                subprocess.run(agg_cmd, capture_output=True, text=True, timeout=60)
-
-                class_cmd = [
-                    sys.executable, 'classify_pd_type.py',
-                    '--input-dir', data_path,
-                    '--method', method,
-                    '--file', clean_prefix
-                ]
-                subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
-
-                # Build method info message
-                weights_info = f" | Weights applied" if feature_weights_str and feature_weights_str.strip() else ""
-                if method == 'hdbscan':
-                    method_info = f"Method: HDBSCAN (auto-eps) | Features: {len(selected_features)}{weights_info}"
-                elif method == 'kmeans':
-                    method_info = f"Method: K-MEANS | Features: {len(selected_features)}{weights_info}"
+                    return html.Div([
+                        html.Div("✓ Reclustering complete! (pdlib)", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
+                        html.Div(method_info, style={'fontSize': '12px', 'color': '#666'}),
+                        html.Div(f"Clusters: {result['n_clusters']}, Noise: {result['n_noise']}", style={'fontSize': '12px', 'color': '#666'}),
+                        html.Div("Refresh the page or change dataset and back to see updated results.",
+                                style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
+                    ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
                 else:
-                    eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
-                    # Extract auto-estimated eps from output if available
-                    if not eps_value and result.stdout:
-                        import re
-                        match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
-                        if match:
-                            eps_msg = f"eps: auto ({match.group(1)})"
-                    method_info = f"Method: DBSCAN | {eps_msg} | Features: {len(selected_features)}{weights_info}"
-
-                return html.Div([
-                    html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
-                    html.Div(method_info, style={'fontSize': '12px', 'color': '#666'}),
-                    html.Div("Refresh the page or change dataset and back to see updated results.",
-                            style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
-                ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+                    return html.Div([
+                        html.Div("✗ Clustering failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
+                        html.Pre(result['message'][:500], style={'fontSize': '10px', 'color': '#666', 'whiteSpace': 'pre-wrap'})
+                    ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
             else:
-                error_msg = result.stderr[:500] if result.stderr else "Unknown error"
-                return html.Div([
-                    html.Div("✗ Clustering failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
-                    html.Pre(error_msg, style={'fontSize': '10px', 'color': '#666', 'whiteSpace': 'pre-wrap'})
-                ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
+                # Subprocess fallback
+                import subprocess
+                import sys
+                cmd = [sys.executable, 'cluster_pulses.py', '--input-dir', data_path, '--method', method, '--features', features_str]
+                if eps:
+                    cmd.extend(['--eps', str(eps)])
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if result.returncode == 0:
+                    subprocess.run([sys.executable, 'aggregate_cluster_features.py', '--input-dir', data_path, '--method', method, '--file', clean_prefix], capture_output=True, text=True, timeout=60)
+                    subprocess.run([sys.executable, 'classify_pd_type.py', '--input-dir', data_path, '--method', method, '--file', clean_prefix], capture_output=True, text=True, timeout=60)
+                    return html.Div([
+                        html.Div("✓ Reclustering complete! (subprocess)", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
+                        html.Div("Refresh the page to see results.", style={'fontSize': '12px', 'color': '#1976d2'})
+                    ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+                else:
+                    return html.Div([
+                        html.Div("✗ Clustering failed", style={'color': '#d32f2f', 'fontWeight': 'bold'}),
+                        html.Pre(result.stderr[:500] if result.stderr else "Unknown error", style={'fontSize': '10px', 'color': '#666'})
+                    ], style={'padding': '10px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'})
 
-        except subprocess.TimeoutExpired:
-            return html.Div("Clustering timed out (>120s)", style={'color': 'red', 'padding': '10px'})
         except Exception as e:
             return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
 
@@ -4179,39 +4307,48 @@ def create_app(data_dir=DATA_DIR):
                         results_details.append(f"✗ {dataset}: Feature extraction error: {str(e)[:50]}")
                         continue
 
-                # Run clustering
-                cmd = [
-                    sys.executable, 'cluster_pulses.py',
-                    '--input-dir', data_path,
-                    '--method', method,
-                    '--features', features_str,
-                    '--input', input_file
-                ]
-
-                # Add feature weights if specified
+                # Parse feature weights
+                feature_weights = None
                 if feature_weights_str and feature_weights_str.strip():
-                    cmd.extend(['--feature-weights', feature_weights_str.strip()])
+                    feature_weights = {}
+                    for pair in feature_weights_str.strip().split(','):
+                        if ':' in pair:
+                            name, weight = pair.split(':')
+                            feature_weights[name.strip()] = float(weight.strip())
 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-
-                if result.returncode == 0:
-                    # Also run aggregation and classification
-                    agg_cmd = [
-                        sys.executable, 'aggregate_cluster_features.py',
+                # Run clustering, aggregation, and classification
+                if PDLIB_AVAILABLE:
+                    result = run_pdlib_pipeline(
+                        data_path=data_path,
+                        prefix=clean_prefix,
+                        method=method,
+                        selected_features=selected_features,
+                        eps=None,
+                        min_samples=5,
+                        feature_weights=feature_weights
+                    )
+                    pipeline_success = result['success']
+                    error_msg = result.get('message', '')
+                else:
+                    # Subprocess fallback
+                    cmd = [
+                        sys.executable, 'cluster_pulses.py',
                         '--input-dir', data_path,
                         '--method', method,
-                        '--file', clean_prefix
+                        '--features', features_str,
+                        '--input', input_file
                     ]
-                    subprocess.run(agg_cmd, capture_output=True, text=True, timeout=60)
+                    if feature_weights_str and feature_weights_str.strip():
+                        cmd.extend(['--feature-weights', feature_weights_str.strip()])
 
-                    class_cmd = [
-                        sys.executable, 'classify_pd_type.py',
-                        '--input-dir', data_path,
-                        '--method', method,
-                        '--file', clean_prefix
-                    ]
-                    subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    if result.returncode == 0:
+                        subprocess.run([sys.executable, 'aggregate_cluster_features.py', '--input-dir', data_path, '--method', method, '--file', clean_prefix], capture_output=True, text=True, timeout=60)
+                        subprocess.run([sys.executable, 'classify_pd_type.py', '--input-dir', data_path, '--method', method, '--file', clean_prefix], capture_output=True, text=True, timeout=60)
+                    pipeline_success = result.returncode == 0
+                    error_msg = result.stderr if hasattr(result, 'stderr') else ''
 
+                if pipeline_success:
                     success_count += 1
                     # Update re-extraction entry to show success, or add new success entry
                     updated = False
@@ -4225,10 +4362,10 @@ def create_app(data_dir=DATA_DIR):
                 else:
                     fail_count += 1
                     error_hint = ""
-                    if result.stderr:
-                        if "No valid features" in result.stderr:
+                    if error_msg:
+                        if "No valid features" in error_msg or "Need at least" in error_msg:
                             error_hint = " (no valid features found)"
-                        elif "not found" in result.stderr.lower():
+                        elif "not found" in error_msg.lower():
                             error_hint = " (features not in file)"
                     results_details.append(f"✗ {dataset}: Clustering failed{error_hint}")
 
