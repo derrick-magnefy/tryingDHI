@@ -682,9 +682,9 @@ def main():
     parser.add_argument(
         '--method',
         type=str,
-        choices=['dbscan', 'kmeans'],
-        default='dbscan',
-        help='Clustering method used (default: dbscan)'
+        choices=['dbscan', 'kmeans', 'hdbscan'],
+        default='hdbscan',
+        help='Clustering method used (default: hdbscan)'
     )
     parser.add_argument(
         '--file',
