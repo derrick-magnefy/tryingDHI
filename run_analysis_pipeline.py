@@ -35,6 +35,16 @@ from datetime import datetime
 import numpy as np
 from polarity_methods import POLARITY_METHODS, DEFAULT_POLARITY_METHOD
 
+# Load default features from config
+try:
+    from config.loader import ConfigLoader
+    _config = ConfigLoader()
+    _features_config = _config.get_features()
+    DEFAULT_CLUSTERING_FEATURES = _features_config.get('pulse_features', {}).get('default_clustering', [])
+except Exception:
+    # Fallback if config not available
+    DEFAULT_CLUSTERING_FEATURES = []
+
 DATA_DIR = "Rugged Data Files"
 
 
@@ -380,7 +390,9 @@ def main():
         '--pulse-features',
         type=str,
         default=None,
-        help='Comma-separated list of pulse features to use for clustering (default: all)'
+        help='Comma-separated list of pulse features to use for clustering. '
+             f'Default from config/defaults/features.yaml: {len(DEFAULT_CLUSTERING_FEATURES)} features '
+             '(use "all" for all features)'
     )
     parser.add_argument(
         '--cluster-features',
@@ -404,6 +416,15 @@ def main():
     print(f"Input directory: {args.input_dir}")
     print(f"Clustering method: {args.clustering_method}")
     print(f"Polarity method: {args.polarity_method}")
+    # Show pulse features being used for clustering
+    if args.pulse_features and args.pulse_features.lower() == 'all':
+        print(f"Pulse features: ALL")
+    elif args.pulse_features:
+        print(f"Pulse features: {args.pulse_features}")
+    elif DEFAULT_CLUSTERING_FEATURES:
+        print(f"Pulse features: {len(DEFAULT_CLUSTERING_FEATURES)} from config (default)")
+    else:
+        print(f"Pulse features: ALL (no config default)")
     if args.feature_weights:
         print(f"Feature weights: {args.feature_weights}")
     print("=" * 70)
@@ -454,9 +475,13 @@ def main():
                 if args.eps is not None:
                     cmd.extend(['--eps', str(args.eps)])
 
-            # Add pulse features selection if specified
-            if args.pulse_features:
+            # Add pulse features selection
+            # Use default from config unless explicitly overridden or set to "all"
+            if args.pulse_features and args.pulse_features.lower() != 'all':
                 cmd.extend(['--features', args.pulse_features])
+            elif args.pulse_features is None and DEFAULT_CLUSTERING_FEATURES:
+                # Use default features from config
+                cmd.extend(['--features', ','.join(DEFAULT_CLUSTERING_FEATURES)])
 
             # Add feature weights if specified
             if args.feature_weights:

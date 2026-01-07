@@ -134,8 +134,20 @@ PULSE_FEATURES = [
     'norm_oscillation_rate',
 ]
 
-# Default pulse features for clustering (all features selected by default)
-DEFAULT_CLUSTERING_FEATURES = PULSE_FEATURES.copy()
+# Load default clustering features from config
+# Falls back to all features if config is unavailable
+try:
+    from config.loader import ConfigLoader
+    _config = ConfigLoader()
+    _features_config = _config.get_features()
+    _default_from_config = _features_config.get('pulse_features', {}).get('default_clustering', [])
+    # Validate that all features in config exist in PULSE_FEATURES
+    DEFAULT_CLUSTERING_FEATURES = [f for f in _default_from_config if f in PULSE_FEATURES]
+    if not DEFAULT_CLUSTERING_FEATURES:
+        DEFAULT_CLUSTERING_FEATURES = PULSE_FEATURES.copy()
+except Exception:
+    # Fallback to all features if config not available
+    DEFAULT_CLUSTERING_FEATURES = PULSE_FEATURES.copy()
 
 # Cluster-level aggregated features (from aggregate_cluster_features.py)
 CLUSTER_FEATURES = [

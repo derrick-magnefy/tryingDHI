@@ -64,11 +64,14 @@ pulse_features:
     - norm_oscillation_rate
 
   # Default features for clustering (subset that works well)
+  # NOTE: This list is used by both the GUI and run_analysis_pipeline.py
+  # Excluding phase_angle by default as it can dominate clustering results
   default_clustering:
-    - phase_angle
     - absolute_amplitude
     - rise_time
     - fall_time
+    - pulse_width
+    - slew_rate
     - energy
     - dominant_frequency
     - spectral_power_low
@@ -77,6 +80,7 @@ pulse_features:
     - oscillation_count
     - norm_slew_rate
     - norm_energy
+    - norm_rise_time
 
   # Default feature weights for clustering (1.0 = normal weight)
   default_weights:
