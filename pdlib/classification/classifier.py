@@ -589,6 +589,38 @@ class PDTypeClassifier:
             internal_score += weights['secondary']
             internal_ind.append(f"crest={crest:.1f}")
 
+        # Secondary: spectral power ratio
+        spec_ratio = self._get_feature(features, 'spectral_power_ratio',
+                                       self._get_feature(features, 'mean_spectral_power_ratio', 1.0))
+        if spec_ratio > cfg.get('corona_min_spectral_ratio', 1.5):
+            corona_score += weights['secondary']
+            corona_ind.append(f"spec_ratio={spec_ratio:.2f}")
+        if cfg.get('internal_min_spectral_ratio', 0.8) <= spec_ratio <= cfg.get('internal_max_spectral_ratio', 1.5):
+            internal_score += weights['secondary']
+            internal_ind.append(f"spec_ratio={spec_ratio:.2f}")
+
+        # Secondary: normalized slew rate
+        norm_slew = self._get_feature(features, 'mean_norm_slew_rate',
+                                      self._get_feature(features, 'norm_slew_rate', 3.0))
+        if norm_slew >= cfg.get('corona_min_norm_slew_rate', 8.0):
+            corona_score += weights['secondary']
+            corona_ind.append(f"norm_slew={norm_slew:.1f}")
+        if norm_slew <= cfg.get('internal_max_norm_slew_rate', 5.0):
+            internal_score += weights['secondary']
+            internal_ind.append(f"norm_slew={norm_slew:.1f}")
+
+        # Secondary: dominant frequency
+        dom_freq = self._get_feature(features, 'mean_dominant_frequency',
+                                     self._get_feature(features, 'dominant_frequency', 8e6))
+        # Check for negative corona high frequency
+        if dom_freq >= cfg.get('corona_neg_min_dominant_freq', 1.5e7):
+            corona_score += weights['secondary']
+            corona_ind.append(f"freq={dom_freq/1e6:.1f}MHz")
+        # Check for internal frequency range
+        if cfg.get('internal_min_dominant_freq', 5e6) <= dom_freq <= cfg.get('internal_max_dominant_freq', 3e7):
+            internal_score += weights['secondary']
+            internal_ind.append(f"freq={dom_freq/1e6:.1f}MHz")
+
         # Supporting: CV
         cv = self._get_feature(features, 'coefficient_of_variation', 0.2)
         if cv < cfg['corona_max_cv']:
@@ -607,7 +639,17 @@ class PDTypeClassifier:
             internal_score += weights['supporting']
             internal_ind.append(f"q3={q3:.1f}%")
 
-        # Max score calculation
+        # Supporting: repetition rate
+        rep_rate = self._get_feature(features, 'repetition_rate',
+                                     self._get_feature(features, 'pulses_per_cycle', 50))
+        if rep_rate > cfg.get('corona_min_rep_rate', 100):
+            corona_score += weights['supporting']
+            corona_ind.append(f"rep={rep_rate:.0f}")
+        if cfg.get('internal_min_rep_rate', 20) <= rep_rate <= cfg.get('internal_max_rep_rate', 100):
+            internal_score += weights['supporting']
+            internal_ind.append(f"rep={rep_rate:.0f}")
+
+        # Max score calculation: 4 primary + 6 secondary + 3 supporting features
         max_score = 4 * weights['primary'] + 6 * weights['secondary'] + 3 * weights['supporting']
 
         return corona_score, internal_score, corona_ind, internal_ind, max_score
