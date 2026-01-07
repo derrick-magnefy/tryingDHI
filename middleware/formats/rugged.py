@@ -16,19 +16,20 @@ from typing import List, Dict, Any, Optional
 from .base import BaseLoader, DatasetInfo
 
 
-# Rugged SG.txt indices
+# Rugged SG.txt indices (based on pd_visualization_gui.py)
+# The SG file format has sample_interval at index 10, AC frequency at index 9
 SG_INDICES = {
     'threshold_negative': 0,
     'threshold_positive': 1,
     'pretrigger_samples': 2,
     'num_samples': 3,
-    'sample_interval': 4,
     'measurement_duration': 5,
     'start_timestamp': 6,
     'end_timestamp': 7,
     'total_records': 8,
     'ac_frequency': 9,
-    'voltage_channel': 10,
+    'sample_interval': 10,  # Sample interval is at index 10
+    'voltage_channel': 11,
 }
 
 
