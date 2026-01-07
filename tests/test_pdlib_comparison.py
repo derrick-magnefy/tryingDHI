@@ -94,7 +94,7 @@ def test_imports(results):
         return False
 
     try:
-        from config.loader import ConfigLoader
+        from pdlib.config.loader import ConfigLoader
         loader = ConfigLoader()
         thresholds = loader.get_thresholds()
         results.ok(f"config.loader: {len(thresholds)} threshold sections")

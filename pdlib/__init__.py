@@ -56,6 +56,16 @@ from pdlib.classification import (
     get_pd_type_code,
 )
 
+# Configuration
+from pdlib.config import (
+    ConfigLoader,
+    get_config,
+    get_thresholds,
+    get_features,
+    get_clustering,
+    get_settings,
+)
+
 __all__ = [
     # Feature extraction
     'PDFeatureExtractor',
@@ -79,4 +89,11 @@ __all__ = [
     'PD_TYPE_CODES',
     'get_pd_type_info',
     'get_pd_type_code',
+    # Configuration
+    'ConfigLoader',
+    'get_config',
+    'get_thresholds',
+    'get_features',
+    'get_clustering',
+    'get_settings',
 ]

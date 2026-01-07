@@ -152,7 +152,7 @@ PULSE_FEATURES = [
 # Load default clustering features from config
 # Falls back to all features if config is unavailable
 try:
-    from config.loader import ConfigLoader
+    from pdlib.config.loader import ConfigLoader
     _config = ConfigLoader()
     _features_config = _config.get_features()
     _default_from_config = _features_config.get('pulse_features', {}).get('default_clustering', [])

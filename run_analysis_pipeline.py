@@ -37,7 +37,7 @@ from polarity_methods import POLARITY_METHODS, DEFAULT_POLARITY_METHOD
 
 # Load default features from config
 try:
-    from config.loader import ConfigLoader
+    from pdlib.config.loader import ConfigLoader
     _config = ConfigLoader()
     _features_config = _config.get_features()
     DEFAULT_CLUSTERING_FEATURES = _features_config.get('pulse_features', {}).get('default_clustering', [])

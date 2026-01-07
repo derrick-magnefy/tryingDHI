@@ -150,12 +150,12 @@ data = loader.load('dataset_prefix')
 **Supported Formats:**
 - Rugged: -WFMs.txt, -SG.txt, -Ph.txt, -Ti.txt
 
-### config
+### pdlib.config
 
-YAML-based configuration.
+YAML-based configuration (bundled with pdlib for portability).
 
 ```python
-from config.loader import ConfigLoader
+from pdlib.config import ConfigLoader
 
 config = ConfigLoader()
 
@@ -165,11 +165,16 @@ default_clustering = features['pulse_features']['default_clustering']
 
 # Get classification thresholds
 thresholds = config.get_thresholds()
+
+# Or use convenience functions
+from pdlib.config import get_features, get_thresholds
+features = get_features()
+thresholds = get_thresholds()
 ```
 
 **Configuration Files:**
-- `config/defaults/features.yaml` - Default feature selection
-- `config/defaults/thresholds.yaml` - Classification thresholds
+- `pdlib/config/defaults/features.yaml` - Default feature selection
+- `pdlib/config/defaults/thresholds.yaml` - Classification thresholds
 
 ## Pipelines
 

@@ -453,21 +453,20 @@ tryingDHI/
 │   │   ├── algorithms.py         # DBSCAN, HDBSCAN, K-means
 │   │   ├── cluster_features.py   # Cluster aggregation
 │   │   └── definitions.py        # Cluster feature names
-│   └── classification/           # PD type classification
-│       ├── classifier.py         # PDTypeClassifier class
-│       └── pd_types.py           # PD type definitions
+│   ├── classification/           # PD type classification
+│   │   ├── classifier.py         # PDTypeClassifier class
+│   │   └── pd_types.py           # PD type definitions
+│   └── config/                   # Configuration (bundled for portability)
+│       ├── loader.py             # ConfigLoader class
+│       └── defaults/
+│           ├── features.yaml     # Default clustering features
+│           └── thresholds.yaml   # Classification thresholds
 │
 ├── middleware/                   # Data format handlers
 │   └── formats/
 │       ├── base.py               # BaseLoader interface
 │       ├── rugged.py             # Rugged format loader
 │       └── detection.py          # Auto-detect format
-│
-├── config/                       # Configuration system
-│   ├── loader.py                 # ConfigLoader class
-│   └── defaults/
-│       ├── features.yaml         # Default clustering features
-│       └── thresholds.yaml       # Classification thresholds
 │
 ├── tests/                        # Test suite
 │   ├── test_pdlib_comparison.py  # Validate pdlib vs old impl
