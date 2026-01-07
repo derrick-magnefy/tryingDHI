@@ -1216,9 +1216,9 @@ def save_classification_results(results, output_path, prefix, method):
 def generate_summary(all_results, output_path):
     """Generate a summary of all classifications."""
     summary = {
-        'NOISE': 0, 'CORONA': 0, 'INTERNAL': 0, 'SURFACE': 0, 'UNKNOWN': 0
+        'NOISE': 0, 'CORONA': 0, 'INTERNAL': 0, 'SURFACE': 0, 'NOISE_MULTIPULSE': 0, 'UNKNOWN': 0
     }
-    total_pulses = {'NOISE': 0, 'CORONA': 0, 'INTERNAL': 0, 'SURFACE': 0, 'UNKNOWN': 0}
+    total_pulses = {'NOISE': 0, 'CORONA': 0, 'INTERNAL': 0, 'SURFACE': 0, 'NOISE_MULTIPULSE': 0, 'UNKNOWN': 0}
 
     for dataset_results in all_results:
         for result in dataset_results['results']:
