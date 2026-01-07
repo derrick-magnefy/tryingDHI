@@ -115,12 +115,9 @@ def extract_features(
             polarity_method=polarity_method
         )
 
-        # Extract features
-        all_features = []
-        for i, wfm in enumerate(waveforms):
-            phase = phases[i] if phases is not None and i < len(phases) else None
-            features = extractor.extract_features(wfm, phase_angle=phase)
-            all_features.append(features)
+        # Extract features using batch mode (includes normalized features)
+        phase_list = list(phases) if phases is not None else None
+        all_features = extractor.extract_all(waveforms, phase_angles=phase_list, normalize=True)
 
         # Create DataFrame
         df = pd.DataFrame(all_features)
