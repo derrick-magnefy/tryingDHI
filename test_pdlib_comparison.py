@@ -158,7 +158,8 @@ def test_data_loading(results, data_dir, prefix):
             results.fail("First waveform data differs")
 
     # Compare settings
-    old_sample_interval = old_settings[4] if len(old_settings) > 4 else 4e-9
+    # Sample interval is at index 10, AC frequency at index 9 (see extract_features.py line 597)
+    old_sample_interval = old_settings[10] if len(old_settings) > 10 else 4e-9
     new_sample_interval = new_settings.get('sample_interval', 4e-9)
 
     if np.isclose(old_sample_interval, new_sample_interval):

@@ -103,16 +103,16 @@ class RuggedLoader(BaseLoader):
         return settings
 
     def load_phase_angles(self, prefix: str) -> Optional[np.ndarray]:
-        """Load phase angles from -Ph.txt file."""
-        filepath = os.path.join(self.data_dir, f"{prefix}-Ph.txt")
-        if not os.path.exists(filepath):
-            return None
-
-        with open(filepath, 'r') as f:
-            content = f.read().strip()
-            values = [float(v) for v in content.split('\t') if v.strip()]
-
-        return np.array(values)
+        """Load phase angles from -Ph.txt or -P.txt file."""
+        # Try both naming conventions
+        for suffix in ['-Ph.txt', '-P.txt']:
+            filepath = os.path.join(self.data_dir, f"{prefix}{suffix}")
+            if os.path.exists(filepath):
+                with open(filepath, 'r') as f:
+                    content = f.read().strip()
+                    values = [float(v) for v in content.split('\t') if v.strip()]
+                return np.array(values)
+        return None
 
     def load_trigger_times(self, prefix: str) -> Optional[np.ndarray]:
         """Load trigger timestamps from -Ti.txt file."""
