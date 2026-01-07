@@ -29,7 +29,65 @@ import warnings
 
 DATA_DIR = "Rugged Data Files"
 
-# Aggregated feature names
+# Waveform-level feature names (from extract_features.py)
+# These will be aggregated per cluster using mean and trimmed mean
+WAVEFORM_FEATURE_NAMES = [
+    'phase_angle',
+    'peak_amplitude_positive',
+    'peak_amplitude_negative',
+    'absolute_amplitude',
+    'polarity',
+    'rise_time',
+    'fall_time',
+    'pulse_width',
+    'slew_rate',
+    'energy',
+    'charge',
+    'equivalent_time',
+    'equivalent_bandwidth',
+    'cumulative_energy_peak',
+    'cumulative_energy_rise_time',
+    'cumulative_energy_shape_factor',
+    'cumulative_energy_area_ratio',
+    'dominant_frequency',
+    'center_frequency',
+    'bandwidth_3db',
+    'spectral_power_low',
+    'spectral_power_high',
+    'spectral_flatness',
+    'spectral_entropy',
+    'peak_to_peak_amplitude',
+    'rms_amplitude',
+    'crest_factor',
+    'rise_fall_ratio',
+    'zero_crossing_count',
+    'oscillation_count',
+    'energy_charge_ratio',
+    'signal_to_noise_ratio',
+    'pulse_count',
+    'is_multi_pulse',
+    'norm_absolute_amplitude',
+    'norm_peak_amplitude_positive',
+    'norm_peak_amplitude_negative',
+    'norm_peak_to_peak_amplitude',
+    'norm_rms_amplitude',
+    'norm_slew_rate',
+    'norm_energy',
+    'norm_charge',
+    'norm_rise_time',
+    'norm_fall_time',
+    'norm_equivalent_time',
+    'norm_equivalent_bandwidth',
+    'norm_cumulative_energy_rise_time',
+    'norm_pulse_width',
+    'norm_dominant_frequency',
+    'norm_center_frequency',
+    'norm_bandwidth_3db',
+    'norm_zero_crossing_rate',
+    'norm_oscillation_rate',
+]
+
+# Aggregated feature names (original PRPD-based features)
 CLUSTER_FEATURE_NAMES = [
     'pulses_per_positive_halfcycle',
     'pulses_per_negative_halfcycle',
@@ -64,7 +122,19 @@ CLUSTER_FEATURE_NAMES = [
     'variance_amplitude_negative',
     'coefficient_of_variation',
     'repetition_rate',
+    'amplitude_phase_correlation',  # How well pulse amplitudes track sinusoidal reference
 ]
+
+# Generate mean and trimmed mean feature names for all waveform features
+WAVEFORM_MEAN_FEATURE_NAMES = [f'mean_{feat}' for feat in WAVEFORM_FEATURE_NAMES]
+WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES = [f'trimmed_mean_{feat}' for feat in WAVEFORM_FEATURE_NAMES]
+
+# Combined list of all cluster feature names
+ALL_CLUSTER_FEATURE_NAMES = (
+    CLUSTER_FEATURE_NAMES +
+    WAVEFORM_MEAN_FEATURE_NAMES +
+    WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES
+)
 
 
 def load_features(filepath):
@@ -83,6 +153,73 @@ def load_features(filepath):
                 features.append(values)
 
     return np.array(features), feature_names
+
+
+def trimmed_mean(data, trim_fraction=0.1):
+    """
+    Compute the trimmed mean of data, removing the top and bottom trim_fraction.
+
+    Args:
+        data: Array of values
+        trim_fraction: Fraction to remove from each end (default 0.1 = 10% from each end = 20% total)
+
+    Returns:
+        Trimmed mean value
+    """
+    if len(data) == 0:
+        return 0.0
+
+    # Handle NaN values
+    data = np.array(data)
+    data = data[~np.isnan(data)]
+
+    if len(data) == 0:
+        return 0.0
+
+    if len(data) < 5:
+        # Not enough data to trim, just return regular mean
+        return np.mean(data)
+
+    # Use scipy's trimmed mean
+    return stats.trim_mean(data, trim_fraction)
+
+
+def compute_waveform_feature_aggregates(features_matrix, feature_names, mask):
+    """
+    Compute mean and trimmed mean for all waveform features for a cluster.
+
+    Args:
+        features_matrix: Full features matrix (n_pulses x n_features)
+        feature_names: List of feature names
+        mask: Boolean mask for pulses in this cluster
+
+    Returns:
+        dict: Dictionary with mean_<feature> and trimmed_mean_<feature> for each feature
+    """
+    aggregates = {}
+    cluster_features = features_matrix[mask]
+
+    for i, feat_name in enumerate(feature_names):
+        if feat_name in WAVEFORM_FEATURE_NAMES:
+            feat_values = cluster_features[:, i]
+
+            # Handle infinite and NaN values
+            feat_values = np.nan_to_num(feat_values, nan=0.0, posinf=0.0, neginf=0.0)
+
+            if len(feat_values) > 0:
+                aggregates[f'mean_{feat_name}'] = np.mean(feat_values)
+                aggregates[f'trimmed_mean_{feat_name}'] = trimmed_mean(feat_values, trim_fraction=0.1)
+            else:
+                aggregates[f'mean_{feat_name}'] = 0.0
+                aggregates[f'trimmed_mean_{feat_name}'] = 0.0
+
+    # Ensure all expected features are present (for features not in the file)
+    for feat_name in WAVEFORM_FEATURE_NAMES:
+        if f'mean_{feat_name}' not in aggregates:
+            aggregates[f'mean_{feat_name}'] = 0.0
+            aggregates[f'trimmed_mean_{feat_name}'] = 0.0
+
+    return aggregates
 
 
 def load_cluster_labels(filepath):
@@ -361,6 +498,38 @@ def compute_cluster_features(phases, amplitudes, trigger_times=None, ac_frequenc
         # Assume data covers multiple AC cycles
         features['repetition_rate'] = n_pulses * ac_frequency / 360.0  # Approximate
 
+    # === AMPLITUDE-PHASE CORRELATION ===
+    # Measures how well pulse amplitudes track the sinusoidal AC reference
+    # Internal PD: High correlation (amplitude ~ |sin(phase)|)
+    # Surface PD: Moderate correlation
+    # Corona: Low correlation (activity concentrated in specific phase region)
+    # Noise: No correlation (random)
+    if len(phases) > 10 and len(amplitudes) > 10:
+        # Compute expected amplitude pattern based on |sin(phase)|
+        # For Internal PD, discharges are driven by electric field which is proportional to voltage
+        phases_rad = np.deg2rad(phases)
+        expected_pattern = np.abs(np.sin(phases_rad))
+
+        # Normalize actual amplitudes to [0, 1] range
+        abs_amplitudes = np.abs(amplitudes)
+        if np.max(abs_amplitudes) > 0:
+            normalized_amplitudes = abs_amplitudes / np.max(abs_amplitudes)
+        else:
+            normalized_amplitudes = abs_amplitudes
+
+        # Compute Pearson correlation between actual and expected pattern
+        # High correlation = amplitudes track the sinusoidal reference
+        if np.std(normalized_amplitudes) > 0 and np.std(expected_pattern) > 0:
+            correlation = np.corrcoef(normalized_amplitudes, expected_pattern)[0, 1]
+            # Handle NaN
+            if np.isnan(correlation):
+                correlation = 0.0
+            features['amplitude_phase_correlation'] = correlation
+        else:
+            features['amplitude_phase_correlation'] = 0.0
+    else:
+        features['amplitude_phase_correlation'] = 0.0
+
     return features
 
 
@@ -450,12 +619,21 @@ def process_dataset(prefix, data_dir, cluster_method='dbscan'):
         label_name = "noise" if label == -1 else str(label)
         print(f"    Cluster {label_name}: {np.sum(mask)} pulses")
 
-        cluster_features[label] = compute_cluster_features(
+        # Compute PRPD-based features
+        prpd_features = compute_cluster_features(
             cluster_phases,
             cluster_amplitudes,
             cluster_times,
             ac_frequency
         )
+
+        # Compute mean and trimmed mean for all waveform features
+        waveform_aggregates = compute_waveform_feature_aggregates(
+            features, feature_names, mask
+        )
+
+        # Merge all features
+        cluster_features[label] = {**prpd_features, **waveform_aggregates}
 
     return cluster_features, cluster_metadata
 
@@ -468,10 +646,14 @@ def save_aggregated_features(cluster_features, output_path, prefix, cluster_meta
         f.write(f"# Source: {prefix}\n")
         f.write(f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"# Clustering method: {cluster_metadata.get('Method', 'unknown')}\n")
+        f.write(f"# Total features: {len(ALL_CLUSTER_FEATURE_NAMES)}\n")
+        f.write(f"# PRPD features: {len(CLUSTER_FEATURE_NAMES)}\n")
+        f.write(f"# Waveform mean features: {len(WAVEFORM_MEAN_FEATURE_NAMES)}\n")
+        f.write(f"# Waveform trimmed mean features: {len(WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES)}\n")
         f.write("#\n")
 
-        # Column header
-        header = ['cluster_label', 'n_pulses'] + CLUSTER_FEATURE_NAMES
+        # Column header - use ALL_CLUSTER_FEATURE_NAMES
+        header = ['cluster_label', 'n_pulses'] + list(ALL_CLUSTER_FEATURE_NAMES)
         f.write(','.join(header) + '\n')
 
         # Write data for each cluster
@@ -481,7 +663,9 @@ def save_aggregated_features(cluster_features, output_path, prefix, cluster_meta
             label_str = 'noise' if label == -1 else str(label)
 
             values = [label_str, str(n_pulses)]
-            values += [f'{feats[name]:.6e}' for name in CLUSTER_FEATURE_NAMES]
+            for name in ALL_CLUSTER_FEATURE_NAMES:
+                val = feats.get(name, 0.0)
+                values.append(f'{val:.6e}')
             f.write(','.join(values) + '\n')
 
 

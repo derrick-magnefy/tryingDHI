@@ -26,7 +26,7 @@ import tempfile
 import json
 
 try:
-    from dash import Dash, html, dcc, callback, Output, Input, State
+    from dash import Dash, html, dcc, callback, Output, Input, State, no_update
     from dash import ctx  # For callback context
     from dash.exceptions import PreventUpdate
     import plotly.graph_objects as go
@@ -50,8 +50,8 @@ from polarity_methods import (
 )
 from classify_pd_type import (
     PDTypeClassifier, load_cluster_features,
-    NOISE_THRESHOLDS, PHASE_CORRELATION_THRESHOLDS,
-    SYMMETRY_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
+    NOISE_THRESHOLDS, PHASE_SPREAD_THRESHOLDS, SURFACE_DETECTION_THRESHOLDS,
+    CORONA_INTERNAL_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
 )
 
 # Try to import the Tektronix WFM parser
@@ -283,11 +283,12 @@ def load_dataset_metadata(data_path, prefix):
 
 # Color schemes
 PD_TYPE_COLORS = {
-    'NOISE': '#808080',      # Gray
-    'CORONA': '#FF6B6B',     # Red
-    'INTERNAL': '#4ECDC4',   # Teal
-    'SURFACE': '#FFE66D',    # Yellow
-    'UNKNOWN': '#95A5A6',    # Light gray
+    'NOISE': '#808080',           # Gray
+    'NOISE_MULTIPULSE': '#A0522D', # Sienna (brown) - multi-pulse waveforms
+    'CORONA': '#FF6B6B',          # Red
+    'INTERNAL': '#4ECDC4',        # Teal
+    'SURFACE': '#FFE66D',         # Yellow
+    'UNKNOWN': '#95A5A6',         # Light gray
 }
 
 CLUSTER_COLORS = [
@@ -310,11 +311,8 @@ FEATURE_GROUPS = {
     'Shape': ['rise_fall_ratio', 'zero_crossing_count', 'oscillation_count']
 }
 
-# Default visible features
-DEFAULT_VISIBLE_FEATURES = [
-    'phase_angle', 'peak_amplitude_positive', 'peak_amplitude_negative',
-    'rise_time', 'energy', 'dominant_frequency'
-]
+# Default visible features (match default pulse features for consistency)
+DEFAULT_VISIBLE_FEATURES = DEFAULT_CLUSTERING_FEATURES.copy()
 
 
 def format_feature_value(name, value):
@@ -504,6 +502,47 @@ class PDDataLoader:
                         labels.append(int(parts[1]))
 
         return np.array(labels)
+
+    def load_cluster_metadata(self, prefix, method='dbscan'):
+        """Load cluster metadata (eps, min_samples, etc.) from cluster file comments."""
+        data_path = self.get_dataset_path(prefix)
+        clean_prefix = self.get_clean_prefix(prefix)
+
+        filepath = os.path.join(data_path, f"{clean_prefix}-clusters-{method}.csv")
+        if not os.path.exists(filepath):
+            return None
+
+        metadata = {}
+        with open(filepath, 'r') as f:
+            for line in f:
+                if line.startswith('#'):
+                    # Parse metadata comments like "# DBSCAN_eps: 0.9"
+                    if 'DBSCAN_eps:' in line:
+                        try:
+                            metadata['eps'] = float(line.split(':')[1].strip())
+                        except:
+                            pass
+                    elif 'DBSCAN_min_samples:' in line:
+                        try:
+                            metadata['min_samples'] = int(line.split(':')[1].strip())
+                        except:
+                            pass
+                    elif 'HDBSCAN_min_samples:' in line:
+                        try:
+                            metadata['min_samples'] = int(line.split(':')[1].strip())
+                        except:
+                            pass
+                    elif 'Method:' in line:
+                        metadata['method'] = line.split(':')[1].strip()
+                    elif 'N_clusters:' in line:
+                        try:
+                            metadata['n_clusters'] = int(line.split(':')[1].strip())
+                        except:
+                            pass
+                else:
+                    break  # Stop at first non-comment line
+
+        return metadata
 
     def load_pd_types(self, prefix, method='dbscan'):
         """Load PD type classifications."""
@@ -736,13 +775,15 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                 marker=dict(size=3, color=color, opacity=0.7),
                 name=name,
                 customdata=original_indices,
-                hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
+                hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>',
+                legendgroup=name,
+                showlegend=False  # Hide from legend, use larger marker trace instead
             ))
 
     elif color_by == 'pdtype' and cluster_labels is not None and pd_types is not None:
         pulse_types = [pd_types.get(l, 'UNKNOWN') for l in cluster_labels]
 
-        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'UNKNOWN']:
+        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
             mask = np.array([t == pd_type for t in pulse_types])
             if np.any(mask):
                 color = PD_TYPE_COLORS.get(pd_type, '#000000')
@@ -756,7 +797,9 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
                     marker=dict(size=3, color=color, opacity=0.7),
                     name=pd_type,
                     customdata=original_indices,
-                    hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>'
+                    hovertemplate='Phase: %{x:.1f}°<br>Amplitude: %{y:.4f} V<br>Index: %{customdata}<extra></extra>',
+                    legendgroup=pd_type,
+                    showlegend=False  # Hide from legend, use larger marker trace instead
                 ))
     else:
         fig.add_trace(go.Scatter(
@@ -774,6 +817,54 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
         fig.add_vline(x=phase, line_dash="dash", line_color="gray", opacity=0.3)
     fig.add_hline(y=0, line_color="gray", opacity=0.5)
 
+    # Add sinusoidal wave overlay
+    # Scale sine wave so peak/trough match the absolute maximum amplitude
+    max_abs_amplitude = np.max(np.abs(amplitudes))
+    sine_phases = np.linspace(0, 360, 361)
+    sine_values = max_abs_amplitude * np.sin(np.radians(sine_phases))
+
+    fig.add_trace(go.Scatter(
+        x=sine_phases,
+        y=sine_values,
+        mode='lines',
+        line=dict(color='rgba(100, 100, 100, 0.5)', width=2, dash='dot'),
+        name='AC Reference',
+        hoverinfo='skip',
+        showlegend=True
+    ))
+
+    # Add invisible traces with larger markers for legend display
+    if color_by == 'cluster' and cluster_labels is not None:
+        unique_labels = sorted(set(cluster_labels))
+        for label in unique_labels:
+            if label == -1:
+                color = '#808080'
+                name = 'Noise'
+            else:
+                color = CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
+                name = f'Cluster {label}'
+            # Add invisible trace with larger marker for legend
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(size=12, color=color),
+                name=name,
+                showlegend=True,
+                legendgroup=name
+            ))
+    elif color_by == 'pdtype' and cluster_labels is not None and pd_types is not None:
+        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
+            if any(pd_types.get(l, 'UNKNOWN') == pd_type for l in set(cluster_labels)):
+                color = PD_TYPE_COLORS.get(pd_type, '#000000')
+                fig.add_trace(go.Scatter(
+                    x=[None], y=[None],
+                    mode='markers',
+                    marker=dict(size=12, color=color),
+                    name=pd_type,
+                    showlegend=True,
+                    legendgroup=pd_type
+                ))
+
     title = "PRPD by Cluster" if color_by == 'cluster' else "PRPD by PD Type"
     fig.update_layout(
         title=title,
@@ -781,7 +872,7 @@ def create_prpd_plot(features, feature_names, cluster_labels, pd_types, color_by
         yaxis_title="Amplitude (V)",
         xaxis=dict(range=[0, 360]),
         showlegend=True,
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.02),
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.02, itemsizing='constant'),
         margin=dict(r=150),
         dragmode='select'  # Enable box selection by default
     )
@@ -875,7 +966,7 @@ def create_histogram(features, feature_names, cluster_labels, pd_types):
     if cluster_labels is not None and pd_types is not None:
         pulse_types = [pd_types.get(l, 'UNKNOWN') for l in cluster_labels]
 
-        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'UNKNOWN']:
+        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
             mask = np.array([t == pd_type for t in pulse_types])
             if np.any(mask):
                 color = PD_TYPE_COLORS.get(pd_type, '#000000')
@@ -933,7 +1024,7 @@ def create_stats_text(features, cluster_labels, pd_types):
             pd_type = pd_types.get(label, 'UNKNOWN')
             type_counts[pd_type] = type_counts.get(pd_type, 0) + 1
 
-        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'UNKNOWN']:
+        for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
             if pd_type in type_counts:
                 count = type_counts[pd_type]
                 pct = count / total * 100
@@ -1416,9 +1507,19 @@ def create_app(data_dir=DATA_DIR):
     loader = PDDataLoader(data_dir)
 
     app.layout = html.Div([
-        html.H1("PD Analysis Visualization", style={'textAlign': 'center'}),
+        # Header with title and view toggle
+        html.Div([
+            html.H1("Edge Processing Demo", style={'textAlign': 'center', 'display': 'inline-block', 'margin': '0'}),
+            html.Button("Toggle Detailed View", id='toggle-detailed-view-btn', n_clicks=0,
+                       style={'marginLeft': '20px', 'padding': '8px 16px', 'fontSize': '14px',
+                              'backgroundColor': '#1976d2', 'color': 'white', 'border': 'none',
+                              'borderRadius': '4px', 'cursor': 'pointer', 'verticalAlign': 'middle'}),
+        ], style={'textAlign': 'center', 'padding': '15px 0'}),
 
-        # Controls
+        # Store for view mode
+        dcc.Store(id='detailed-view-mode', data=False),
+
+        # Controls (always visible)
         html.Div([
             html.Div([
                 html.Label("Select Dataset:"),
@@ -1432,7 +1533,7 @@ def create_app(data_dir=DATA_DIR):
                 ),
             ], style={'width': '60%', 'display': 'inline-block', 'marginRight': '2%'}),
 
-            # Noise Threshold Display
+            # Noise Threshold Display (hidden in simplified view)
             html.Div([
                 html.Div([
                     html.Label("Noise Threshold:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
@@ -1441,10 +1542,20 @@ def create_app(data_dir=DATA_DIR):
                                style={'padding': '2px 8px', 'fontSize': '12px', 'cursor': 'pointer'}),
                 ], style={'display': 'flex', 'alignItems': 'center'}),
                 html.Div(id='noise-threshold-details', style={'fontSize': '11px', 'color': '#666', 'marginTop': '3px'}),
-            ], style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+            ], id='noise-threshold-container', style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
 
-        # Advanced Options (collapsible)
+        # PD Type Summary (always visible - shown prominently in simplified view)
+        html.Div([
+            html.Div(id='pd-type-summary-display', style={
+                'padding': '15px',
+                'backgroundColor': '#f0f7ff',
+                'borderRadius': '8px',
+                'border': '1px solid #1976d2'
+            })
+        ], style={'width': '90%', 'margin': '15px auto'}),
+
+        # Advanced Options (collapsible) - hidden in simplified view
         html.Div([
             html.Details([
                 html.Summary("Advanced Analysis Options", style={
@@ -1472,21 +1583,22 @@ def create_app(data_dir=DATA_DIR):
                                     dcc.RadioItems(
                                         id='clustering-method-radio',
                                         options=[
-                                            {'label': 'DBSCAN (density-based)', 'value': 'dbscan'},
-                                            {'label': 'K-Means (centroid-based)', 'value': 'kmeans'}
+                                            {'label': 'DBSCAN', 'value': 'dbscan'},
+                                            {'label': 'HDBSCAN (auto-eps)', 'value': 'hdbscan'},
+                                            {'label': 'K-Means', 'value': 'kmeans'}
                                         ],
                                         value=DEFAULT_CLUSTERING_METHOD,
                                         inline=True,
                                         style={'display': 'inline-block'},
                                         inputStyle={'marginRight': '5px'},
-                                        labelStyle={'marginRight': '20px'},
+                                        labelStyle={'marginRight': '15px'},
                                         persistence=True,
                                         persistence_type='local'
                                     ),
                                 ], style={'marginBottom': '10px'}),
                                 html.Div([
                                     html.Div([
-                                        html.Label("DBSCAN min_samples:", style={'marginRight': '10px'}),
+                                        html.Label("min_samples:", style={'marginRight': '10px'}),
                                         dcc.Input(
                                             id='dbscan-min-samples',
                                             type='number',
@@ -1495,7 +1607,37 @@ def create_app(data_dir=DATA_DIR):
                                             max=50,
                                             style={'width': '80px'}
                                         ),
-                                    ], style={'display': 'inline-block', 'marginRight': '30px'}),
+                                    ], style={'display': 'inline-block', 'marginRight': '20px'}),
+                                    html.Div([
+                                        html.Label("DBSCAN eps:", style={'marginRight': '10px'}),
+                                        dcc.Input(
+                                            id='dbscan-eps-input',
+                                            type='number',
+                                            placeholder='auto',
+                                            min=0.01,
+                                            max=10,
+                                            step=0.01,
+                                            style={'width': '70px'}
+                                        ),
+                                        html.Span(id='current-eps-display',
+                                                  style={'marginLeft': '5px', 'fontSize': '11px', 'color': '#1976d2'}),
+                                    ], style={'display': 'inline-block', 'marginRight': '10px'}),
+                                    html.Div([
+                                        html.Label("Auto %:", style={'marginRight': '5px', 'fontSize': '12px'}),
+                                        dcc.Dropdown(
+                                            id='dbscan-auto-percentile',
+                                            options=[
+                                                {'label': '50% (tight)', 'value': 50},
+                                                {'label': '60%', 'value': 60},
+                                                {'label': '70%', 'value': 70},
+                                                {'label': '80%', 'value': 80},
+                                                {'label': '90% (loose)', 'value': 90},
+                                            ],
+                                            value=60,
+                                            clearable=False,
+                                            style={'width': '105px', 'fontSize': '11px'}
+                                        ),
+                                    ], style={'display': 'inline-block', 'marginRight': '20px', 'verticalAlign': 'middle'}),
                                     html.Div([
                                         html.Label("K-Means clusters:", style={'marginRight': '10px'}),
                                         dcc.Input(
@@ -1557,9 +1699,51 @@ def create_app(data_dir=DATA_DIR):
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ], style={'marginBottom': '15px'}),
 
-                        # Row 3: Cluster Features for Classification
+                        # Cluster Decision Explanation Section
                         html.Details([
-                            html.Summary("Cluster Features (for classification)", style={
+                            html.Summary("Cluster Decision Explanation", style={
+                                'cursor': 'pointer',
+                                'fontWeight': 'bold',
+                                'padding': '8px',
+                                'backgroundColor': '#e3f2fd',
+                                'borderRadius': '4px'
+                            }),
+                            html.Div([
+                                html.Div([
+                                    dcc.Checklist(
+                                        id='show-cluster-explanation-checkbox',
+                                        options=[{'label': ' Enable cluster decision explanation', 'value': 'show'}],
+                                        value=[],
+                                        style={'display': 'inline-block', 'marginRight': '20px'}
+                                    ),
+                                    html.Button("Generate Explanation", id='generate-cluster-explanation-btn',
+                                               style={'backgroundColor': '#1976d2', 'color': 'white',
+                                                      'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold'}),
+                                ], style={'marginBottom': '10px'}),
+                                html.P("Uses a decision tree to explain how clusters were assigned based on the selected features. "
+                                       "Shows interpretable rules like 'if phase_angle > 45° and rise_time < 10ns → Cluster 0'.",
+                                       style={'color': '#666', 'fontSize': '12px', 'marginBottom': '10px', 'fontStyle': 'italic'}),
+                                dcc.Loading(
+                                    id='cluster-explanation-loading',
+                                    type='circle',
+                                    children=html.Div(id='cluster-explanation-display', style={
+                                        'fontSize': '12px',
+                                        'fontFamily': 'monospace',
+                                        'backgroundColor': '#f8f9fa',
+                                        'padding': '10px',
+                                        'borderRadius': '4px',
+                                        'maxHeight': '400px',
+                                        'overflowY': 'auto',
+                                        'whiteSpace': 'pre-wrap'
+                                    })
+                                ),
+                            ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+                        ], style={'marginBottom': '15px'}),
+
+                        # Row 3: Classification Decision Tree Thresholds
+                        html.Details([
+                            html.Summary("Classification Decision Tree", style={
                                 'cursor': 'pointer',
                                 'fontWeight': 'bold',
                                 'padding': '8px',
@@ -1568,13 +1752,9 @@ def create_app(data_dir=DATA_DIR):
                             }),
                             html.Div([
                                 html.Div([
-                                    html.Button("Select All", id='cluster-features-select-all', n_clicks=0,
+                                    html.Button("Reset to Defaults", id='threshold-reset-btn', n_clicks=0,
                                                style={'marginRight': '10px', 'padding': '5px 10px'}),
-                                    html.Button("Select None", id='cluster-features-select-none', n_clicks=0,
-                                               style={'marginRight': '10px', 'padding': '5px 10px'}),
-                                    html.Button("Reset Defaults", id='cluster-features-reset', n_clicks=0,
-                                               style={'marginRight': '20px', 'padding': '5px 10px'}),
-                                    html.Button("Reclassify with Selected", id='reclassify-btn',
+                                    html.Button("Reclassify with Thresholds", id='reclassify-btn',
                                                style={'backgroundColor': '#9c27b0', 'color': 'white',
                                                       'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
                                                       'cursor': 'pointer', 'fontWeight': 'bold', 'marginRight': '10px'}),
@@ -1583,22 +1763,453 @@ def create_app(data_dir=DATA_DIR):
                                                       'padding': '5px 15px', 'border': 'none', 'borderRadius': '4px',
                                                       'cursor': 'pointer', 'fontWeight': 'bold'}),
                                     html.Span(id='reclassify-all-progress', style={'marginLeft': '10px', 'fontStyle': 'italic', 'color': '#666'}),
-                                ], style={'marginBottom': '10px'}),
+                                ], style={'marginBottom': '15px'}),
                                 html.Div(id='reclassify-result', style={'marginBottom': '10px'}),
                                 dcc.Loading(
                                     id='reclassify-all-loading',
                                     type='circle',
                                     children=html.Div(id='reclassify-all-result', style={'marginBottom': '10px'})
                                 ),
-                                dcc.Checklist(
-                                    id='cluster-features-checklist',
-                                    options=[{'label': f, 'value': f} for f in CLUSTER_FEATURES],
-                                    value=DEFAULT_CLASSIFICATION_FEATURES,
-                                    inline=True,
-                                    style={'fontSize': '12px', 'maxHeight': '150px', 'overflowY': 'auto'},
-                                    inputStyle={'marginRight': '5px'},
-                                    labelStyle={'marginRight': '15px', 'marginBottom': '5px', 'display': 'inline-block'}
-                                ),
+
+                                # Branch 1: Noise Detection
+                                html.Details([
+                                    html.Summary("Branch 1: Noise Detection", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#ffebee', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        html.P("Score-based detection: each feature adds to noise score. Score ≥ 0.45 = NOISE",
+                                              style={'fontSize': '11px', 'color': '#666', 'marginBottom': '10px', 'fontStyle': 'italic'}),
+                                        # Spectral characteristics
+                                        html.Div([
+                                            html.Label("Min Spectral Flatness:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-spectral-flatness', type='number', value=0.7, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this = random noise, +0.15)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Min Slew Rate (V/s):", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-slew-rate', type='number', value=1e6, min=0, step=1e5,
+                                                     style={'width': '100px'}),
+                                            html.Span(" (< this = slow rise, +0.15)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Min Crest Factor:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-crest-factor', type='number', value=3.0, min=1, max=20, step=0.5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = not impulsive, +0.15)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Min Cross-Correlation:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-cross-corr-noise', type='number', value=0.3, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = inconsistent shape, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Max Oscillation Count:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-oscillation-count', type='number', value=20, min=1, max=100, step=1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this = excessive ringing, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Min SNR (dB):", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-min-snr', type='number', value=3.0, min=0, max=50, step=0.5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = poor signal quality, +0.15)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Max Coeff. of Variation:", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-cv', type='number', value=2.0, min=0.1, max=10, step=0.1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this = random amplitude, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Max Bandwidth (Hz):", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-bandwidth', type='number', value=1e6, min=0, step=1e5,
+                                                     style={'width': '100px'}),
+                                            html.Span(" (< this = narrowband EMI, +0.05)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Max Dominant Freq (Hz):", style={'width': '200px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-max-dominant-freq', type='number', value=1000, min=0, max=1e6, step=100,
+                                                     style={'width': '100px'}),
+                                            html.Span(" (< this = 60Hz hum/low-freq, +0.10)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+                                        html.Div([
+                                            html.Label("Min Pulses for Multi-pulse:", style={'width': '200px', 'display': 'inline-block', 'fontWeight': 'bold'}),
+                                            dcc.Input(id='thresh-min-pulses-multipulse', type='number', value=2, min=2, max=10, step=1,
+                                                     style={'width': '80px', 'backgroundColor': '#fff3e0'}),
+                                            html.Span(" (>= this = NOISE_MULTIPULSE)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
+                                # Branch 2: Phase Spread Check
+                                html.Details([
+                                    html.Summary("Branch 2: Phase Spread (Surface Initial)", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#e3f2fd', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        html.Div([
+                                            html.Label("Surface Phase Spread Min (deg):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-phase-spread-min', type='number', value=120, min=60, max=180, step=5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (> this = immediate SURFACE PD)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '8px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
+                                # Branch 3: Surface Detection (8 features, weighted)
+                                html.Details([
+                                    html.Summary("Branch 3: Surface Detection (8 features, weighted)", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        # Weights and minimum score
+                                        html.Div([
+                                            html.Strong("Weights & Minimum Score", style={'marginBottom': '5px', 'display': 'block'}),
+                                            html.Div([
+                                                html.Label("Primary (phase):", style={'width': '110px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-surface-primary-weight', type='number', value=4, min=1, max=10, step=1,
+                                                         style={'width': '50px'}),
+                                                html.Label("Secondary (slew,ratio,cv):", style={'width': '145px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-surface-secondary-weight', type='number', value=3, min=1, max=10, step=1,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '6px'}),
+                                            html.Div([
+                                                html.Label("Mid (crest,corr):", style={'width': '110px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-surface-mid-weight', type='number', value=2, min=1, max=10, step=1,
+                                                         style={'width': '50px'}),
+                                                html.Label("Supporting (flat,rep):", style={'width': '145px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-surface-supporting-weight', type='number', value=1, min=1, max=10, step=1,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '6px'}),
+                                            html.Div([
+                                                html.Label("Min Surface Score:", style={'width': '140px', 'display': 'inline-block', 'fontWeight': 'bold'}),
+                                                dcc.Input(id='thresh-min-surface-score', type='number', value=10, min=1, max=19, step=1,
+                                                         style={'width': '60px', 'backgroundColor': '#fff3e0'}),
+                                                html.Span(" (max=19: 4 + 3×3 + 2×2 + 1×2)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                            ], style={'marginBottom': '6px'}),
+                                        ], style={'marginBottom': '10px', 'padding': '8px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+                                        # Feature 1: Phase spread
+                                        html.Div([
+                                            html.Label("Surface Phase Spread (deg):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-phase-spread', type='number', value=120, min=60, max=180, step=5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: >120°, Corona: <100°)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        html.Div([
+                                            html.Label("Corona Phase Spread (deg):", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-corona-phase-spread', type='number', value=100, min=30, max=150, step=5,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (< this = Corona/Internal)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 2: Slew rate
+                                        html.Div([
+                                            html.Label("Surface Max Slew Rate:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-max-slew-rate', type='number', value=5e6, min=1e5, max=1e8, step=1e6,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: Low slew rate)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 3: Spectral power ratio
+                                        html.Div([
+                                            html.Label("Surface Max Spectral Power Ratio:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-max-spectral-ratio', type='number', value=0.5, min=0, max=1, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: <0.5)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 4: CV
+                                        html.Div([
+                                            html.Label("Surface Min CV:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-cv', type='number', value=0.4, min=0, max=2, step=0.05,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: >0.4)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 5: Crest factor
+                                        html.Div([
+                                            html.Label("Surface Crest Factor Range:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-crest', type='number', value=4.0, min=1, max=10, step=0.5,
+                                                     style={'width': '60px'}),
+                                            html.Span(" - ", style={'margin': '0 5px'}),
+                                            dcc.Input(id='thresh-surface-max-crest', type='number', value=6.0, min=1, max=10, step=0.5,
+                                                     style={'width': '60px'}),
+                                            html.Span(" (Surface: 4-6)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 6: Cross-correlation
+                                        html.Div([
+                                            html.Label("Surface Cross-Corr Range:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-cross-corr', type='number', value=0.4, min=0, max=1, step=0.05,
+                                                     style={'width': '60px'}),
+                                            html.Span(" - ", style={'margin': '0 5px'}),
+                                            dcc.Input(id='thresh-surface-max-cross-corr', type='number', value=0.6, min=0, max=1, step=0.05,
+                                                     style={'width': '60px'}),
+                                            html.Span(" (Surface: 0.4-0.6)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 7: Spectral flatness
+                                        html.Div([
+                                            html.Label("Surface Spectral Flatness Range:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-flatness', type='number', value=0.4, min=0, max=1, step=0.05,
+                                                     style={'width': '60px'}),
+                                            html.Span(" - ", style={'margin': '0 5px'}),
+                                            dcc.Input(id='thresh-surface-max-flatness', type='number', value=0.5, min=0, max=1, step=0.05,
+                                                     style={'width': '60px'}),
+                                            html.Span(" (Surface: 0.4-0.5)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                        # Feature 8: Rep rate variance
+                                        html.Div([
+                                            html.Label("Surface Min Rep Rate Variance:", style={'width': '220px', 'display': 'inline-block'}),
+                                            dcc.Input(id='thresh-surface-min-rep-var', type='number', value=0.5, min=0, max=2, step=0.1,
+                                                     style={'width': '80px'}),
+                                            html.Span(" (Surface: High variance)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                        ], style={'marginBottom': '6px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
+                                # Branch 4: Corona vs Internal (Score-based)
+                                html.Details([
+                                    html.Summary("Branch 4: Corona vs Internal (Score-based)", style={
+                                        'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                                        'padding': '5px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'
+                                    }),
+                                    html.Div([
+                                        # Weights and minimum scores
+                                        html.Div([
+                                            html.Strong("Weights & Minimum Scores", style={'marginBottom': '5px', 'display': 'block'}),
+                                            html.Div([
+                                                html.Label("Primary Weight:", style={'width': '140px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-primary-weight', type='number', value=4, min=1, max=10, step=1,
+                                                         style={'width': '60px'}),
+                                                html.Label("Secondary:", style={'width': '80px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-secondary-weight', type='number', value=2, min=1, max=10, step=1,
+                                                         style={'width': '60px'}),
+                                                html.Label("Supporting:", style={'width': '80px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-supporting-weight', type='number', value=1, min=1, max=10, step=1,
+                                                         style={'width': '60px'}),
+                                            ], style={'marginBottom': '6px'}),
+                                            html.Div([
+                                                html.Label("Min Corona Score:", style={'width': '140px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-min-corona-score', type='number', value=12, min=1, max=28, step=1,
+                                                         style={'width': '60px', 'backgroundColor': '#fff3e0'}),
+                                                html.Label("Min Internal:", style={'width': '100px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-min-internal-score', type='number', value=12, min=1, max=28, step=1,
+                                                         style={'width': '60px', 'backgroundColor': '#e8f5e9'}),
+                                                html.Span(" (max=31)", style={'color': '#666', 'fontSize': '11px', 'marginLeft': '10px'})
+                                            ], style={'marginBottom': '6px'}),
+                                        ], style={'marginBottom': '10px', 'padding': '8px', 'backgroundColor': '#fff3e0', 'borderRadius': '4px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+
+                                        # PRIMARY FEATURES (Weight: 4)
+                                        html.Div([
+                                            html.Strong("PRIMARY Features (Weight: 4)", style={'color': '#d32f2f', 'marginBottom': '5px', 'display': 'block'}),
+                                            # 1. discharge_asymmetry
+                                            html.Div("1. discharge_asymmetry", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-max-asymmetry', type='number', value=-0.4, min=-1, max=0, step=0.05,
+                                                         style={'width': '70px'}),
+                                                html.Span(" (< this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-asymmetry', type='number', value=-0.3, min=-1, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Span(" to ", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-asymmetry', type='number', value=0.3, min=-1, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 2. phase_of_max_activity
+                                            html.Div("2. phase_of_max_activity (degrees)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona:", style={'width': '60px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-phase-min', type='number', value=200, min=0, max=360, step=5,
+                                                         style={'width': '60px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-corona-phase-max', type='number', value=250, min=0, max=360, step=5,
+                                                         style={'width': '60px'}),
+                                                html.Label("Int Q1:", style={'width': '50px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-phase-q1-min', type='number', value=45, min=0, max=360, step=5,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 2px'}),
+                                                dcc.Input(id='thresh-internal-phase-q1-max', type='number', value=90, min=0, max=360, step=5,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '2px'}),
+                                            html.Div([
+                                                html.Span("", style={'width': '136px', 'display': 'inline-block'}),
+                                                html.Label("Int Q3:", style={'width': '50px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-phase-q3-min', type='number', value=225, min=0, max=360, step=5,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 2px'}),
+                                                dcc.Input(id='thresh-internal-phase-q3-max', type='number', value=270, min=0, max=360, step=5,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 3. amplitude_phase_correlation (PRIMARY)
+                                            html.Div("3. amplitude_phase_correlation", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Internal min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-internal-min-amp-phase-corr', type='number', value=0.5, min=0, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Corona max:", style={'width': '85px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-corona-max-amp-phase-corr', type='number', value=0.3, min=0, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (<= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 4. spectral_power_low (PRIMARY) - fraction of power in low frequencies
+                                            html.Div("4. spectral_power_low (strongest discriminator!)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Internal min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-internal-min-spectral-power-low', type='number', value=0.85, min=0, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Corona max:", style={'width': '85px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-corona-max-spectral-power-low', type='number', value=0.60, min=0, max=1, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (<= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                        ], style={'marginBottom': '10px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+
+                                        # SECONDARY FEATURES (Weight: 2)
+                                        html.Div([
+                                            html.Strong("SECONDARY Features (Weight: 2)", style={'color': '#f57c00', 'marginBottom': '5px', 'display': 'block'}),
+                                            # 5. slew_rate
+                                            html.Div("5. slew_rate (V/s)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-ci-corona-min-slew', type='number', value=5e7, min=1e6, max=1e9, step=1e7,
+                                                         style={'width': '80px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-ci-internal-min-slew', type='number', value=1e7, min=1e6, max=1e9, step=1e6,
+                                                         style={'width': '70px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-ci-internal-max-slew', type='number', value=5e7, min=1e6, max=1e9, step=1e7,
+                                                         style={'width': '70px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 6. norm_slew_rate (normalized)
+                                            html.Div("6. norm_slew_rate (normalized)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-norm-slew', type='number', value=8.0, min=0, max=50, step=0.5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Internal max:", style={'width': '85px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-max-norm-slew', type='number', value=5.0, min=0, max=20, step=0.5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (<= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 7. spectral_power_ratio
+                                            html.Div("7. spectral_power_ratio", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-ci-corona-min-spectral-ratio', type='number', value=1.5, min=0, max=5, step=0.1,
+                                                         style={'width': '70px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-ci-internal-min-spectral-ratio', type='number', value=0.8, min=0, max=5, step=0.1,
+                                                         style={'width': '60px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-ci-internal-max-spectral-ratio', type='number', value=1.5, min=0, max=5, step=0.1,
+                                                         style={'width': '60px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 8. oscillation_count (Corona HIGH, Internal LOW)
+                                            html.Div("8. oscillation_count (Corona=high ringing)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-oscillation', type='number', value=90, min=0, max=200, step=5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Internal max:", style={'width': '85px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-max-oscillation', type='number', value=90, min=0, max=200, step=5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (< this)", style={'color': '#666', 'fontSize': '10px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 9. crest_factor
+                                            html.Div("9. crest_factor", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-crest', type='number', value=7.0, min=1, max=20, step=0.5,
+                                                         style={'width': '60px'}),
+                                                html.Span(" (>= this)", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-crest', type='number', value=4.0, min=1, max=15, step=0.5,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-crest', type='number', value=6.5, min=1, max=15, step=0.5,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 10. dominant_frequency
+                                            html.Div("10. dominant_frequency (MHz)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Neg Corona:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-neg-min-freq', type='number', value=15, min=1, max=100, step=1,
+                                                         style={'width': '50px'}),
+                                                html.Span(" MHz+ ", style={'color': '#666', 'fontSize': '10px'}),
+                                                html.Label("Pos Corona:", style={'width': '80px', 'display': 'inline-block', 'marginLeft': '5px'}),
+                                                dcc.Input(id='thresh-corona-pos-min-freq', type='number', value=5, min=1, max=50, step=1,
+                                                         style={'width': '40px'}),
+                                                html.Span("-", style={'margin': '0 2px'}),
+                                                dcc.Input(id='thresh-corona-pos-max-freq', type='number', value=15, min=1, max=50, step=1,
+                                                         style={'width': '40px'}),
+                                            ], style={'marginBottom': '2px'}),
+                                            html.Div([
+                                                html.Label("Internal:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-internal-min-freq', type='number', value=5, min=1, max=50, step=1,
+                                                         style={'width': '40px'}),
+                                                html.Span("-", style={'margin': '0 2px'}),
+                                                dcc.Input(id='thresh-internal-max-freq', type='number', value=30, min=1, max=100, step=1,
+                                                         style={'width': '40px'}),
+                                                html.Span(" MHz", style={'color': '#666', 'fontSize': '10px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                        ], style={'marginBottom': '10px'}),
+                                        html.Hr(style={'margin': '10px 0'}),
+
+                                        # SUPPORTING FEATURES (Weight: 1)
+                                        html.Div([
+                                            html.Strong("SUPPORTING Features (Weight: 1)", style={'color': '#388e3c', 'marginBottom': '5px', 'display': 'block'}),
+                                            # 11. coefficient_of_variation
+                                            html.Div("11. coefficient_of_variation", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona max:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-ci-corona-max-cv', type='number', value=0.15, min=0, max=2, step=0.05,
+                                                         style={'width': '60px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-ci-internal-min-cv', type='number', value=0.15, min=0, max=2, step=0.05,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-ci-internal-max-cv', type='number', value=0.35, min=0, max=2, step=0.05,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 12. quadrant_3_percentage
+                                            html.Div("12. quadrant_3_percentage (%)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-q3-pct', type='number', value=55, min=0, max=100, step=1,
+                                                         style={'width': '60px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-q3-pct', type='number', value=35, min=0, max=100, step=1,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-q3-pct', type='number', value=50, min=0, max=100, step=1,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                            # 13. repetition_rate
+                                            html.Div("13. repetition_rate (pulses/cycle)", style={'fontWeight': 'bold', 'fontSize': '11px', 'marginTop': '5px'}),
+                                            html.Div([
+                                                html.Label("Corona min:", style={'width': '100px', 'display': 'inline-block'}),
+                                                dcc.Input(id='thresh-corona-min-rep-rate', type='number', value=100, min=0, max=1000, step=10,
+                                                         style={'width': '60px'}),
+                                                html.Label("Internal:", style={'width': '70px', 'display': 'inline-block', 'marginLeft': '10px'}),
+                                                dcc.Input(id='thresh-internal-min-rep-rate', type='number', value=20, min=0, max=500, step=5,
+                                                         style={'width': '50px'}),
+                                                html.Span("-", style={'margin': '0 3px'}),
+                                                dcc.Input(id='thresh-internal-max-rep-rate', type='number', value=100, min=0, max=500, step=10,
+                                                         style={'width': '50px'}),
+                                            ], style={'marginBottom': '4px'}),
+                                        ], style={'marginBottom': '10px'}),
+                                    ], style={'padding': '10px', 'backgroundColor': '#fff'})
+                                ], style={'marginBottom': '10px'}),
+
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ]),
 
@@ -1638,25 +2249,25 @@ def create_app(data_dir=DATA_DIR):
                     ]),
                 ], style={'padding': '15px', 'border': '1px solid #ddd', 'borderRadius': '4px', 'marginTop': '5px'})
             ])
-        ], style={'width': '90%', 'margin': '10px auto'}),
+        ], id='advanced-options-container', style={'width': '90%', 'margin': '10px auto'}),
 
-        # Re-analysis status message
+        # Re-analysis status message (hidden in simplified view)
         html.Div(id='reanalysis-status', style={
             'width': '90%', 'margin': '5px auto', 'padding': '8px',
             'textAlign': 'center', 'display': 'none'
         }),
 
-        # Statistics
+        # Statistics (hidden in simplified view)
         html.Div([
             dcc.Markdown(id='stats-text', style={'padding': '10px', 'backgroundColor': '#f0f0f0', 'borderRadius': '5px'})
-        ], style={'width': '90%', 'margin': '10px auto'}),
+        ], id='stats-container', style={'width': '90%', 'margin': '10px auto'}),
 
         # Cluster PRPD - full row
         html.Div([
             dcc.Graph(id='cluster-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
-        # Manual Cluster Definition Section - Full dedicated mode
+        # Manual Cluster Definition Section - Full dedicated mode (hidden in simplified view)
         html.Div([
             html.Div([
                 html.Button("Enter Manual Cluster Mode", id='enter-manual-mode-btn', n_clicks=0,
@@ -1666,7 +2277,7 @@ def create_app(data_dir=DATA_DIR):
                 html.Span(" Define your own clusters to discover which features best separate them",
                          style={'marginLeft': '15px', 'color': '#666', 'fontStyle': 'italic'})
             ], style={'marginBottom': '10px'}),
-        ], style={'width': '95%', 'margin': '10px auto'}),
+        ], id='manual-cluster-section', style={'width': '95%', 'margin': '10px auto'}),
 
         # Manual Cluster Mode Container (hidden by default)
         html.Div(id='manual-cluster-mode-container', children=[
@@ -1737,7 +2348,7 @@ def create_app(data_dir=DATA_DIR):
             ),
         ], style={'width': '95%', 'margin': '10px auto', 'display': 'none'}),
 
-        # Cluster details toggle and display
+        # Cluster details toggle and display (hidden in simplified view)
         html.Div([
             html.Div([
                 dcc.Checklist(
@@ -1749,29 +2360,66 @@ def create_app(data_dir=DATA_DIR):
                 html.Span("(Click on any point in the PRPD plot above to see cluster statistics and classification details)",
                          style={'color': '#666', 'fontSize': '12px', 'fontStyle': 'italic'})
             ], style={'marginBottom': '10px'}),
+
+            # Cluster feature selector (collapsible)
+            html.Details([
+                html.Summary("Select Cluster Features to Display", style={
+                    'cursor': 'pointer', 'fontWeight': 'bold', 'fontSize': '12px',
+                    'padding': '5px', 'backgroundColor': '#e3f2fd', 'borderRadius': '4px'
+                }),
+                html.Div([
+                    html.Div([
+                        html.Button("Classification Features", id='cluster-feat-select-classification', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px', 'backgroundColor': '#e3f2fd'}),
+                        html.Button("Select All Mean", id='cluster-feat-select-mean', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
+                        html.Button("Select All Trimmed Mean", id='cluster-feat-select-trimmed', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
+                        html.Button("Select PRPD Features", id='cluster-feat-select-prpd', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
+                        html.Button("Clear All", id='cluster-feat-select-none', n_clicks=0,
+                                   style={'marginRight': '5px', 'padding': '3px 8px', 'fontSize': '11px'}),
+                    ], style={'marginBottom': '10px'}),
+                    dcc.Dropdown(
+                        id='cluster-feature-selector',
+                        options=[],  # Will be populated dynamically
+                        value=['mean_absolute_amplitude', 'mean_rise_time', 'mean_phase_angle',
+                               'trimmed_mean_absolute_amplitude', 'trimmed_mean_rise_time'],
+                        multi=True,
+                        placeholder="Select features to display...",
+                        style={'fontSize': '11px'}
+                    ),
+                ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+            ], style={'marginBottom': '10px'}),
+
             html.Div(id='cluster-details-display', style={
                 'display': 'none',
                 'padding': '15px',
                 'backgroundColor': '#f8f9fa',
                 'border': '1px solid #dee2e6',
                 'borderRadius': '5px',
-                'maxHeight': '400px',
+                'maxHeight': '500px',
                 'overflowY': 'auto'
             })
-        ], style={'width': '95%', 'margin': '10px auto'}),
+        ], id='cluster-details-section', style={'width': '95%', 'margin': '10px auto'}),
 
-        # PD Type PRPD - full row
+        # PD Type PRPD - full row (always visible)
         html.Div([
             dcc.Graph(id='pdtype-prpd', style={'height': '600px'})
         ], style={'width': '95%', 'margin': 'auto'}),
 
-        # Third row: Waveform (left) and Features panel (right)
+        # Waveform viewer - full width (always visible)
         html.Div([
-            # Waveform viewer
-            html.Div([
-                dcc.Graph(id='waveform-plot', style={'height': '450px'})
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+            dcc.Graph(id='waveform-plot', style={'height': '450px'})
+        ], style={'width': '95%', 'margin': '20px auto'}),
 
+        # Phase Distribution Histogram (always visible)
+        html.Div([
+            dcc.Graph(id='histogram', style={'height': '450px'})
+        ], style={'width': '95%', 'margin': '20px auto'}),
+
+        # Detailed analysis sections (hidden in simplified view)
+        html.Div(id='detailed-analysis-container', children=[
             # Feature display area
             html.Div([
                 html.Div([
@@ -1795,16 +2443,10 @@ def create_app(data_dir=DATA_DIR):
                     'maxHeight': '350px',
                     'overflowY': 'auto'
                 })
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top',
-                      'padding': '10px', 'backgroundColor': '#fff', 'border': '1px solid #ddd', 'borderRadius': '4px'})
-        ], style={'width': '95%', 'margin': 'auto'}),
+            ], style={'width': '95%', 'margin': 'auto',
+                      'padding': '10px', 'backgroundColor': '#fff', 'border': '1px solid #ddd', 'borderRadius': '4px'}),
 
-        # Fourth row: Phase Distribution Histogram
-        html.Div([
-            dcc.Graph(id='histogram', style={'height': '450px'})
-        ], style={'width': '95%', 'margin': '20px auto'}),
-
-        # Feature Analysis Section (unified)
+            # Feature Analysis Section (unified)
         html.Div([
             html.Details([
                 html.Summary("Feature Analysis", style={
@@ -1910,12 +2552,13 @@ def create_app(data_dir=DATA_DIR):
             ], open=False)
         ], style={'width': '95%', 'margin': '20px auto', 'border': '1px solid #ddd', 'borderRadius': '4px'}),
 
-        # PCA Plot (shown only for K-means)
-        html.Div([
+            # PCA Plot (shown only for K-means)
             html.Div([
-                dcc.Graph(id='pca-plot', style={'height': '500px'})
-            ])
-        ], id='pca-container', style={'width': '95%', 'margin': '20px auto', 'display': 'none'}),
+                html.Div([
+                    dcc.Graph(id='pca-plot', style={'height': '500px'})
+                ])
+            ], id='pca-container', style={'width': '95%', 'margin': '20px auto', 'display': 'none'}),
+        ]),  # End of detailed-analysis-container
 
         # Hidden stores
         dcc.Store(id='selected-index'),
@@ -1937,6 +2580,182 @@ def create_app(data_dir=DATA_DIR):
         dcc.Store(id='manual-mode-active', data=False),  # Whether manual mode is active
     ])
 
+    # =========================================================================
+    # VIEW MODE TOGGLE CALLBACKS
+    # =========================================================================
+
+    @app.callback(
+        Output('detailed-view-mode', 'data'),
+        [Input('toggle-detailed-view-btn', 'n_clicks')],
+        [State('detailed-view-mode', 'data')],
+        prevent_initial_call=True
+    )
+    def toggle_detailed_view(n_clicks, current_mode):
+        """Toggle between detailed and simplified view."""
+        return not current_mode
+
+    @app.callback(
+        [Output('noise-threshold-container', 'style'),
+         Output('advanced-options-container', 'style'),
+         Output('stats-container', 'style'),
+         Output('manual-cluster-section', 'style'),
+         Output('cluster-details-section', 'style'),
+         Output('detailed-analysis-container', 'style'),
+         Output('toggle-detailed-view-btn', 'children')],
+        [Input('detailed-view-mode', 'data')]
+    )
+    def update_section_visibility(detailed_mode):
+        """Show/hide sections based on view mode."""
+        if detailed_mode:
+            # Detailed view - show everything
+            noise_threshold_style = {'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}
+            show_style = {'width': '90%', 'margin': '10px auto'}
+            show_95_style = {'width': '95%', 'margin': '10px auto'}
+            detailed_container_style = {}  # No display:none
+            button_text = "Simplified View"
+        else:
+            # Simplified view - hide most sections
+            hide_style = {'display': 'none'}
+            noise_threshold_style = hide_style
+            show_style = hide_style
+            show_95_style = hide_style
+            detailed_container_style = hide_style
+            button_text = "Detailed View"
+
+        return (
+            noise_threshold_style,  # noise-threshold-container
+            show_style,  # advanced-options-container
+            show_style,  # stats-container
+            show_95_style,  # manual-cluster-section
+            show_95_style,  # cluster-details-section
+            detailed_container_style,  # detailed-analysis-container
+            button_text  # toggle button text
+        )
+
+    @app.callback(
+        Output('pd-type-summary-display', 'children'),
+        [Input('current-data-store', 'data'),
+         Input('detailed-view-mode', 'data')],
+        [State('clustering-method-radio', 'value')]
+    )
+    def update_pd_type_summary(prefix, detailed_mode, clustering_method):
+        """Display summary of PD types in the dataset."""
+        if not prefix:
+            return html.Div("Select a dataset to see PD type summary", style={'color': '#666', 'fontStyle': 'italic'})
+
+        try:
+            method = clustering_method or 'dbscan'
+            pd_types_file = os.path.join(data_dir, f"{prefix}-pd-types-{method}.csv")
+
+            if not os.path.exists(pd_types_file):
+                return html.Div([
+                    html.Span("PD Type Summary: ", style={'fontWeight': 'bold'}),
+                    html.Span("Classification not yet run. Use 'Recluster' to analyze.", style={'color': '#666'})
+                ])
+
+            # Read PD types
+            type_counts = {}
+            cluster_to_type = {}  # Map cluster label to PD type
+            total_clusters = 0
+
+            with open(pd_types_file, 'r') as f:
+                for line in f:
+                    if line.startswith('#') or line.startswith('cluster_label'):
+                        continue
+                    parts = line.strip().split(',')
+                    if len(parts) >= 2:
+                        cluster_label = parts[0]
+                        pd_type = parts[1]
+                        type_counts[pd_type] = type_counts.get(pd_type, 0) + 1
+                        cluster_to_type[cluster_label] = pd_type
+                        total_clusters += 1
+
+            if total_clusters == 0:
+                return html.Div("No clusters found", style={'color': '#666'})
+
+            # Build summary display
+            summary_items = []
+
+            # Title
+            summary_items.append(html.H4("PD Type Summary", style={'marginTop': '0', 'marginBottom': '15px', 'color': '#1976d2'}))
+
+            # Type breakdown with colored badges
+            type_colors = {
+                'CORONA': '#ff9800',
+                'INTERNAL': '#4caf50',
+                'SURFACE': '#2196f3',
+                'NOISE': '#9e9e9e',
+                'NOISE_MULTIPULSE': '#A0522D',
+                'UNKNOWN': '#f44336'
+            }
+
+            type_badges = []
+            for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
+                if pd_type in type_counts:
+                    count = type_counts[pd_type]
+                    pct = count / total_clusters * 100
+                    color = type_colors.get(pd_type, '#666')
+
+                    type_badges.append(html.Div([
+                        html.Div(pd_type, style={
+                            'fontWeight': 'bold',
+                            'fontSize': '14px',
+                            'color': color
+                        }),
+                        html.Div(f"{count} cluster{'s' if count > 1 else ''}", style={
+                            'fontSize': '20px',
+                            'fontWeight': 'bold'
+                        }),
+                        html.Div(f"{pct:.1f}%", style={
+                            'fontSize': '12px',
+                            'color': '#666'
+                        })
+                    ], style={
+                        'display': 'inline-block',
+                        'textAlign': 'center',
+                        'padding': '10px 20px',
+                        'margin': '5px',
+                        'backgroundColor': '#fff',
+                        'borderRadius': '8px',
+                        'border': f'2px solid {color}',
+                        'minWidth': '100px'
+                    }))
+
+            summary_items.append(html.Div(type_badges, style={'marginBottom': '15px'}))
+
+            # Cluster-to-Classification mapping (show which clusters belong to which type)
+            summary_items.append(html.Div([
+                html.Span("Cluster → Classification: ", style={'fontWeight': 'bold', 'fontSize': '13px', 'color': '#333'})
+            ], style={'marginBottom': '8px'}))
+
+            # Group clusters by PD type for display
+            type_to_clusters = {}
+            for cluster_label, pd_type in cluster_to_type.items():
+                if pd_type not in type_to_clusters:
+                    type_to_clusters[pd_type] = []
+                type_to_clusters[pd_type].append(cluster_label)
+
+            cluster_mapping_items = []
+            for pd_type in ['CORONA', 'INTERNAL', 'SURFACE', 'NOISE', 'NOISE_MULTIPULSE', 'UNKNOWN']:
+                if pd_type in type_to_clusters:
+                    clusters = sorted(type_to_clusters[pd_type], key=lambda x: int(x) if x.lstrip('-').isdigit() else 999)
+                    color = type_colors.get(pd_type, '#666')
+                    cluster_mapping_items.append(html.Span([
+                        html.Span(f"{pd_type}: ", style={'fontWeight': 'bold', 'color': color}),
+                        html.Span(', '.join([f"C{c}" for c in clusters]), style={'color': '#444'})
+                    ], style={'marginRight': '20px', 'fontSize': '12px'}))
+
+            summary_items.append(html.Div(cluster_mapping_items, style={'marginBottom': '10px', 'lineHeight': '1.8'}))
+
+            # Total count
+            summary_items.append(html.Div(f"Total: {total_clusters} clusters analyzed",
+                                         style={'fontSize': '12px', 'color': '#666', 'marginTop': '10px'}))
+
+            return html.Div(summary_items)
+
+        except Exception as e:
+            return html.Div(f"Error loading summary: {str(e)}", style={'color': 'red'})
+
     # Callbacks for pulse features selection buttons
     @app.callback(
         Output('pulse-features-checklist', 'value'),
@@ -1956,24 +2775,149 @@ def create_app(data_dir=DATA_DIR):
             return DEFAULT_CLUSTERING_FEATURES
         return current_value
 
-    # Callbacks for cluster features selection buttons
+    # Callback to reset decision tree thresholds to defaults
     @app.callback(
-        Output('cluster-features-checklist', 'value'),
-        [Input('cluster-features-select-all', 'n_clicks'),
-         Input('cluster-features-select-none', 'n_clicks'),
-         Input('cluster-features-reset', 'n_clicks')],
-        [State('cluster-features-checklist', 'value')],
+        [# Branch 1: Noise Detection
+         Output('thresh-min-spectral-flatness', 'value'),
+         Output('thresh-min-slew-rate', 'value'),
+         Output('thresh-min-crest-factor', 'value'),
+         Output('thresh-min-cross-corr-noise', 'value'),
+         Output('thresh-max-oscillation-count', 'value'),
+         Output('thresh-min-snr', 'value'),
+         Output('thresh-max-cv', 'value'),
+         Output('thresh-max-bandwidth', 'value'),
+         Output('thresh-max-dominant-freq', 'value'),
+         Output('thresh-min-pulses-multipulse', 'value'),
+         # Branch 2: Phase Spread
+         Output('thresh-surface-phase-spread-min', 'value'),
+         # Branch 3: Surface Detection (8 features, weighted)
+         Output('thresh-surface-primary-weight', 'value'),
+         Output('thresh-surface-secondary-weight', 'value'),
+         Output('thresh-surface-mid-weight', 'value'),
+         Output('thresh-surface-supporting-weight', 'value'),
+         Output('thresh-min-surface-score', 'value'),
+         Output('thresh-surface-phase-spread', 'value'),
+         Output('thresh-corona-phase-spread', 'value'),
+         Output('thresh-surface-max-slew-rate', 'value'),
+         Output('thresh-surface-max-spectral-ratio', 'value'),
+         Output('thresh-surface-min-cv', 'value'),
+         Output('thresh-surface-min-crest', 'value'),
+         Output('thresh-surface-max-crest', 'value'),
+         Output('thresh-surface-min-cross-corr', 'value'),
+         Output('thresh-surface-max-cross-corr', 'value'),
+         Output('thresh-surface-min-flatness', 'value'),
+         Output('thresh-surface-max-flatness', 'value'),
+         Output('thresh-surface-min-rep-var', 'value'),
+         # Branch 4: Corona vs Internal - Weights and Scores
+         Output('thresh-primary-weight', 'value'),
+         Output('thresh-secondary-weight', 'value'),
+         Output('thresh-supporting-weight', 'value'),
+         Output('thresh-min-corona-score', 'value'),
+         Output('thresh-min-internal-score', 'value'),
+         # Branch 4: Primary features
+         Output('thresh-corona-max-asymmetry', 'value'),
+         Output('thresh-internal-min-asymmetry', 'value'),
+         Output('thresh-internal-max-asymmetry', 'value'),
+         Output('thresh-corona-phase-min', 'value'),
+         Output('thresh-corona-phase-max', 'value'),
+         Output('thresh-internal-phase-q1-min', 'value'),
+         Output('thresh-internal-phase-q1-max', 'value'),
+         Output('thresh-internal-phase-q3-min', 'value'),
+         Output('thresh-internal-phase-q3-max', 'value'),
+         # Branch 4: Secondary features
+         Output('thresh-ci-corona-min-slew', 'value'),
+         Output('thresh-ci-internal-min-slew', 'value'),
+         Output('thresh-ci-internal-max-slew', 'value'),
+         Output('thresh-ci-corona-min-spectral-ratio', 'value'),
+         Output('thresh-ci-internal-min-spectral-ratio', 'value'),
+         Output('thresh-ci-internal-max-spectral-ratio', 'value'),
+         Output('thresh-corona-min-q3-pct', 'value'),
+         Output('thresh-internal-min-q3-pct', 'value'),
+         Output('thresh-internal-max-q3-pct', 'value'),
+         Output('thresh-corona-max-oscillation', 'value'),
+         Output('thresh-internal-min-oscillation', 'value'),
+         Output('thresh-internal-max-oscillation', 'value'),
+         # Branch 4: Supporting features
+         Output('thresh-ci-corona-max-cv', 'value'),
+         Output('thresh-ci-internal-min-cv', 'value'),
+         Output('thresh-ci-internal-max-cv', 'value'),
+         Output('thresh-corona-min-rep-rate', 'value'),
+         Output('thresh-internal-min-rep-rate', 'value'),
+         Output('thresh-internal-max-rep-rate', 'value')],
+        [Input('threshold-reset-btn', 'n_clicks')],
         prevent_initial_call=True
     )
-    def update_cluster_features(select_all, select_none, reset, current_value):
-        triggered = ctx.triggered_id
-        if triggered == 'cluster-features-select-all':
-            return CLUSTER_FEATURES
-        elif triggered == 'cluster-features-select-none':
-            return []
-        elif triggered == 'cluster-features-reset':
-            return DEFAULT_CLASSIFICATION_FEATURES
-        return current_value
+    def reset_thresholds(n_clicks):
+        """Reset all threshold inputs to default values."""
+        return (
+            # Branch 1: Noise Detection
+            0.7,   # min_spectral_flatness
+            1e6,   # min_slew_rate
+            3.0,   # min_crest_factor
+            0.3,   # min_cross_corr_noise
+            20,    # max_oscillation_count
+            3.0,   # min_snr
+            2.0,   # max_cv
+            1e6,   # max_bandwidth
+            1000,  # max_dominant_freq
+            2,     # min_pulses_multipulse
+            # Branch 2: Phase Spread
+            120,   # surface_phase_spread_min
+            # Branch 3: Surface Detection (8 features, weighted)
+            4,     # surface_primary_weight
+            3,     # surface_secondary_weight
+            2,     # surface_mid_weight
+            1,     # surface_supporting_weight
+            10,    # min_surface_score
+            120,   # surface_phase_spread
+            100,   # corona_phase_spread
+            5e6,   # surface_max_slew_rate
+            0.5,   # surface_max_spectral_ratio
+            0.4,   # surface_min_cv
+            4.0,   # surface_min_crest
+            6.0,   # surface_max_crest
+            0.4,   # surface_min_cross_corr
+            0.6,   # surface_max_cross_corr
+            0.4,   # surface_min_flatness
+            0.5,   # surface_max_flatness
+            0.5,   # surface_min_rep_var
+            # Branch 4: Corona vs Internal - Weights and Scores
+            4,     # primary_weight
+            2,     # secondary_weight
+            1,     # supporting_weight
+            12,    # min_corona_score
+            12,    # min_internal_score
+            # Branch 4: Primary features
+            -0.4,  # corona_max_asymmetry
+            -0.3,  # internal_min_asymmetry
+            0.3,   # internal_max_asymmetry
+            200,   # corona_phase_min
+            250,   # corona_phase_max
+            45,    # internal_phase_q1_min
+            90,    # internal_phase_q1_max
+            225,   # internal_phase_q3_min
+            270,   # internal_phase_q3_max
+            # Branch 4: Secondary features
+            5e7,   # ci_corona_min_slew
+            1e7,   # ci_internal_min_slew
+            5e7,   # ci_internal_max_slew
+            1.5,   # ci_corona_min_spectral_ratio
+            0.8,   # ci_internal_min_spectral_ratio
+            1.5,   # ci_internal_max_spectral_ratio
+            55,    # corona_min_q3_pct
+            35,    # internal_min_q3_pct
+            50,    # internal_max_q3_pct
+            3,     # corona_max_oscillation
+            3,     # internal_min_oscillation
+            8,     # internal_max_oscillation
+            # Branch 4: Supporting features
+            0.15,  # ci_corona_max_cv
+            0.15,  # ci_internal_min_cv
+            0.35,  # ci_internal_max_cv
+            100,   # corona_min_rep_rate
+            20,    # internal_min_rep_rate
+            100,   # internal_max_rep_rate
+        )
 
     # Save pulse features to per-dataset store when they change
     @app.callback(
@@ -1984,21 +2928,6 @@ def create_app(data_dir=DATA_DIR):
         prevent_initial_call=True
     )
     def save_pulse_features_per_dataset(features, dataset, stored_data):
-        if not dataset or features is None:
-            raise PreventUpdate
-        stored_data = stored_data or {}
-        stored_data[dataset] = features
-        return stored_data
-
-    # Save cluster features to per-dataset store when they change
-    @app.callback(
-        Output('cluster-features-per-dataset', 'data'),
-        [Input('cluster-features-checklist', 'value')],
-        [State('dataset-dropdown', 'value'),
-         State('cluster-features-per-dataset', 'data')],
-        prevent_initial_call=True
-    )
-    def save_cluster_features_per_dataset(features, dataset, stored_data):
         if not dataset or features is None:
             raise PreventUpdate
         stored_data = stored_data or {}
@@ -2038,22 +2967,6 @@ def create_app(data_dir=DATA_DIR):
                     return valid_features, f"Loaded {len(valid_features)} features from last {method.upper()} clustering"
 
         # Don't change if no saved selection and no cluster file - keeps current/default selection
-        raise PreventUpdate
-
-    # Load cluster features when dataset changes
-    @app.callback(
-        Output('cluster-features-checklist', 'value', allow_duplicate=True),
-        [Input('dataset-dropdown', 'value')],
-        [State('cluster-features-per-dataset', 'data')],
-        prevent_initial_call='initial_duplicate'
-    )
-    def load_cluster_features_for_dataset(dataset, stored_data):
-        if not dataset:
-            raise PreventUpdate
-        stored_data = stored_data or {}
-        if dataset in stored_data:
-            return stored_data[dataset]
-        # Don't change if no saved selection - keeps current/default selection
         raise PreventUpdate
 
     # Load noise threshold when dataset changes
@@ -2126,6 +3039,28 @@ def create_app(data_dir=DATA_DIR):
             f"{threshold*1000:.3f} mV",
             f"Min amplitude: {min_amp*1000:.3f} mV | Samples: {n_samples} | ADC step: {ADC_STEP_V*1000:.3f} mV"
         )
+
+    # Display current eps value from last clustering
+    @app.callback(
+        Output('current-eps-display', 'children'),
+        [Input('dataset-dropdown', 'value'),
+         Input('clustering-method-radio', 'value')]
+    )
+    def update_eps_display(dataset, clustering_method):
+        """Show the current eps value from the last clustering."""
+        if not dataset:
+            return ""
+
+        method = clustering_method or 'dbscan'
+
+        # Only show eps for DBSCAN
+        if method != 'dbscan':
+            return ""
+
+        metadata = loader.load_cluster_metadata(dataset, method)
+        if metadata and 'eps' in metadata:
+            return f"(current: {metadata['eps']:.4f})"
+        return ""
 
     @app.callback(
         [Output('recommended-features-display', 'children'),
@@ -2414,10 +3349,12 @@ def create_app(data_dir=DATA_DIR):
         [Input('recluster-btn', 'n_clicks')],
         [State('manual-feature-selection', 'value'),
          State('dataset-dropdown', 'value'),
-         State('clustering-method-radio', 'value')],
+         State('clustering-method-radio', 'value'),
+         State('dbscan-eps-input', 'value'),
+         State('dbscan-auto-percentile', 'value')],
         prevent_initial_call=True
     )
-    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method):
+    def recluster_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value, auto_percentile):
         """Run clustering with the selected features."""
         if not n_clicks:
             raise PreventUpdate
@@ -2452,6 +3389,12 @@ def create_app(data_dir=DATA_DIR):
                 '--features', features_str
             ]
 
+            # Add eps if specified, otherwise use auto with percentile
+            if eps_value is not None and eps_value > 0:
+                cmd.extend(['--eps', str(eps_value)])
+            elif auto_percentile:
+                cmd.extend(['--auto-percentile', str(auto_percentile)])
+
             # Add input file for specific dataset
             input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
             if os.path.exists(input_file):
@@ -2477,9 +3420,24 @@ def create_app(data_dir=DATA_DIR):
                 ]
                 subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
+                # Build method info message
+                if method == 'hdbscan':
+                    method_info = "Method: HDBSCAN (auto-eps)"
+                elif method == 'kmeans':
+                    method_info = "Method: K-MEANS"
+                else:
+                    eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
+                    # Extract auto-estimated eps from output if available
+                    if not eps_value and result.stdout:
+                        import re
+                        match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
+                        if match:
+                            eps_msg = f"eps: auto ({match.group(1)})"
+                    method_info = f"Method: DBSCAN | {eps_msg}"
+
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
-                    html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div(method_info, style={'fontSize': '12px', 'color': '#666'}),
                     html.Div(f"Features: {features_str}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
@@ -2501,10 +3459,12 @@ def create_app(data_dir=DATA_DIR):
         [Input('recluster-main-btn', 'n_clicks')],
         [State('pulse-features-checklist', 'value'),
          State('dataset-dropdown', 'value'),
-         State('clustering-method-radio', 'value')],
+         State('clustering-method-radio', 'value'),
+         State('dbscan-eps-input', 'value'),
+         State('dbscan-auto-percentile', 'value')],
         prevent_initial_call=True
     )
-    def recluster_main_with_features(n_clicks, selected_features, prefix, clustering_method):
+    def recluster_main_with_features(n_clicks, selected_features, prefix, clustering_method, eps_value, auto_percentile):
         """Run clustering with the selected pulse features from Advanced Options."""
         if not n_clicks:
             raise PreventUpdate
@@ -2539,6 +3499,12 @@ def create_app(data_dir=DATA_DIR):
                 '--features', features_str
             ]
 
+            # Add eps if specified, otherwise use auto with percentile
+            if eps_value is not None and eps_value > 0:
+                cmd.extend(['--eps', str(eps_value)])
+            elif auto_percentile:
+                cmd.extend(['--auto-percentile', str(auto_percentile)])
+
             # Add input file for specific dataset
             input_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
             if os.path.exists(input_file):
@@ -2564,9 +3530,24 @@ def create_app(data_dir=DATA_DIR):
                 ]
                 subprocess.run(class_cmd, capture_output=True, text=True, timeout=60)
 
+                # Build method info message
+                if method == 'hdbscan':
+                    method_info = f"Method: HDBSCAN (auto-eps) | Features: {len(selected_features)}"
+                elif method == 'kmeans':
+                    method_info = f"Method: K-MEANS | Features: {len(selected_features)}"
+                else:
+                    eps_msg = f"eps: {eps_value}" if eps_value else "eps: auto"
+                    # Extract auto-estimated eps from output if available
+                    if not eps_value and result.stdout:
+                        import re
+                        match = re.search(r'Auto-estimated eps: ([\d.]+)', result.stdout)
+                        if match:
+                            eps_msg = f"eps: auto ({match.group(1)})"
+                    method_info = f"Method: DBSCAN | {eps_msg} | Features: {len(selected_features)}"
+
                 return html.Div([
                     html.Div("✓ Reclustering complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
-                    html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
+                    html.Div(method_info, style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
                 ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
@@ -2585,19 +3566,107 @@ def create_app(data_dir=DATA_DIR):
     @app.callback(
         Output('reclassify-result', 'children'),
         [Input('reclassify-btn', 'n_clicks')],
-        [State('cluster-features-checklist', 'value'),
-         State('dataset-dropdown', 'value'),
-         State('clustering-method-radio', 'value')],
+        [State('dataset-dropdown', 'value'),
+         State('clustering-method-radio', 'value'),
+         # Branch 1: Noise Detection
+         State('thresh-min-spectral-flatness', 'value'),
+         State('thresh-min-slew-rate', 'value'),
+         State('thresh-min-crest-factor', 'value'),
+         State('thresh-min-cross-corr-noise', 'value'),
+         State('thresh-max-oscillation-count', 'value'),
+         State('thresh-min-snr', 'value'),
+         State('thresh-max-cv', 'value'),
+         State('thresh-max-bandwidth', 'value'),
+         State('thresh-max-dominant-freq', 'value'),
+         State('thresh-min-pulses-multipulse', 'value'),
+         # Branch 2: Phase Spread
+         State('thresh-surface-phase-spread-min', 'value'),
+         # Branch 3: Surface Detection (8 features, weighted)
+         State('thresh-surface-primary-weight', 'value'),
+         State('thresh-surface-secondary-weight', 'value'),
+         State('thresh-surface-mid-weight', 'value'),
+         State('thresh-surface-supporting-weight', 'value'),
+         State('thresh-min-surface-score', 'value'),
+         State('thresh-surface-phase-spread', 'value'),
+         State('thresh-corona-phase-spread', 'value'),
+         State('thresh-surface-max-slew-rate', 'value'),
+         State('thresh-surface-max-spectral-ratio', 'value'),
+         State('thresh-surface-min-cv', 'value'),
+         State('thresh-surface-min-crest', 'value'),
+         State('thresh-surface-max-crest', 'value'),
+         State('thresh-surface-min-cross-corr', 'value'),
+         State('thresh-surface-max-cross-corr', 'value'),
+         State('thresh-surface-min-flatness', 'value'),
+         State('thresh-surface-max-flatness', 'value'),
+         State('thresh-surface-min-rep-var', 'value'),
+         # Branch 4: Corona vs Internal - Weights and Scores
+         State('thresh-primary-weight', 'value'),
+         State('thresh-secondary-weight', 'value'),
+         State('thresh-supporting-weight', 'value'),
+         State('thresh-min-corona-score', 'value'),
+         State('thresh-min-internal-score', 'value'),
+         # Branch 4: Primary features
+         State('thresh-corona-max-asymmetry', 'value'),
+         State('thresh-internal-min-asymmetry', 'value'),
+         State('thresh-internal-max-asymmetry', 'value'),
+         State('thresh-corona-phase-min', 'value'),
+         State('thresh-corona-phase-max', 'value'),
+         State('thresh-internal-phase-q1-min', 'value'),
+         State('thresh-internal-phase-q1-max', 'value'),
+         State('thresh-internal-phase-q3-min', 'value'),
+         State('thresh-internal-phase-q3-max', 'value'),
+         # Branch 4: Secondary features
+         State('thresh-ci-corona-min-slew', 'value'),
+         State('thresh-ci-internal-min-slew', 'value'),
+         State('thresh-ci-internal-max-slew', 'value'),
+         State('thresh-ci-corona-min-spectral-ratio', 'value'),
+         State('thresh-ci-internal-min-spectral-ratio', 'value'),
+         State('thresh-ci-internal-max-spectral-ratio', 'value'),
+         State('thresh-corona-min-q3-pct', 'value'),
+         State('thresh-internal-min-q3-pct', 'value'),
+         State('thresh-internal-max-q3-pct', 'value'),
+         State('thresh-corona-max-oscillation', 'value'),
+         State('thresh-internal-min-oscillation', 'value'),
+         State('thresh-internal-max-oscillation', 'value'),
+         # Branch 4: Supporting features
+         State('thresh-ci-corona-max-cv', 'value'),
+         State('thresh-ci-internal-min-cv', 'value'),
+         State('thresh-ci-internal-max-cv', 'value'),
+         State('thresh-corona-min-rep-rate', 'value'),
+         State('thresh-internal-min-rep-rate', 'value'),
+         State('thresh-internal-max-rep-rate', 'value')],
         prevent_initial_call=True
     )
-    def reclassify_with_features(n_clicks, selected_features, prefix, clustering_method):
-        """Run classification with the selected cluster features."""
+    def reclassify_with_thresholds(n_clicks, prefix, clustering_method,
+                                    min_spectral_flatness, min_slew_rate, min_crest_factor,
+                                    min_cross_corr_noise, max_oscillation_count, min_snr,
+                                    max_cv_noise, max_bandwidth, max_dominant_freq,
+                                    min_pulses_multipulse,
+                                    surface_phase_spread_min,
+                                    # Branch 3: Surface Detection (8 features, weighted)
+                                    surface_primary_weight, surface_secondary_weight, surface_mid_weight, surface_supporting_weight,
+                                    min_surface_score, surface_phase_spread, corona_phase_spread,
+                                    surface_max_slew_rate, surface_max_spectral_ratio, surface_min_cv,
+                                    surface_min_crest, surface_max_crest,
+                                    surface_min_cross_corr, surface_max_cross_corr,
+                                    surface_min_flatness, surface_max_flatness,
+                                    surface_min_rep_var,
+                                    # Branch 4: Corona vs Internal
+                                    primary_weight, secondary_weight, supporting_weight,
+                                    min_corona_score, min_internal_score,
+                                    corona_max_asymmetry, internal_min_asymmetry, internal_max_asymmetry,
+                                    corona_phase_min, corona_phase_max,
+                                    internal_phase_q1_min, internal_phase_q1_max,
+                                    internal_phase_q3_min, internal_phase_q3_max,
+                                    ci_corona_min_slew, ci_internal_min_slew, ci_internal_max_slew,
+                                    ci_corona_min_spectral_ratio, ci_internal_min_spectral_ratio, ci_internal_max_spectral_ratio,
+                                    corona_min_q3_pct, internal_min_q3_pct, internal_max_q3_pct,
+                                    corona_max_oscillation, internal_min_oscillation, internal_max_oscillation,
+                                    ci_corona_max_cv, ci_internal_min_cv, ci_internal_max_cv,
+                                    corona_min_rep_rate, internal_min_rep_rate, internal_max_rep_rate):
+        """Run classification with custom threshold values."""
         if not n_clicks:
             raise PreventUpdate
-
-        if not selected_features or len(selected_features) < 1:
-            return html.Div("Please select at least 1 feature for classification",
-                          style={'color': 'orange', 'padding': '10px'})
 
         if not prefix:
             return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
@@ -2609,21 +3678,90 @@ def create_app(data_dir=DATA_DIR):
         if not data_path or not clean_prefix:
             return html.Div("Could not determine dataset path", style={'color': 'red', 'padding': '10px'})
 
-        # Build the classification command
-        features_str = ','.join(selected_features)
         method = clustering_method or 'dbscan'
 
         import subprocess
         import sys
 
         try:
-            # Run classification with selected features
+            # Build threshold string
+            thresholds_str = (
+                # Branch 1: Noise Detection
+                f"min_spectral_flatness={min_spectral_flatness},"
+                f"min_slew_rate={min_slew_rate},"
+                f"min_crest_factor={min_crest_factor},"
+                f"min_cross_corr_noise={min_cross_corr_noise},"
+                f"max_oscillation_count={max_oscillation_count},"
+                f"min_snr={min_snr},"
+                f"max_cv_noise={max_cv_noise},"
+                f"max_bandwidth_3db={max_bandwidth},"
+                f"max_dominant_frequency={max_dominant_freq},"
+                f"min_pulses_for_multipulse={min_pulses_multipulse},"
+                # Branch 2: Phase Spread
+                f"surface_phase_spread_min={surface_phase_spread_min},"
+                # Branch 3: Surface Detection (8 features, weighted)
+                f"surface_primary_weight={surface_primary_weight},"
+                f"surface_secondary_weight={surface_secondary_weight},"
+                f"surface_mid_weight={surface_mid_weight},"
+                f"surface_supporting_weight={surface_supporting_weight},"
+                f"min_surface_score={min_surface_score},"
+                f"surface_phase_spread={surface_phase_spread},"
+                f"corona_phase_spread={corona_phase_spread},"
+                f"surface_max_slew_rate={surface_max_slew_rate},"
+                f"surface_max_spectral_power_ratio={surface_max_spectral_ratio},"
+                f"surface_min_cv={surface_min_cv},"
+                f"surface_min_crest_factor={surface_min_crest},"
+                f"surface_max_crest_factor={surface_max_crest},"
+                f"surface_min_cross_corr={surface_min_cross_corr},"
+                f"surface_max_cross_corr={surface_max_cross_corr},"
+                f"surface_min_spectral_flatness={surface_min_flatness},"
+                f"surface_max_spectral_flatness={surface_max_flatness},"
+                f"surface_min_rep_rate_var={surface_min_rep_var},"
+                # Branch 4: Corona vs Internal - Weights and Scores
+                f"primary_weight={primary_weight},"
+                f"secondary_weight={secondary_weight},"
+                f"supporting_weight={supporting_weight},"
+                f"min_corona_score={min_corona_score},"
+                f"min_internal_score={min_internal_score},"
+                # Branch 4: Primary features
+                f"corona_max_asymmetry={corona_max_asymmetry},"
+                f"internal_min_asymmetry={internal_min_asymmetry},"
+                f"internal_max_asymmetry={internal_max_asymmetry},"
+                f"corona_phase_min={corona_phase_min},"
+                f"corona_phase_max={corona_phase_max},"
+                f"internal_phase_q1_min={internal_phase_q1_min},"
+                f"internal_phase_q1_max={internal_phase_q1_max},"
+                f"internal_phase_q3_min={internal_phase_q3_min},"
+                f"internal_phase_q3_max={internal_phase_q3_max},"
+                # Branch 4: Secondary features
+                f"ci_corona_min_slew_rate={ci_corona_min_slew},"
+                f"ci_internal_min_slew_rate={ci_internal_min_slew},"
+                f"ci_internal_max_slew_rate={ci_internal_max_slew},"
+                f"ci_corona_min_spectral_ratio={ci_corona_min_spectral_ratio},"
+                f"ci_internal_min_spectral_ratio={ci_internal_min_spectral_ratio},"
+                f"ci_internal_max_spectral_ratio={ci_internal_max_spectral_ratio},"
+                f"corona_min_q3_pct={corona_min_q3_pct},"
+                f"internal_min_q3_pct={internal_min_q3_pct},"
+                f"internal_max_q3_pct={internal_max_q3_pct},"
+                f"corona_max_oscillation={corona_max_oscillation},"
+                f"internal_min_oscillation={internal_min_oscillation},"
+                f"internal_max_oscillation={internal_max_oscillation},"
+                # Branch 4: Supporting features
+                f"ci_corona_max_cv={ci_corona_max_cv},"
+                f"ci_internal_min_cv={ci_internal_min_cv},"
+                f"ci_internal_max_cv={ci_internal_max_cv},"
+                f"corona_min_rep_rate={corona_min_rep_rate},"
+                f"internal_min_rep_rate={internal_min_rep_rate},"
+                f"internal_max_rep_rate={internal_max_rep_rate}"
+            )
+
+            # Run classification with custom thresholds
             cmd = [
                 sys.executable, 'classify_pd_type.py',
                 '--input-dir', data_path,
                 '--method', method,
                 '--file', clean_prefix,
-                '--cluster-features', features_str
+                '--thresholds', thresholds_str
             ]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -2632,7 +3770,6 @@ def create_app(data_dir=DATA_DIR):
                 return html.Div([
                     html.Div("✓ Reclassification complete!", style={'color': '#2e7d32', 'fontWeight': 'bold'}),
                     html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
-                    html.Div(f"Features used: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
                     html.Div("Refresh the page or change dataset and back to see updated results.",
                             style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
                 ], style={'padding': '10px', 'backgroundColor': '#f3e5f5', 'borderRadius': '4px'})
@@ -2647,6 +3784,241 @@ def create_app(data_dir=DATA_DIR):
             return html.Div("Classification timed out (>60s)", style={'color': 'red', 'padding': '10px'})
         except Exception as e:
             return html.Div(f"Error: {str(e)}", style={'color': 'red', 'padding': '10px'})
+
+    @app.callback(
+        Output('cluster-explanation-display', 'children'),
+        [Input('generate-cluster-explanation-btn', 'n_clicks')],
+        [State('show-cluster-explanation-checkbox', 'value'),
+         State('dataset-dropdown', 'value'),
+         State('clustering-method-radio', 'value'),
+         State('pulse-features-checklist', 'value')],
+        prevent_initial_call=True
+    )
+    def generate_cluster_explanation(n_clicks, show_explanation, dataset, clustering_method, selected_features):
+        """Generate a decision tree explanation of how clusters were assigned."""
+        if not n_clicks:
+            raise PreventUpdate
+
+        if not show_explanation or 'show' not in show_explanation:
+            return html.Div("Enable the checkbox above to generate cluster explanations.",
+                          style={'color': '#666', 'fontStyle': 'italic'})
+
+        if not dataset:
+            return html.Div("No dataset selected", style={'color': 'red'})
+
+        # Get dataset paths
+        data_path = loader.get_dataset_path(dataset)
+        clean_prefix = loader.get_clean_prefix(dataset)
+
+        if not data_path or not clean_prefix:
+            return html.Div("Could not determine dataset path", style={'color': 'red'})
+
+        method = clustering_method or 'dbscan'
+
+        # Load features file
+        features_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+        cluster_file = os.path.join(data_path, f"{clean_prefix}-clusters-{method}.csv")
+
+        if not os.path.exists(features_file):
+            return html.Div(f"Features file not found: {features_file}", style={'color': 'red'})
+
+        if not os.path.exists(cluster_file):
+            return html.Div(f"Cluster file not found: {cluster_file}", style={'color': 'red'})
+
+        try:
+            from sklearn.tree import DecisionTreeClassifier
+            from sklearn.preprocessing import StandardScaler
+            import numpy as np
+
+            # Load features
+            features_data = []
+            feature_names = None
+            with open(features_file, 'r') as f:
+                header = f.readline().strip()
+                feature_names = header.split(',')[1:]  # Skip waveform_index
+                for line in f:
+                    parts = line.strip().split(',')
+                    if len(parts) > 1:
+                        values = [float(v) if v else 0.0 for v in parts[1:]]
+                        features_data.append(values)
+
+            features_array = np.array(features_data)
+
+            # Filter to selected features if specified
+            if selected_features:
+                feature_indices = []
+                used_feature_names = []
+                for feat in selected_features:
+                    if feat in feature_names:
+                        feature_indices.append(feature_names.index(feat))
+                        used_feature_names.append(feat)
+                if feature_indices:
+                    features_array = features_array[:, feature_indices]
+                    feature_names = used_feature_names
+
+            # Handle NaN/Inf
+            features_array = np.nan_to_num(features_array, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Load cluster labels
+            cluster_labels = []
+            with open(cluster_file, 'r') as f:
+                for line in f:
+                    if line.startswith('#') or line.startswith('waveform'):
+                        continue
+                    parts = line.strip().split(',')
+                    if len(parts) >= 2:
+                        cluster_labels.append(int(parts[1]))
+
+            cluster_labels = np.array(cluster_labels)
+
+            if len(features_array) != len(cluster_labels):
+                return html.Div(f"Mismatch: {len(features_array)} features vs {len(cluster_labels)} labels",
+                              style={'color': 'red'})
+
+            # Scale features for consistency with original clustering
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(features_array)
+
+            # Train decision tree to explain clusters
+            # Use max_depth to keep it interpretable
+            dt = DecisionTreeClassifier(max_depth=5, min_samples_leaf=max(5, len(cluster_labels) // 100), random_state=42)
+            dt.fit(features_scaled, cluster_labels)
+
+            # Calculate accuracy
+            accuracy = dt.score(features_scaled, cluster_labels)
+
+            # Get unique clusters
+            unique_clusters = sorted(set(cluster_labels))
+            n_clusters = len([c for c in unique_clusters if c != -1])
+            n_noise = np.sum(cluster_labels == -1) if -1 in cluster_labels else 0
+
+            # Extract rules from decision tree
+            def get_rules(tree, feature_names, scaler):
+                """Extract human-readable rules from a decision tree."""
+                tree_ = tree.tree_
+                feature_name = [
+                    feature_names[i] if i != -2 else "undefined!"
+                    for i in tree_.feature
+                ]
+
+                rules_by_class = {}
+
+                def recurse(node, depth, rule_parts):
+                    if tree_.feature[node] != -2:  # Not a leaf
+                        name = feature_name[node]
+                        threshold_scaled = tree_.threshold[node]
+
+                        # Get the feature index to unscale
+                        feat_idx = tree_.feature[node]
+                        # Unscale threshold: threshold_original = threshold_scaled * std + mean
+                        threshold_original = threshold_scaled * scaler.scale_[feat_idx] + scaler.mean_[feat_idx]
+
+                        # Left branch: <= threshold
+                        left_rule = f"{name} ≤ {threshold_original:.4g}"
+                        recurse(tree_.children_left[node], depth + 1, rule_parts + [left_rule])
+
+                        # Right branch: > threshold
+                        right_rule = f"{name} > {threshold_original:.4g}"
+                        recurse(tree_.children_right[node], depth + 1, rule_parts + [right_rule])
+                    else:
+                        # Leaf node - get class
+                        class_counts = tree_.value[node][0]
+                        predicted_class = int(np.argmax(class_counts))
+                        # Map back to actual cluster label
+                        actual_class = dt.classes_[predicted_class]
+                        n_samples = int(np.sum(class_counts))
+                        confidence = class_counts[predicted_class] / n_samples if n_samples > 0 else 0
+
+                        if actual_class not in rules_by_class:
+                            rules_by_class[actual_class] = []
+
+                        rules_by_class[actual_class].append({
+                            'conditions': rule_parts.copy(),
+                            'samples': n_samples,
+                            'confidence': confidence
+                        })
+
+                recurse(0, 0, [])
+                return rules_by_class
+
+            rules = get_rules(dt, feature_names, scaler)
+
+            # Build output
+            output_parts = []
+
+            # Summary
+            output_parts.append(html.Div([
+                html.H4("Cluster Decision Explanation", style={'marginBottom': '10px', 'color': '#1976d2'}),
+                html.Div(f"Dataset: {dataset}", style={'fontSize': '11px', 'color': '#666'}),
+                html.Div(f"Method: {method.upper()} | Clusters: {n_clusters}" +
+                        (f" | Noise points: {n_noise}" if n_noise > 0 else ""),
+                        style={'fontSize': '11px', 'color': '#666'}),
+                html.Div(f"Decision tree accuracy: {accuracy:.1%} (how well the tree approximates the clustering)",
+                        style={'fontSize': '11px', 'color': '#666', 'marginBottom': '15px'}),
+            ]))
+
+            # Rules for each cluster
+            for cluster_id in sorted(rules.keys()):
+                cluster_rules = rules[cluster_id]
+                cluster_name = "Noise" if cluster_id == -1 else f"Cluster {cluster_id}"
+                total_samples = sum(r['samples'] for r in cluster_rules)
+
+                cluster_section = [
+                    html.Div(f"━━━ {cluster_name} ({total_samples} pulses) ━━━",
+                            style={'fontWeight': 'bold', 'marginTop': '10px', 'marginBottom': '5px',
+                                   'color': '#d32f2f' if cluster_id == -1 else '#2e7d32'})
+                ]
+
+                # Sort rules by sample count
+                cluster_rules_sorted = sorted(cluster_rules, key=lambda x: -x['samples'])
+
+                for i, rule in enumerate(cluster_rules_sorted[:5]):  # Show top 5 rules per cluster
+                    if rule['conditions']:
+                        rule_text = " AND ".join(rule['conditions'])
+                    else:
+                        rule_text = "(default path)"
+
+                    cluster_section.append(
+                        html.Div([
+                            html.Span(f"Rule {i+1}: ", style={'fontWeight': 'bold'}),
+                            html.Span(f"IF {rule_text}"),
+                            html.Br(),
+                            html.Span(f"         → {rule['samples']} pulses ({rule['confidence']:.0%} confidence)",
+                                     style={'color': '#666', 'fontSize': '11px'})
+                        ], style={'marginBottom': '8px', 'paddingLeft': '10px'})
+                    )
+
+                if len(cluster_rules_sorted) > 5:
+                    cluster_section.append(
+                        html.Div(f"         ... and {len(cluster_rules_sorted) - 5} more rules",
+                                style={'color': '#999', 'fontSize': '11px', 'paddingLeft': '10px'})
+                    )
+
+                output_parts.append(html.Div(cluster_section))
+
+            # Feature importance
+            importances = dt.feature_importances_
+            importance_pairs = sorted(zip(feature_names, importances), key=lambda x: -x[1])
+            top_features = [(name, imp) for name, imp in importance_pairs if imp > 0.01][:10]
+
+            if top_features:
+                output_parts.append(html.Div([
+                    html.Div("━━━ Feature Importance ━━━",
+                            style={'fontWeight': 'bold', 'marginTop': '15px', 'marginBottom': '5px', 'color': '#1565c0'}),
+                    html.Div([
+                        html.Div(f"  {name}: {imp:.1%}", style={'fontSize': '11px'})
+                        for name, imp in top_features
+                    ])
+                ]))
+
+            return html.Div(output_parts)
+
+        except Exception as e:
+            import traceback
+            return html.Div([
+                html.Div(f"Error generating explanation: {str(e)}", style={'color': 'red'}),
+                html.Pre(traceback.format_exc(), style={'fontSize': '10px', 'color': '#666'})
+            ])
 
     def write_progress(operation, current, total, dataset):
         """Write progress to file for polling."""
@@ -2671,25 +4043,27 @@ def create_app(data_dir=DATA_DIR):
             pass
 
     @app.callback(
-        Output('recluster-all-result', 'children'),
+        [Output('recluster-all-result', 'children'),
+         Output('pulse-features-per-dataset', 'data', allow_duplicate=True)],
         [Input('recluster-all-btn', 'n_clicks')],
         [State('pulse-features-checklist', 'value'),
-         State('clustering-method-radio', 'value')],
+         State('clustering-method-radio', 'value'),
+         State('pulse-features-per-dataset', 'data')],
         prevent_initial_call=True
     )
-    def recluster_all_datasets(n_clicks, selected_features, clustering_method):
+    def recluster_all_datasets(n_clicks, selected_features, clustering_method, stored_features_data):
         """Run clustering on all datasets with the selected features."""
         if not n_clicks:
             raise PreventUpdate
 
         if not selected_features or len(selected_features) < 2:
-            return html.Div("Please select at least 2 features for clustering",
-                          style={'color': 'orange', 'padding': '10px'})
+            return (html.Div("Please select at least 2 features for clustering",
+                          style={'color': 'orange', 'padding': '10px'}), no_update)
 
         # Get all datasets
         datasets = loader.datasets
         if not datasets:
-            return html.Div("No datasets available", style={'color': 'red', 'padding': '10px'})
+            return (html.Div("No datasets available", style={'color': 'red', 'padding': '10px'}), no_update)
 
         features_str = ','.join(selected_features)
         method = clustering_method or 'dbscan'
@@ -2825,13 +4199,19 @@ def create_app(data_dir=DATA_DIR):
         # Clear progress when done
         clear_progress()
 
+        # Update per-dataset feature storage for all datasets with the selected features
+        # This ensures switching datasets will show the same features that were used for clustering
+        updated_features_data = stored_features_data or {}
+        for dataset in datasets:
+            updated_features_data[dataset] = selected_features
+
         # Summary message
         if fail_count > 0:
             summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets ({fail_count} failed)"
         else:
             summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets"
 
-        return html.Div([
+        result_div = html.Div([
             html.Div(summary_msg,
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
             html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
@@ -2840,32 +4220,192 @@ def create_app(data_dir=DATA_DIR):
                 html.Div([html.Div(d, style={'fontSize': '11px'}) for d in results_details],
                         style={'maxHeight': '150px', 'overflowY': 'auto', 'marginTop': '5px'})
             ]) if results_details else None,
-            html.Div("Refresh the page to see updated results.",
+            html.Div("Feature selection copied to all datasets.",
                     style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
         ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+
+        return (result_div, updated_features_data)
 
     @app.callback(
         Output('reclassify-all-result', 'children'),
         [Input('reclassify-all-btn', 'n_clicks')],
-        [State('cluster-features-checklist', 'value'),
-         State('clustering-method-radio', 'value')],
+        [State('clustering-method-radio', 'value'),
+         # Branch 1: Noise Detection
+         State('thresh-min-spectral-flatness', 'value'),
+         State('thresh-min-slew-rate', 'value'),
+         State('thresh-min-crest-factor', 'value'),
+         State('thresh-min-cross-corr-noise', 'value'),
+         State('thresh-max-oscillation-count', 'value'),
+         State('thresh-min-snr', 'value'),
+         State('thresh-max-cv', 'value'),
+         State('thresh-max-bandwidth', 'value'),
+         State('thresh-max-dominant-freq', 'value'),
+         State('thresh-min-pulses-multipulse', 'value'),
+         # Branch 2: Phase Spread
+         State('thresh-surface-phase-spread-min', 'value'),
+         # Branch 3: Surface Detection (8 features, weighted)
+         State('thresh-surface-primary-weight', 'value'),
+         State('thresh-surface-secondary-weight', 'value'),
+         State('thresh-surface-mid-weight', 'value'),
+         State('thresh-surface-supporting-weight', 'value'),
+         State('thresh-min-surface-score', 'value'),
+         State('thresh-surface-phase-spread', 'value'),
+         State('thresh-corona-phase-spread', 'value'),
+         State('thresh-surface-max-slew-rate', 'value'),
+         State('thresh-surface-max-spectral-ratio', 'value'),
+         State('thresh-surface-min-cv', 'value'),
+         State('thresh-surface-min-crest', 'value'),
+         State('thresh-surface-max-crest', 'value'),
+         State('thresh-surface-min-cross-corr', 'value'),
+         State('thresh-surface-max-cross-corr', 'value'),
+         State('thresh-surface-min-flatness', 'value'),
+         State('thresh-surface-max-flatness', 'value'),
+         State('thresh-surface-min-rep-var', 'value'),
+         # Branch 4: Corona vs Internal - Weights and Scores
+         State('thresh-primary-weight', 'value'),
+         State('thresh-secondary-weight', 'value'),
+         State('thresh-supporting-weight', 'value'),
+         State('thresh-min-corona-score', 'value'),
+         State('thresh-min-internal-score', 'value'),
+         # Branch 4: Primary features
+         State('thresh-corona-max-asymmetry', 'value'),
+         State('thresh-internal-min-asymmetry', 'value'),
+         State('thresh-internal-max-asymmetry', 'value'),
+         State('thresh-corona-phase-min', 'value'),
+         State('thresh-corona-phase-max', 'value'),
+         State('thresh-internal-phase-q1-min', 'value'),
+         State('thresh-internal-phase-q1-max', 'value'),
+         State('thresh-internal-phase-q3-min', 'value'),
+         State('thresh-internal-phase-q3-max', 'value'),
+         # Branch 4: Secondary features
+         State('thresh-ci-corona-min-slew', 'value'),
+         State('thresh-ci-internal-min-slew', 'value'),
+         State('thresh-ci-internal-max-slew', 'value'),
+         State('thresh-ci-corona-min-spectral-ratio', 'value'),
+         State('thresh-ci-internal-min-spectral-ratio', 'value'),
+         State('thresh-ci-internal-max-spectral-ratio', 'value'),
+         State('thresh-corona-min-q3-pct', 'value'),
+         State('thresh-internal-min-q3-pct', 'value'),
+         State('thresh-internal-max-q3-pct', 'value'),
+         State('thresh-corona-max-oscillation', 'value'),
+         State('thresh-internal-min-oscillation', 'value'),
+         State('thresh-internal-max-oscillation', 'value'),
+         # Branch 4: Supporting features
+         State('thresh-ci-corona-max-cv', 'value'),
+         State('thresh-ci-internal-min-cv', 'value'),
+         State('thresh-ci-internal-max-cv', 'value'),
+         State('thresh-corona-min-rep-rate', 'value'),
+         State('thresh-internal-min-rep-rate', 'value'),
+         State('thresh-internal-max-rep-rate', 'value')],
         prevent_initial_call=True
     )
-    def reclassify_all_datasets(n_clicks, selected_features, clustering_method):
-        """Run classification on all datasets with the selected cluster features."""
+    def reclassify_all_datasets(n_clicks, clustering_method,
+                                 min_spectral_flatness, min_slew_rate, min_crest_factor,
+                                 min_cross_corr_noise, max_oscillation_count, min_snr,
+                                 max_cv_noise, max_bandwidth, max_dominant_freq,
+                                 min_pulses_multipulse,
+                                 surface_phase_spread_min,
+                                 # Branch 3: Surface Detection (8 features, weighted)
+                                 surface_primary_weight, surface_secondary_weight, surface_mid_weight, surface_supporting_weight,
+                                 min_surface_score, surface_phase_spread, corona_phase_spread,
+                                 surface_max_slew_rate, surface_max_spectral_ratio, surface_min_cv,
+                                 surface_min_crest, surface_max_crest,
+                                 surface_min_cross_corr, surface_max_cross_corr,
+                                 surface_min_flatness, surface_max_flatness,
+                                 surface_min_rep_var,
+                                 # Branch 4: Corona vs Internal
+                                 primary_weight, secondary_weight, supporting_weight,
+                                 min_corona_score, min_internal_score,
+                                 corona_max_asymmetry, internal_min_asymmetry, internal_max_asymmetry,
+                                 corona_phase_min, corona_phase_max,
+                                 internal_phase_q1_min, internal_phase_q1_max,
+                                 internal_phase_q3_min, internal_phase_q3_max,
+                                 ci_corona_min_slew, ci_internal_min_slew, ci_internal_max_slew,
+                                 ci_corona_min_spectral_ratio, ci_internal_min_spectral_ratio, ci_internal_max_spectral_ratio,
+                                 corona_min_q3_pct, internal_min_q3_pct, internal_max_q3_pct,
+                                 corona_max_oscillation, internal_min_oscillation, internal_max_oscillation,
+                                 ci_corona_max_cv, ci_internal_min_cv, ci_internal_max_cv,
+                                 corona_min_rep_rate, internal_min_rep_rate, internal_max_rep_rate):
+        """Run classification on all datasets with custom thresholds."""
         if not n_clicks:
             raise PreventUpdate
-
-        if not selected_features or len(selected_features) < 1:
-            return html.Div("Please select at least 1 feature for classification",
-                          style={'color': 'orange', 'padding': '10px'})
 
         # Get all datasets
         datasets = loader.datasets
         if not datasets:
             return html.Div("No datasets available", style={'color': 'red', 'padding': '10px'})
 
-        features_str = ','.join(selected_features)
+        # Build threshold string
+        thresholds_str = (
+            # Branch 1: Noise Detection
+            f"min_spectral_flatness={min_spectral_flatness},"
+            f"min_slew_rate={min_slew_rate},"
+            f"min_crest_factor={min_crest_factor},"
+            f"min_cross_corr_noise={min_cross_corr_noise},"
+            f"max_oscillation_count={max_oscillation_count},"
+            f"min_snr={min_snr},"
+            f"max_cv_noise={max_cv_noise},"
+            f"max_bandwidth_3db={max_bandwidth},"
+            f"max_dominant_frequency={max_dominant_freq},"
+            f"min_pulses_for_multipulse={min_pulses_multipulse},"
+            # Branch 2: Phase Spread
+            f"surface_phase_spread_min={surface_phase_spread_min},"
+            # Branch 3: Surface Detection (8 features, weighted)
+            f"surface_primary_weight={surface_primary_weight},"
+            f"surface_secondary_weight={surface_secondary_weight},"
+            f"surface_mid_weight={surface_mid_weight},"
+            f"surface_supporting_weight={surface_supporting_weight},"
+            f"min_surface_score={min_surface_score},"
+            f"surface_phase_spread={surface_phase_spread},"
+            f"corona_phase_spread={corona_phase_spread},"
+            f"surface_max_slew_rate={surface_max_slew_rate},"
+            f"surface_max_spectral_power_ratio={surface_max_spectral_ratio},"
+            f"surface_min_cv={surface_min_cv},"
+            f"surface_min_crest_factor={surface_min_crest},"
+            f"surface_max_crest_factor={surface_max_crest},"
+            f"surface_min_cross_corr={surface_min_cross_corr},"
+            f"surface_max_cross_corr={surface_max_cross_corr},"
+            f"surface_min_spectral_flatness={surface_min_flatness},"
+            f"surface_max_spectral_flatness={surface_max_flatness},"
+            f"surface_min_rep_rate_var={surface_min_rep_var},"
+            # Branch 4: Corona vs Internal - Weights and Scores
+            f"primary_weight={primary_weight},"
+            f"secondary_weight={secondary_weight},"
+            f"supporting_weight={supporting_weight},"
+            f"min_corona_score={min_corona_score},"
+            f"min_internal_score={min_internal_score},"
+            # Branch 4: Primary features
+            f"corona_max_asymmetry={corona_max_asymmetry},"
+            f"internal_min_asymmetry={internal_min_asymmetry},"
+            f"internal_max_asymmetry={internal_max_asymmetry},"
+            f"corona_phase_min={corona_phase_min},"
+            f"corona_phase_max={corona_phase_max},"
+            f"internal_phase_q1_min={internal_phase_q1_min},"
+            f"internal_phase_q1_max={internal_phase_q1_max},"
+            f"internal_phase_q3_min={internal_phase_q3_min},"
+            f"internal_phase_q3_max={internal_phase_q3_max},"
+            # Branch 4: Secondary features
+            f"ci_corona_min_slew_rate={ci_corona_min_slew},"
+            f"ci_internal_min_slew_rate={ci_internal_min_slew},"
+            f"ci_internal_max_slew_rate={ci_internal_max_slew},"
+            f"ci_corona_min_spectral_ratio={ci_corona_min_spectral_ratio},"
+            f"ci_internal_min_spectral_ratio={ci_internal_min_spectral_ratio},"
+            f"ci_internal_max_spectral_ratio={ci_internal_max_spectral_ratio},"
+            f"corona_min_q3_pct={corona_min_q3_pct},"
+            f"internal_min_q3_pct={internal_min_q3_pct},"
+            f"internal_max_q3_pct={internal_max_q3_pct},"
+            f"corona_max_oscillation={corona_max_oscillation},"
+            f"internal_min_oscillation={internal_min_oscillation},"
+            f"internal_max_oscillation={internal_max_oscillation},"
+            # Branch 4: Supporting features
+            f"ci_corona_max_cv={ci_corona_max_cv},"
+            f"ci_internal_min_cv={ci_internal_min_cv},"
+            f"ci_internal_max_cv={ci_internal_max_cv},"
+            f"corona_min_rep_rate={corona_min_rep_rate},"
+            f"internal_min_rep_rate={internal_min_rep_rate},"
+            f"internal_max_rep_rate={internal_max_rep_rate}"
+        )
+
         method = clustering_method or 'dbscan'
 
         import subprocess
@@ -2891,13 +4431,13 @@ def create_app(data_dir=DATA_DIR):
                     results_details.append(f"✗ {dataset}: Could not determine path")
                     continue
 
-                # Run classification with selected features
+                # Run classification with custom thresholds
                 cmd = [
                     sys.executable, 'classify_pd_type.py',
                     '--input-dir', data_path,
                     '--method', method,
                     '--file', clean_prefix,
-                    '--cluster-features', features_str
+                    '--thresholds', thresholds_str
                 ]
 
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -2922,7 +4462,7 @@ def create_app(data_dir=DATA_DIR):
         return html.Div([
             html.Div(f"Reclassified {success_count}/{len(datasets)} datasets",
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
-            html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}", style={'fontSize': '12px', 'color': '#666'}),
+            html.Div(f"Method: {method.upper()}", style={'fontSize': '12px', 'color': '#666'}),
             html.Details([
                 html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
                 html.Div([html.Div(d, style={'fontSize': '11px'}) for d in results_details],
@@ -3185,13 +4725,12 @@ def create_app(data_dir=DATA_DIR):
          State('dbscan-min-samples', 'value'),
          State('kmeans-n-clusters', 'value'),
          State('pulse-features-checklist', 'value'),
-         State('cluster-features-checklist', 'value'),
          State('reanalysis-trigger', 'data')],
         prevent_initial_call=True
     )
     def run_reanalysis(n_clicks, prefix, polarity_method, clustering_method,
                        dbscan_min_samples, kmeans_n_clusters,
-                       pulse_features, cluster_features, current_trigger):
+                       pulse_features, current_trigger):
         """Run the full analysis pipeline with the selected options."""
         if not n_clicks or not prefix:
             return "", {'display': 'none'}, current_trigger
@@ -3205,12 +4744,6 @@ def create_app(data_dir=DATA_DIR):
         if not pulse_features:
             return html.Div([
                 "Please select at least one pulse feature for clustering"
-            ], style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'}), \
-                {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
-
-        if not cluster_features:
-            return html.Div([
-                "Please select at least one cluster feature for classification"
             ], style={'color': '#856404', 'backgroundColor': '#fff3cd', 'padding': '10px', 'borderRadius': '4px'}), \
                 {'display': 'block', 'width': '90%', 'margin': '5px auto'}, current_trigger
 
@@ -3234,10 +4767,6 @@ def create_app(data_dir=DATA_DIR):
             if pulse_features:
                 cmd.extend(['--pulse-features', ','.join(pulse_features)])
 
-            # Add selected cluster features for classification
-            if cluster_features:
-                cmd.extend(['--cluster-features', ','.join(cluster_features)])
-
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -3247,7 +4776,7 @@ def create_app(data_dir=DATA_DIR):
 
             if result.returncode == 0:
                 # Increment trigger to force data reload
-                feature_info = f"Pulse features: {len(pulse_features)}, Cluster features: {len(cluster_features)}"
+                feature_info = f"Pulse features: {len(pulse_features)}"
                 return html.Div([
                     f"Re-analysis complete! ",
                     f"Polarity: {polarity_method}, Clustering: {clustering_method.upper()}. ",
@@ -3527,6 +5056,100 @@ def create_app(data_dir=DATA_DIR):
 
         return create_waveform_plot(None, None, None, None, None, None), None
 
+    # Define cluster feature lists for the selector
+    from aggregate_cluster_features import (
+        CLUSTER_FEATURE_NAMES as AGG_CLUSTER_FEATURE_NAMES,
+        WAVEFORM_MEAN_FEATURE_NAMES,
+        WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES,
+        ALL_CLUSTER_FEATURE_NAMES
+    )
+
+    @app.callback(
+        Output('cluster-feature-selector', 'options'),
+        [Input('current-data-store', 'data')],
+        prevent_initial_call=True
+    )
+    def populate_cluster_feature_options(prefix):
+        """Populate the cluster feature selector with all available features."""
+        options = []
+
+        # Group 1: PRPD-based features
+        for feat in AGG_CLUSTER_FEATURE_NAMES:
+            options.append({'label': f'[PRPD] {feat}', 'value': feat})
+
+        # Group 2: Mean features
+        for feat in WAVEFORM_MEAN_FEATURE_NAMES:
+            display_name = feat.replace('mean_', '')
+            options.append({'label': f'[Mean] {display_name}', 'value': feat})
+
+        # Group 3: Trimmed mean features
+        for feat in WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES:
+            display_name = feat.replace('trimmed_mean_', '')
+            options.append({'label': f'[TrimMean] {display_name}', 'value': feat})
+
+        return options
+
+    # Define classification-relevant features (all features used in PD type decision tree)
+    CLASSIFICATION_FEATURES = [
+        # Noise detection (Branch 1)
+        'coefficient_of_variation',
+        'mean_is_multi_pulse',
+        'mean_pulse_count',
+        # Phase spread (Branch 2)
+        'phase_spread',
+        'cross_correlation',
+        'discharge_asymmetry',
+        # Surface detection (Branch 3)
+        'mean_slew_rate',
+        'mean_spectral_power_ratio',
+        'mean_cv',
+        'mean_crest_factor',
+        'mean_spectral_flatness',
+        'mean_repetition_rate_variance',
+        # Corona/Internal (Branch 4)
+        'quadrant_1_percentage',
+        'quadrant_2_percentage',
+        'quadrant_3_percentage',
+        'quadrant_4_percentage',
+        'phase_of_max_activity',
+        'mean_oscillation_count',
+        'repetition_rate',
+        # Additional useful features
+        'mean_absolute_amplitude',
+        'mean_rise_time',
+        'mean_fall_time',
+        'weibull_beta',
+        'inception_phase',
+        'extinction_phase',
+    ]
+
+    @app.callback(
+        Output('cluster-feature-selector', 'value'),
+        [Input('cluster-feat-select-classification', 'n_clicks'),
+         Input('cluster-feat-select-mean', 'n_clicks'),
+         Input('cluster-feat-select-trimmed', 'n_clicks'),
+         Input('cluster-feat-select-prpd', 'n_clicks'),
+         Input('cluster-feat-select-none', 'n_clicks')],
+        [State('cluster-feature-selector', 'value')],
+        prevent_initial_call=True
+    )
+    def update_cluster_feature_selection(classification_clicks, mean_clicks, trimmed_clicks, prpd_clicks, none_clicks, current_value):
+        """Handle cluster feature selection buttons."""
+        triggered = ctx.triggered_id
+
+        if triggered == 'cluster-feat-select-classification':
+            return CLASSIFICATION_FEATURES
+        elif triggered == 'cluster-feat-select-mean':
+            return WAVEFORM_MEAN_FEATURE_NAMES
+        elif triggered == 'cluster-feat-select-trimmed':
+            return WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES
+        elif triggered == 'cluster-feat-select-prpd':
+            return list(AGG_CLUSTER_FEATURE_NAMES)
+        elif triggered == 'cluster-feat-select-none':
+            return []
+
+        return current_value or []
+
     @app.callback(
         [Output('cluster-details-display', 'children'),
          Output('cluster-details-display', 'style')],
@@ -3534,10 +5157,11 @@ def create_app(data_dir=DATA_DIR):
          Input('pdtype-prpd', 'clickData')],
         [State('show-cluster-details-checkbox', 'value'),
          State('current-data-store', 'data'),
-         State('clustering-method-radio', 'value')],
+         State('clustering-method-radio', 'value'),
+         State('cluster-feature-selector', 'value')],
         prevent_initial_call=True
     )
-    def update_cluster_details(cluster_click, pdtype_click, show_details, prefix, clustering_method):
+    def update_cluster_details(cluster_click, pdtype_click, show_details, prefix, clustering_method, selected_cluster_features):
         """Show cluster statistics and decision tree details when clicking on PRPD."""
         # Check if feature is enabled
         if not show_details or 'show' not in show_details:
@@ -3672,80 +5296,328 @@ def create_app(data_dir=DATA_DIR):
                                                     'borderBottom': '1px solid #ccc'})
                 ])
 
-            # Branch 1: Noise Detection
-            table_rows.append(section_header("Branch 1: Noise Detection"))
+            # =====================================================================
+            # BRANCH 1: NOISE DETECTION (11 features, score-based)
+            # =====================================================================
+            table_rows.append(section_header("Branch 1: Noise Detection (score >= 0.45 → NOISE)"))
+
+            # Multi-pulse detection (checked first)
+            is_multi_pulse = cluster_feats.get('mean_is_multi_pulse', cluster_feats.get('is_multi_pulse', 0))
+            pulse_count = cluster_feats.get('mean_pulse_count', cluster_feats.get('pulses_per_waveform',
+                          cluster_feats.get('mean_pulses_per_waveform', 1)))
+            min_pulses_mp = NOISE_THRESHOLDS.get('min_pulses_for_multipulse', 3)
+            table_rows.append(make_row('Is Multi-Pulse (mean)', is_multi_pulse, f'> 0.5 → NOISE_MULTIPULSE', is_multi_pulse > 0.5))
+            table_rows.append(make_row('Pulse Count (mean)', pulse_count, f'>= {min_pulses_mp} → NOISE_MULTIPULSE', pulse_count >= min_pulses_mp))
+
+            # Noise score features
+            spectral_flatness = cluster_feats.get('mean_spectral_flatness', cluster_feats.get('spectral_flatness', 0))
+            sf_thresh = NOISE_THRESHOLDS['min_spectral_flatness']
+            table_rows.append(make_row('Spectral Flatness', spectral_flatness, f'> {sf_thresh} (+0.15)', spectral_flatness > sf_thresh))
+
+            slew_rate = cluster_feats.get('mean_slew_rate', cluster_feats.get('slew_rate', 1e9))
+            sr_thresh = NOISE_THRESHOLDS['min_slew_rate']
+            table_rows.append(make_row('Slew Rate', slew_rate, f'< {sr_thresh:.0e} (+0.15)', slew_rate < sr_thresh))
+
+            crest_factor = cluster_feats.get('mean_crest_factor', cluster_feats.get('crest_factor', 10))
+            cf_thresh = NOISE_THRESHOLDS['min_crest_factor']
+            table_rows.append(make_row('Crest Factor', crest_factor, f'< {cf_thresh} (+0.15)', crest_factor < cf_thresh))
+
+            cross_corr_noise = cluster_feats.get('mean_cross_correlation', cluster_feats.get('cross_correlation', 0.5))
+            cc_thresh = NOISE_THRESHOLDS['min_cross_correlation']
+            table_rows.append(make_row('Cross Correlation', cross_corr_noise, f'< {cc_thresh} (+0.10)', cross_corr_noise < cc_thresh))
+
+            oscillation_count = cluster_feats.get('mean_oscillation_count', cluster_feats.get('oscillation_count', 5))
+            osc_thresh = NOISE_THRESHOLDS['max_oscillation_count']
+            table_rows.append(make_row('Oscillation Count', oscillation_count, f'> {osc_thresh} (+0.10)', oscillation_count > osc_thresh))
+
+            snr = cluster_feats.get('mean_signal_to_noise_ratio', cluster_feats.get('signal_to_noise_ratio', 10))
+            snr_thresh = NOISE_THRESHOLDS['min_signal_to_noise_ratio']
+            table_rows.append(make_row('Signal-to-Noise Ratio', snr, f'< {snr_thresh} (+0.15)', snr < snr_thresh))
 
             cv = cluster_feats.get('coefficient_of_variation', 0)
             cv_thresh = NOISE_THRESHOLDS['max_coefficient_of_variation']
-            table_rows.append(make_row('Coefficient of Variation', cv, f'< {cv_thresh}', cv <= cv_thresh))
+            table_rows.append(make_row('Coefficient of Variation', cv, f'> {cv_thresh} (+0.10)', cv > cv_thresh))
 
-            # Branch 2: Phase Correlation
-            table_rows.append(section_header("Branch 2: Phase Correlation"))
+            bandwidth = cluster_feats.get('mean_bandwidth_3db', cluster_feats.get('bandwidth_3db', 1e9))
+            bw_thresh = NOISE_THRESHOLDS['max_bandwidth_3db']
+            table_rows.append(make_row('Bandwidth 3dB', bandwidth, f'< {bw_thresh:.0e} (+0.05)', bandwidth < bw_thresh))
 
-            cross_corr = cluster_feats.get('cross_correlation', 0)
-            cc_thresh = PHASE_CORRELATION_THRESHOLDS['min_cross_correlation_symmetric']
-            table_rows.append(make_row('Cross Correlation', cross_corr, f'>= {cc_thresh} (symmetric)', cross_corr >= cc_thresh))
+            dominant_freq = cluster_feats.get('mean_dominant_frequency', cluster_feats.get('dominant_frequency', 1e6))
+            df_thresh = NOISE_THRESHOLDS['max_dominant_frequency']
+            table_rows.append(make_row('Dominant Frequency', dominant_freq, f'< {df_thresh:.0e} (+0.10)', dominant_freq < df_thresh))
 
-            asymmetry = cluster_feats.get('discharge_asymmetry', 0)
-            asym_thresh = PHASE_CORRELATION_THRESHOLDS['max_asymmetry_symmetric']
-            table_rows.append(make_row('Discharge Asymmetry', abs(asymmetry), f'< {asym_thresh} (symmetric)', abs(asymmetry) < asym_thresh))
+            # =====================================================================
+            # BRANCH 2: PHASE SPREAD (Surface PD immediate detection)
+            # =====================================================================
+            table_rows.append(section_header("Branch 2: Phase Spread (> threshold → SURFACE)"))
 
             phase_spread = cluster_feats.get('phase_spread', 0)
-            ps_thresh = PHASE_CORRELATION_THRESHOLDS['max_phase_spread_corona']
-            table_rows.append(make_row('Phase Spread', phase_spread, f'< {ps_thresh} (corona)', phase_spread < ps_thresh, ' deg'))
+            ps_thresh = PHASE_SPREAD_THRESHOLDS['surface_phase_spread_min']
+            table_rows.append(make_row('Phase Spread', phase_spread, f'> {ps_thresh}° → SURFACE', phase_spread > ps_thresh, '°'))
 
-            # Branch 3: Symmetry & Quadrants
-            table_rows.append(section_header("Branch 3: Quadrant Distribution"))
+            # =====================================================================
+            # BRANCH 3: SURFACE DETECTION (8 features, weighted scoring)
+            # =====================================================================
+            table_rows.append(section_header("Branch 3: Surface Detection (weighted score)"))
 
-            q1 = cluster_feats.get('quadrant_1_percentage', 0)
-            q2 = cluster_feats.get('quadrant_2_percentage', 0)
-            q3 = cluster_feats.get('quadrant_3_percentage', 0)
-            q4 = cluster_feats.get('quadrant_4_percentage', 0)
-            positive_half = q1 + q2
-            negative_half = q3 + q4
+            # Get weights
+            surf_primary = int(SURFACE_DETECTION_THRESHOLDS.get('primary_weight', 4))
+            surf_secondary = int(SURFACE_DETECTION_THRESHOLDS.get('secondary_weight', 3))
+            surf_mid = int(SURFACE_DETECTION_THRESHOLDS.get('mid_weight', 2))
+            surf_supporting = int(SURFACE_DETECTION_THRESHOLDS.get('supporting_weight', 1))
+            min_surface_score = int(SURFACE_DETECTION_THRESHOLDS.get('min_surface_score', 8))
 
-            single_half_thresh = QUADRANT_THRESHOLDS['single_halfcycle_threshold']
-            table_rows.append(make_row('Q1 (0-90 deg)', q1, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
-                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q1 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
-            table_rows.append(make_row('Q2 (90-180 deg)', q2, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
-                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q2 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
-            table_rows.append(make_row('Q3 (180-270 deg)', q3, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
-                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q3 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
-            table_rows.append(make_row('Q4 (270-360 deg)', q4, f'{QUADRANT_THRESHOLDS["symmetric_quadrant_min"]}-{QUADRANT_THRESHOLDS["symmetric_quadrant_max"]}%',
-                                       QUADRANT_THRESHOLDS["symmetric_quadrant_min"] <= q4 <= QUADRANT_THRESHOLDS["symmetric_quadrant_max"], '%'))
-            table_rows.append(make_row('Positive Half (Q1+Q2)', positive_half, f'< {single_half_thresh}% (not corona)', positive_half < single_half_thresh, '%'))
-            table_rows.append(make_row('Negative Half (Q3+Q4)', negative_half, f'< {single_half_thresh}% (not corona)', negative_half < single_half_thresh, '%'))
+            # Primary (weight 4): Phase spread
+            surf_ps_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_phase_spread', 120)
+            table_rows.append(make_row(f'Phase Spread [Primary, +{surf_primary}]', phase_spread,
+                                       f'> {surf_ps_thresh}°', phase_spread > surf_ps_thresh, '°'))
 
-            # Branch 4: Phase Location
-            table_rows.append(section_header("Branch 4: Phase Location"))
+            # Secondary (weight 3): Slew rate, Spectral power ratio, CV
+            surf_slew = cluster_feats.get('mean_slew_rate', cluster_feats.get('slew_rate', 1e7))
+            surf_slew_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_max_slew_rate', 1e7)
+            table_rows.append(make_row(f'Slew Rate [Secondary, +{surf_secondary}]', surf_slew,
+                                       f'< {surf_slew_thresh:.0e}', surf_slew < surf_slew_thresh))
 
+            surf_spectral = cluster_feats.get('spectral_power_ratio', cluster_feats.get('mean_spectral_power_ratio', 0.5))
+            surf_spectral_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_max_spectral_power_ratio', 0.8)
+            table_rows.append(make_row(f'Spectral Power Ratio [Secondary, +{surf_secondary}]', surf_spectral,
+                                       f'< {surf_spectral_thresh}', surf_spectral < surf_spectral_thresh))
+
+            surf_cv = cluster_feats.get('coefficient_of_variation', 0.3)
+            surf_cv_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_min_cv', 0.25)
+            table_rows.append(make_row(f'Coeff. of Variation [Secondary, +{surf_secondary}]', surf_cv,
+                                       f'> {surf_cv_thresh}', surf_cv > surf_cv_thresh))
+
+            # Mid (weight 2): Crest factor, Cross correlation
+            surf_crest = cluster_feats.get('mean_crest_factor', cluster_feats.get('crest_factor', 5))
+            surf_crest_min = SURFACE_DETECTION_THRESHOLDS.get('surface_min_crest_factor', 4)
+            surf_crest_max = SURFACE_DETECTION_THRESHOLDS.get('surface_max_crest_factor', 6)
+            table_rows.append(make_row(f'Crest Factor [Mid, +{surf_mid}]', surf_crest,
+                                       f'{surf_crest_min}-{surf_crest_max}', surf_crest_min <= surf_crest <= surf_crest_max))
+
+            surf_cc = cluster_feats.get('cross_correlation', 0.5)
+            surf_cc_min = SURFACE_DETECTION_THRESHOLDS.get('surface_min_cross_corr', 0.4)
+            surf_cc_max = SURFACE_DETECTION_THRESHOLDS.get('surface_max_cross_corr', 0.6)
+            table_rows.append(make_row(f'Cross Correlation [Mid, +{surf_mid}]', surf_cc,
+                                       f'{surf_cc_min}-{surf_cc_max}', surf_cc_min <= surf_cc <= surf_cc_max))
+
+            # Supporting (weight 1): Spectral flatness, Repetition rate variance
+            surf_flat = cluster_feats.get('mean_spectral_flatness', cluster_feats.get('spectral_flatness', 0.4))
+            surf_flat_min = SURFACE_DETECTION_THRESHOLDS.get('surface_min_spectral_flatness', 0.4)
+            surf_flat_max = SURFACE_DETECTION_THRESHOLDS.get('surface_max_spectral_flatness', 0.5)
+            table_rows.append(make_row(f'Spectral Flatness [Supporting, +{surf_supporting}]', surf_flat,
+                                       f'{surf_flat_min}-{surf_flat_max}', surf_flat_min <= surf_flat <= surf_flat_max))
+
+            rep_rate_var = cluster_feats.get('repetition_rate_variance', cluster_feats.get('rep_rate_variance', 0.4))
+            rep_var_thresh = SURFACE_DETECTION_THRESHOLDS.get('surface_min_rep_rate_var', 0.3)
+            table_rows.append(make_row(f'Repetition Rate Variance [Supporting, +{surf_supporting}]', rep_rate_var,
+                                       f'> {rep_var_thresh}', rep_rate_var > rep_var_thresh))
+
+            # Feature 9: Dominant frequency - Surface PD is 1-5 MHz
+            surf_dom_freq = cluster_feats.get('mean_dominant_frequency', cluster_feats.get('dominant_frequency', 0))
+            surf_freq_min = SURFACE_DETECTION_THRESHOLDS.get('surface_min_dominant_freq', 1e6)
+            surf_freq_max = SURFACE_DETECTION_THRESHOLDS.get('surface_max_dominant_freq', 5e6)
+            table_rows.append(make_row(f'Dominant Freq [Supporting, +{surf_supporting}]', surf_dom_freq / 1e6,
+                                       f'{surf_freq_min/1e6:.0f}-{surf_freq_max/1e6:.0f} MHz',
+                                       surf_freq_min <= surf_dom_freq <= surf_freq_max, ' MHz'))
+
+            # =====================================================================
+            # BRANCH 4: CORONA vs INTERNAL (9 features, weighted scoring)
+            # =====================================================================
+            table_rows.append(section_header("Branch 4: Corona vs Internal (weighted scores)"))
+
+            # Get weights
+            ci_primary = int(CORONA_INTERNAL_THRESHOLDS.get('primary_weight', 4))
+            ci_secondary = int(CORONA_INTERNAL_THRESHOLDS.get('secondary_weight', 2))
+            ci_supporting = int(CORONA_INTERNAL_THRESHOLDS.get('supporting_weight', 1))
+
+            # Track scores
+            corona_score = 0
+            internal_score = 0
+
+            # Helper for Corona vs Internal rows - shows which type matched
+            def make_ci_row(feature_name, value, corona_thresh, internal_thresh, is_corona, is_internal, weight, unit=''):
+                nonlocal corona_score, internal_score
+                if is_corona:
+                    corona_score += weight
+                    status_text = f'+{weight} CORONA'
+                    status_color = '#e53935'  # red
+                elif is_internal:
+                    internal_score += weight
+                    status_text = f'+{weight} INTERNAL'
+                    status_color = '#1e88e5'  # blue
+                else:
+                    status_text = '—'
+                    status_color = '#999'
+
+                val_str = f"{value:.4f}" if isinstance(value, float) and abs(value) < 100 else f"{value:.1f}"
+                return html.Tr([
+                    html.Td(feature_name, style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd'}),
+                    html.Td(f"{val_str}{unit}", style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
+                                                       'fontFamily': 'monospace', 'borderBottom': '1px solid #ddd'}),
+                    html.Td(corona_thresh, style={'padding': '4px', 'fontSize': '10px', 'textAlign': 'center',
+                                                  'fontFamily': 'monospace', 'borderBottom': '1px solid #ddd', 'color': '#e53935'}),
+                    html.Td(internal_thresh, style={'padding': '4px', 'fontSize': '10px', 'textAlign': 'center',
+                                                    'fontFamily': 'monospace', 'borderBottom': '1px solid #ddd', 'color': '#1e88e5'}),
+                    html.Td(status_text, style={'padding': '4px', 'fontSize': '11px', 'textAlign': 'center',
+                                                'color': status_color, 'fontWeight': 'bold', 'borderBottom': '1px solid #ddd'}),
+                ])
+
+            # Add header for Corona vs Internal section
+            table_rows.append(html.Tr([
+                html.Th("Feature", style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd', 'textAlign': 'left'}),
+                html.Th("Value", style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd', 'textAlign': 'right'}),
+                html.Th("Corona", style={'padding': '4px', 'fontSize': '10px', 'borderBottom': '1px solid #ddd', 'textAlign': 'center', 'color': '#e53935'}),
+                html.Th("Internal", style={'padding': '4px', 'fontSize': '10px', 'borderBottom': '1px solid #ddd', 'textAlign': 'center', 'color': '#1e88e5'}),
+                html.Th("Match", style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #ddd', 'textAlign': 'center'}),
+            ]))
+
+            # Primary (weight 4): Discharge asymmetry, Phase of max activity
+            # Asymmetry: Negative Corona (<-0.4), Positive Corona (>+0.4), Internal symmetric
+            asymmetry = cluster_feats.get('discharge_asymmetry', 0)
+            corona_neg_asym = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_max_asymmetry', -0.4)
+            corona_pos_asym = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_min_asymmetry', 0.4)
+            internal_asym_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_asymmetry', -0.3)
+            internal_asym_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_asymmetry', 0.3)
+            is_neg_corona_asym = asymmetry < corona_neg_asym
+            is_pos_corona_asym = asymmetry > corona_pos_asym
+            asym_corona = is_neg_corona_asym or is_pos_corona_asym
+            asym_internal = internal_asym_min <= asymmetry <= internal_asym_max
+            corona_asym_label = f'<{corona_neg_asym}(neg) or >{corona_pos_asym}(pos)'
+            table_rows.append(make_ci_row(f'Asymmetry [+{ci_primary}]', asymmetry,
+                                          corona_asym_label, f'[{internal_asym_min},{internal_asym_max}]',
+                                          asym_corona, asym_internal, ci_primary))
+
+            # Phase: Negative Corona 180-270°, Positive Corona 0-90° or 270-360°, Internal 45-90° or 225-270°
             phase_max = cluster_feats.get('phase_of_max_activity', 0)
-            surface_tol = SYMMETRY_THRESHOLDS['surface_phase_tolerance']
-            near_zero = phase_max < surface_tol or abs(phase_max - 180) < surface_tol or phase_max > (360 - surface_tol)
-            table_rows.append(make_row('Phase of Max Activity', phase_max, f'Near 0/180/360 deg +/-{surface_tol} (surface)', near_zero, ' deg'))
+            corona_neg_phase_min = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_phase_min', 180)
+            corona_neg_phase_max = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_phase_max', 270)
+            corona_pos_q1_min = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_phase_q1_min', 0)
+            corona_pos_q1_max = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_phase_q1_max', 90)
+            corona_pos_q4_min = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_phase_q4_min', 270)
+            corona_pos_q4_max = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_phase_q4_max', 360)
+            int_phase_q1_min = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q1_min', 45)
+            int_phase_q1_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q1_max', 90)
+            int_phase_q3_min = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_min', 225)
+            int_phase_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_phase_q3_max', 270)
+            is_neg_corona_phase = corona_neg_phase_min <= phase_max <= corona_neg_phase_max
+            is_pos_corona_phase = (corona_pos_q1_min <= phase_max <= corona_pos_q1_max) or (corona_pos_q4_min <= phase_max <= corona_pos_q4_max)
+            phase_corona = is_neg_corona_phase or is_pos_corona_phase
+            phase_internal = (int_phase_q1_min <= phase_max <= int_phase_q1_max) or (int_phase_q3_min <= phase_max <= int_phase_q3_max)
+            corona_phase_label = f'[{corona_neg_phase_min}-{corona_neg_phase_max}](neg) or [0-90,270-360](pos)'
+            table_rows.append(make_ci_row(f'Phase Max [+{ci_primary}]', phase_max,
+                                          corona_phase_label,
+                                          f'[{int_phase_q1_min},{int_phase_q1_max}]° or [{int_phase_q3_min},{int_phase_q3_max}]°',
+                                          phase_corona, phase_internal, ci_primary, '°'))
 
-            inception = cluster_feats.get('inception_phase', 0)
-            extinction = cluster_feats.get('extinction_phase', 0)
-            table_rows.append(make_row('Inception Phase', inception, 'Info only', True, ' deg'))
-            table_rows.append(make_row('Extinction Phase', extinction, 'Info only', True, ' deg'))
+            # Secondary (weight 2): Slew rate, Spectral power ratio, Oscillation count
+            ci_slew = cluster_feats.get('mean_slew_rate', cluster_feats.get('slew_rate', 1e7))
+            corona_slew_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_slew_rate', 5e7)
+            int_slew_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_slew_rate', 1e7)
+            int_slew_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_slew_rate', 5e7)
+            slew_corona = ci_slew > corona_slew_thresh
+            slew_internal = int_slew_min <= ci_slew <= int_slew_max
+            table_rows.append(make_ci_row(f'Slew Rate [+{ci_secondary}]', ci_slew,
+                                          f'>{corona_slew_thresh:.0e}', f'[{int_slew_min:.0e},{int_slew_max:.0e}]',
+                                          slew_corona, slew_internal, ci_secondary))
 
-            # Branch 5: Amplitude Characteristics
-            table_rows.append(section_header("Branch 5: Amplitude Characteristics"))
+            ci_spectral = cluster_feats.get('spectral_power_ratio', cluster_feats.get('mean_spectral_power_ratio', 1.0))
+            corona_spec_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_spectral_ratio', 1.5)
+            int_spec_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_spectral_ratio', 0.8)
+            int_spec_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_spectral_ratio', 1.5)
+            spec_corona = ci_spectral > corona_spec_thresh
+            spec_internal = int_spec_min <= ci_spectral <= int_spec_max
+            table_rows.append(make_ci_row(f'Spectral Ratio [+{ci_secondary}]', ci_spectral,
+                                          f'>{corona_spec_thresh}', f'[{int_spec_min},{int_spec_max}]',
+                                          spec_corona, spec_internal, ci_secondary))
 
-            weibull_beta = cluster_feats.get('weibull_beta', 0)
-            wb_min = AMPLITUDE_THRESHOLDS['internal_weibull_beta_min']
-            wb_max = AMPLITUDE_THRESHOLDS['internal_weibull_beta_max']
-            table_rows.append(make_row('Weibull Beta', weibull_beta, f'{wb_min}-{wb_max} (internal)', wb_min <= weibull_beta <= wb_max))
+            ci_osc = cluster_feats.get('mean_oscillation_count', cluster_feats.get('oscillation_count', 5))
+            corona_osc_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_max_oscillation', 3)
+            int_osc_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_oscillation', 3)
+            int_osc_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_oscillation', 8)
+            osc_corona = ci_osc < corona_osc_thresh
+            osc_internal = int_osc_min <= ci_osc <= int_osc_max
+            table_rows.append(make_ci_row(f'Oscillation [+{ci_secondary}]', ci_osc,
+                                          f'<{corona_osc_thresh}', f'[{int_osc_min},{int_osc_max}]',
+                                          osc_corona, osc_internal, ci_secondary))
 
-            mean_amp_pos = cluster_feats.get('mean_amplitude_positive', 0)
-            mean_amp_neg = cluster_feats.get('mean_amplitude_negative', 0)
-            max_amp_pos = cluster_feats.get('max_amplitude_positive', 0)
-            max_amp_neg = cluster_feats.get('max_amplitude_negative', 0)
-            mean_amp = max(mean_amp_pos, abs(mean_amp_neg)) if max(mean_amp_pos, abs(mean_amp_neg)) > 0 else 1e-10
-            max_amp = max(max_amp_pos, abs(max_amp_neg))
-            amp_ratio = max_amp / mean_amp if mean_amp > 0 else 0
-            ar_thresh = AMPLITUDE_THRESHOLDS['corona_amplitude_ratio_threshold']
-            table_rows.append(make_row('Amplitude Ratio (max/mean)', amp_ratio, f'> {ar_thresh} (corona)', amp_ratio > ar_thresh))
+            # Supporting (weight 1): CV, Q3 percentage, Repetition rate
+            ci_cv = cluster_feats.get('coefficient_of_variation', 0.2)
+            corona_cv_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_max_cv', 0.15)
+            int_cv_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_cv', 0.15)
+            int_cv_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_cv', 0.35)
+            cv_corona = ci_cv < corona_cv_thresh
+            cv_internal = int_cv_min <= ci_cv <= int_cv_max
+            table_rows.append(make_ci_row(f'CV [+{ci_supporting}]', ci_cv,
+                                          f'<{corona_cv_thresh}', f'[{int_cv_min},{int_cv_max}]',
+                                          cv_corona, cv_internal, ci_supporting))
+
+            q3 = cluster_feats.get('quadrant_3_percentage', 0)
+            corona_q3_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_min_q3_pct', 55)
+            int_q3_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_q3_pct', 35)
+            int_q3_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_q3_pct', 50)
+            q3_corona = q3 > corona_q3_thresh
+            q3_internal = int_q3_min <= q3 <= int_q3_max
+            table_rows.append(make_ci_row(f'Q3 % [+{ci_supporting}]', q3,
+                                          f'>{corona_q3_thresh}%', f'[{int_q3_min},{int_q3_max}]%',
+                                          q3_corona, q3_internal, ci_supporting, '%'))
+
+            rep_rate = cluster_feats.get('repetition_rate', cluster_feats.get('pulses_per_cycle', 50))
+            corona_rep_thresh = CORONA_INTERNAL_THRESHOLDS.get('corona_min_rep_rate', 100)
+            int_rep_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_rep_rate', 20)
+            int_rep_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_rep_rate', 100)
+            rep_corona = rep_rate > corona_rep_thresh
+            rep_internal = int_rep_min <= rep_rate <= int_rep_max
+            table_rows.append(make_ci_row(f'Rep Rate [+{ci_supporting}]', rep_rate,
+                                          f'>{corona_rep_thresh}', f'[{int_rep_min},{int_rep_max}]',
+                                          rep_corona, rep_internal, ci_supporting))
+
+            # Dominant frequency: Negative Corona >= 15 MHz, Positive Corona 5-15 MHz, Internal 5-15 MHz
+            ci_dom_freq = cluster_feats.get('mean_dominant_frequency', cluster_feats.get('dominant_frequency', 0))
+            corona_neg_freq = CORONA_INTERNAL_THRESHOLDS.get('corona_neg_min_dominant_freq', 15e6)
+            corona_pos_freq_min = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_min_dominant_freq', 5e6)
+            corona_pos_freq_max = CORONA_INTERNAL_THRESHOLDS.get('corona_pos_max_dominant_freq', 15e6)
+            int_freq_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_dominant_freq', 5e6)
+            int_freq_max = CORONA_INTERNAL_THRESHOLDS.get('internal_max_dominant_freq', 15e6)
+            # Negative corona: >= 15 MHz, Positive corona: 5-15 MHz with positive asymmetry
+            freq_neg_corona = ci_dom_freq >= corona_neg_freq
+            freq_pos_corona = (corona_pos_freq_min <= ci_dom_freq <= corona_pos_freq_max) and is_pos_corona_asym
+            freq_corona = freq_neg_corona or freq_pos_corona
+            freq_internal = int_freq_min <= ci_dom_freq <= int_freq_max
+            corona_freq_label = f'>={corona_neg_freq/1e6:.0f}MHz(neg) or 5-15MHz(pos)'
+            table_rows.append(make_ci_row(f'Dom Freq [+{ci_secondary}]', ci_dom_freq / 1e6,
+                                          corona_freq_label,
+                                          f'[{int_freq_min/1e6:.0f},{int_freq_max/1e6:.0f}]MHz',
+                                          freq_corona, freq_internal, ci_secondary, ' MHz'))
+
+            # Amplitude-Phase Correlation: PRIMARY FEATURE - Internal high (>0.5), Corona low (<0.3)
+            amp_phase_corr = cluster_feats.get('mean_amplitude_phase_correlation',
+                                                cluster_feats.get('amplitude_phase_correlation', 0))
+            int_amp_corr_min = CORONA_INTERNAL_THRESHOLDS.get('internal_min_amp_phase_corr', 0.5)
+            corona_amp_corr_max = CORONA_INTERNAL_THRESHOLDS.get('corona_max_amp_phase_corr', 0.3)
+            corr_corona = amp_phase_corr <= corona_amp_corr_max
+            corr_internal = amp_phase_corr >= int_amp_corr_min
+            table_rows.append(make_ci_row(f'Amp-Phase Corr [+{ci_primary}]', amp_phase_corr,
+                                          f'<={corona_amp_corr_max}',
+                                          f'>={int_amp_corr_min}',
+                                          corr_corona, corr_internal, ci_primary))
+
+            # Add score summary row (3 primary + 4 secondary + 3 supporting = 12 + 8 + 3 = 23)
+            max_score = 3 * ci_primary + 4 * ci_secondary + 3 * ci_supporting
+            winner = 'CORONA' if corona_score > internal_score else ('INTERNAL' if internal_score > corona_score else 'TIE')
+            winner_color = '#e53935' if winner == 'CORONA' else ('#1e88e5' if winner == 'INTERNAL' else '#666')
+            table_rows.append(html.Tr([
+                html.Td("TOTAL SCORES", colSpan=2, style={'padding': '6px', 'fontSize': '12px', 'fontWeight': 'bold',
+                                                          'backgroundColor': '#f5f5f5', 'borderTop': '2px solid #333'}),
+                html.Td(f'{corona_score}/{max_score}', style={'padding': '6px', 'fontSize': '12px', 'fontWeight': 'bold',
+                                                              'textAlign': 'center', 'backgroundColor': '#ffebee', 'color': '#e53935',
+                                                              'borderTop': '2px solid #333'}),
+                html.Td(f'{internal_score}/{max_score}', style={'padding': '6px', 'fontSize': '12px', 'fontWeight': 'bold',
+                                                                 'textAlign': 'center', 'backgroundColor': '#e3f2fd', 'color': '#1e88e5',
+                                                                 'borderTop': '2px solid #333'}),
+                html.Td(winner, style={'padding': '6px', 'fontSize': '12px', 'fontWeight': 'bold',
+                                       'textAlign': 'center', 'color': winner_color, 'borderTop': '2px solid #333'}),
+            ]))
 
             # Create the table
             feature_table = html.Table(
@@ -3766,6 +5638,89 @@ def create_app(data_dir=DATA_DIR):
                 for warning in result['warnings']:
                     warning_list.append(html.Li(warning, style={'fontSize': '12px', 'color': '#856404'}))
                 content.append(html.Ul(warning_list, style={'marginLeft': '20px', 'marginTop': '0'}))
+
+            # Selected Cluster Features Table
+            if selected_cluster_features and len(selected_cluster_features) > 0:
+                content.append(html.H5("Selected Cluster Features:",
+                                       style={'marginTop': '20px', 'marginBottom': '10px', 'color': '#1565c0'}))
+
+                # Build feature table
+                feat_header = html.Tr([
+                    html.Th("Feature", style={'padding': '6px', 'borderBottom': '2px solid #333', 'textAlign': 'left', 'backgroundColor': '#e3f2fd'}),
+                    html.Th("Value", style={'padding': '6px', 'borderBottom': '2px solid #333', 'textAlign': 'right', 'backgroundColor': '#e3f2fd'}),
+                ])
+
+                feat_rows = [feat_header]
+
+                # Group features by type
+                mean_feats = [f for f in selected_cluster_features if f.startswith('mean_') and not f.startswith('mean_amplitude')]
+                trimmed_feats = [f for f in selected_cluster_features if f.startswith('trimmed_mean_')]
+                prpd_feats = [f for f in selected_cluster_features if f in AGG_CLUSTER_FEATURE_NAMES]
+                # Also catch mean_amplitude_positive/negative which are PRPD features
+                prpd_feats += [f for f in selected_cluster_features if f.startswith('mean_amplitude')]
+
+                def format_value(val):
+                    """Format a feature value for display."""
+                    if val is None:
+                        return "N/A"
+                    if isinstance(val, float):
+                        if abs(val) < 0.001 or abs(val) > 10000:
+                            return f"{val:.4e}"
+                        elif abs(val) < 1:
+                            return f"{val:.6f}"
+                        else:
+                            return f"{val:.4f}"
+                    return str(val)
+
+                def add_section(title, features, color):
+                    if features:
+                        feat_rows.append(html.Tr([
+                            html.Td(title, colSpan=2, style={
+                                'padding': '6px 4px', 'fontSize': '11px', 'fontWeight': 'bold',
+                                'backgroundColor': color, 'borderBottom': '1px solid #ccc'
+                            })
+                        ]))
+                        for feat in sorted(features):
+                            # Check if feature exists in the data (vs defaulting to 0.0)
+                            if feat in cluster_feats:
+                                val = cluster_feats[feat]
+                                val_display = format_value(val)
+                                val_style = {'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
+                                            'fontFamily': 'monospace', 'borderBottom': '1px solid #eee'}
+                            else:
+                                val_display = "N/A (missing)"
+                                val_style = {'padding': '4px', 'fontSize': '11px', 'textAlign': 'right',
+                                            'fontFamily': 'monospace', 'borderBottom': '1px solid #eee',
+                                            'color': '#999', 'fontStyle': 'italic'}
+
+                            display_name = feat
+                            if feat.startswith('mean_'):
+                                display_name = feat.replace('mean_', '')
+                            elif feat.startswith('trimmed_mean_'):
+                                display_name = feat.replace('trimmed_mean_', '')
+
+                            feat_rows.append(html.Tr([
+                                html.Td(display_name, style={'padding': '4px', 'fontSize': '11px', 'borderBottom': '1px solid #eee'}),
+                                html.Td(val_display, style=val_style),
+                            ]))
+
+                add_section("PRPD Features", prpd_feats, '#fff3e0')
+                add_section("Mean Waveform Features", mean_feats, '#e8f5e9')
+                add_section("Trimmed Mean Waveform Features", trimmed_feats, '#e3f2fd')
+
+                selected_feat_table = html.Table(
+                    feat_rows,
+                    style={
+                        'width': '100%',
+                        'borderCollapse': 'collapse',
+                        'fontSize': '11px',
+                        'backgroundColor': '#fff'
+                    }
+                )
+                content.append(html.Div(selected_feat_table, style={
+                    'maxHeight': '250px', 'overflowY': 'auto',
+                    'border': '1px solid #ddd', 'borderRadius': '4px'
+                }))
 
             return html.Div(content), {
                 'display': 'block',

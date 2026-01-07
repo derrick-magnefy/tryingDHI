@@ -2,17 +2,17 @@
 """
 PD Pulse Clustering Script
 
-Clusters partial discharge pulses using DBSCAN or K-means based on extracted features.
+Clusters partial discharge pulses using DBSCAN, HDBSCAN, or K-means based on extracted features.
 
 Usage:
-    python cluster_pulses.py [--method dbscan|kmeans] [--input FILE] [--n-clusters N]
+    python cluster_pulses.py [--method dbscan|hdbscan|kmeans] [--input FILE] [--n-clusters N]
 
 Options:
-    --method        Clustering method: 'dbscan' or 'kmeans' (default: dbscan)
+    --method        Clustering method: 'dbscan', 'hdbscan', or 'kmeans' (default: dbscan)
     --input FILE    Input features CSV file (default: process all *-features.csv)
     --n-clusters N  Number of clusters for K-means (default: 5)
     --eps EPS       DBSCAN epsilon parameter (default: auto)
-    --min-samples N DBSCAN min_samples parameter (default: 5)
+    --min-samples N DBSCAN/HDBSCAN min_samples parameter (default: 5)
     --features      Comma-separated list of features to use (default: all)
 """
 
@@ -26,6 +26,13 @@ from sklearn.cluster import DBSCAN, KMeans
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import silhouette_score
 import warnings
+
+# Try to import HDBSCAN (optional dependency)
+try:
+    import hdbscan
+    HDBSCAN_AVAILABLE = True
+except ImportError:
+    HDBSCAN_AVAILABLE = False
 
 DATA_DIR = "Rugged Data Files"
 
@@ -49,11 +56,17 @@ def load_features(filepath):
     return np.array(features), feature_names
 
 
-def estimate_dbscan_eps(X_scaled, k=5):
+def estimate_dbscan_eps(X_scaled, k=5, percentile=60):
     """
     Estimate optimal epsilon for DBSCAN using k-nearest neighbors.
 
-    Uses the "elbow method" on k-distance graph.
+    Uses the k-distance graph with configurable percentile.
+    Lower percentile = tighter clusters, higher = looser clusters.
+
+    Args:
+        X_scaled: Scaled feature matrix
+        k: Number of neighbors (usually same as min_samples)
+        percentile: Percentile of k-distances to use (default 60, range 50-90)
     """
     neighbors = NearestNeighbors(n_neighbors=k)
     neighbors.fit(X_scaled)
@@ -62,14 +75,13 @@ def estimate_dbscan_eps(X_scaled, k=5):
     # Get the k-th nearest neighbor distance for each point
     k_distances = np.sort(distances[:, k-1])
 
-    # Find the "elbow" - point of maximum curvature
-    # Use simple heuristic: take distance at 90th percentile
-    eps = np.percentile(k_distances, 90)
+    # Use specified percentile (lower = tighter clusters)
+    eps = np.percentile(k_distances, percentile)
 
     return eps
 
 
-def run_dbscan(X_scaled, eps=None, min_samples=5):
+def run_dbscan(X_scaled, eps=None, min_samples=5, auto_percentile=60):
     """
     Run DBSCAN clustering.
 
@@ -77,14 +89,15 @@ def run_dbscan(X_scaled, eps=None, min_samples=5):
         X_scaled: Scaled feature matrix
         eps: Epsilon parameter (auto-estimated if None)
         min_samples: Minimum samples for core point
+        auto_percentile: Percentile for auto eps estimation (default 60)
 
     Returns:
         labels: Cluster labels (-1 for noise)
         info: Dict with clustering info
     """
     if eps is None:
-        eps = estimate_dbscan_eps(X_scaled, k=min_samples)
-        print(f"  Auto-estimated eps: {eps:.4f}")
+        eps = estimate_dbscan_eps(X_scaled, k=min_samples, percentile=auto_percentile)
+        print(f"  Auto-estimated eps: {eps:.4f} (at {auto_percentile}th percentile)")
 
     dbscan = DBSCAN(eps=eps, min_samples=min_samples)
     labels = dbscan.fit_predict(X_scaled)
@@ -146,6 +159,60 @@ def run_kmeans(X_scaled, n_clusters=5):
     return labels, info
 
 
+def run_hdbscan(X_scaled, min_samples=5, min_cluster_size=None):
+    """
+    Run HDBSCAN clustering.
+
+    HDBSCAN automatically determines the number of clusters and handles varying
+    density better than DBSCAN. No eps parameter needed.
+
+    Args:
+        X_scaled: Scaled feature matrix
+        min_samples: Minimum samples for core point (default: 5)
+        min_cluster_size: Minimum cluster size (default: same as min_samples)
+
+    Returns:
+        labels: Cluster labels (-1 for noise)
+        info: Dict with clustering info
+    """
+    if not HDBSCAN_AVAILABLE:
+        raise ImportError("HDBSCAN not installed. Install with: pip install hdbscan")
+
+    if min_cluster_size is None:
+        min_cluster_size = min_samples
+
+    clusterer = hdbscan.HDBSCAN(
+        min_samples=min_samples,
+        min_cluster_size=min_cluster_size,
+        metric='euclidean',
+        cluster_selection_method='eom'  # Excess of Mass (more conservative)
+    )
+    labels = clusterer.fit_predict(X_scaled)
+
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_noise = list(labels).count(-1)
+
+    info = {
+        'method': 'HDBSCAN',
+        'min_samples': min_samples,
+        'min_cluster_size': min_cluster_size,
+        'n_clusters': n_clusters,
+        'n_noise': n_noise,
+        'noise_ratio': n_noise / len(labels) if len(labels) > 0 else 0
+    }
+
+    # Calculate silhouette score if we have valid clusters
+    if n_clusters > 1:
+        mask = labels != -1
+        if mask.sum() > 1:
+            try:
+                info['silhouette_score'] = silhouette_score(X_scaled[mask], labels[mask])
+            except:
+                info['silhouette_score'] = None
+
+    return labels, info
+
+
 def save_cluster_labels(labels, output_path, feature_file, info, used_features=None):
     """Save cluster labels and metadata to file."""
     with open(output_path, 'w') as f:
@@ -159,6 +226,11 @@ def save_cluster_labels(labels, output_path, feature_file, info, used_features=N
         if 'eps' in info:
             f.write(f"# DBSCAN_eps: {info['eps']}\n")
             f.write(f"# DBSCAN_min_samples: {info['min_samples']}\n")
+            f.write(f"# Noise_points: {info['n_noise']}\n")
+
+        if info['method'] == 'HDBSCAN':
+            f.write(f"# HDBSCAN_min_samples: {info['min_samples']}\n")
+            f.write(f"# HDBSCAN_min_cluster_size: {info['min_cluster_size']}\n")
             f.write(f"# Noise_points: {info['n_noise']}\n")
 
         if 'silhouette_score' in info and info['silhouette_score'] is not None:
@@ -175,7 +247,7 @@ def save_cluster_labels(labels, output_path, feature_file, info, used_features=N
             f.write(f"{i},{label}\n")
 
 
-def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=5, selected_features=None):
+def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=5, auto_percentile=60, selected_features=None):
     """
     Process a single features file and perform clustering.
 
@@ -185,6 +257,7 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
         n_clusters: Number of clusters for K-means
         eps: DBSCAN epsilon (auto if None)
         min_samples: DBSCAN min_samples
+        auto_percentile: Percentile for auto eps estimation (default 60)
         selected_features: List of feature names to use (None = all)
 
     Returns:
@@ -229,8 +302,11 @@ def process_file(filepath, method='dbscan', n_clusters=5, eps=None, min_samples=
 
     # Run clustering
     if method == 'dbscan':
-        print(f"  Running DBSCAN (min_samples={min_samples})...")
-        labels, info = run_dbscan(X_scaled, eps=eps, min_samples=min_samples)
+        print(f"  Running DBSCAN (min_samples={min_samples}, auto_percentile={auto_percentile})...")
+        labels, info = run_dbscan(X_scaled, eps=eps, min_samples=min_samples, auto_percentile=auto_percentile)
+    elif method == 'hdbscan':
+        print(f"  Running HDBSCAN (min_samples={min_samples})...")
+        labels, info = run_hdbscan(X_scaled, min_samples=min_samples)
     else:
         print(f"  Running K-means (k={n_clusters})...")
         labels, info = run_kmeans(X_scaled, n_clusters=n_clusters)
@@ -265,7 +341,7 @@ def main():
     parser.add_argument(
         '--method',
         type=str,
-        choices=['dbscan', 'kmeans'],
+        choices=['dbscan', 'hdbscan', 'kmeans'],
         default='dbscan',
         help='Clustering method (default: dbscan)'
     )
@@ -300,6 +376,12 @@ def main():
         help='DBSCAN min_samples parameter (default: 5)'
     )
     parser.add_argument(
+        '--auto-percentile',
+        type=int,
+        default=60,
+        help='Percentile for auto eps estimation (default: 60, range: 50-90, lower=tighter)'
+    )
+    parser.add_argument(
         '--features',
         type=str,
         default=None,
@@ -322,6 +404,8 @@ def main():
     else:
         print(f"DBSCAN min_samples: {args.min_samples}")
         print(f"DBSCAN eps: {'auto' if args.eps is None else args.eps}")
+        if args.eps is None:
+            print(f"DBSCAN auto percentile: {args.auto_percentile}%")
     if selected_features:
         print(f"Features: {len(selected_features)} selected")
     else:
@@ -350,6 +434,7 @@ def main():
                 n_clusters=args.n_clusters,
                 eps=args.eps,
                 min_samples=args.min_samples,
+                auto_percentile=args.auto_percentile,
                 selected_features=selected_features
             )
             results.append({
