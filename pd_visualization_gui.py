@@ -2570,7 +2570,7 @@ def create_app(data_dir=DATA_DIR):
                                     dcc.Input(
                                         id='ieee-post-samples',
                                         type='number',
-                                        value=100,
+                                        value=200,
                                         min=1,
                                         max=5000,
                                         style={'width': '80px', 'marginRight': '10px'}
@@ -6877,7 +6877,7 @@ def create_app(data_dir=DATA_DIR):
 
         # Apply default values for None inputs (GUI input fields may be empty)
         pre_samples = pre_samples if pre_samples is not None else 50
-        post_samples = post_samples if post_samples is not None else 100
+        post_samples = post_samples if post_samples is not None else 200
         ac_frequency = ac_frequency if ac_frequency is not None else 60.0
         trigger_method = trigger_method if trigger_method else 'histogram_knee'
 
