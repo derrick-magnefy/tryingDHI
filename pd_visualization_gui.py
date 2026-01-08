@@ -2561,7 +2561,7 @@ def create_app(data_dir=DATA_DIR):
                                     dcc.Input(
                                         id='ieee-pre-samples',
                                         type='number',
-                                        value=20,
+                                        value=50,
                                         min=1,
                                         max=2000,
                                         style={'width': '80px', 'marginRight': '20px'}
@@ -2570,7 +2570,7 @@ def create_app(data_dir=DATA_DIR):
                                     dcc.Input(
                                         id='ieee-post-samples',
                                         type='number',
-                                        value=40,
+                                        value=100,
                                         min=1,
                                         max=5000,
                                         style={'width': '80px', 'marginRight': '10px'}
@@ -6876,8 +6876,8 @@ def create_app(data_dir=DATA_DIR):
         os.makedirs(IEEE_PROCESSED_DIR, exist_ok=True)
 
         # Apply default values for None inputs (GUI input fields may be empty)
-        pre_samples = pre_samples if pre_samples is not None else 20
-        post_samples = post_samples if post_samples is not None else 40
+        pre_samples = pre_samples if pre_samples is not None else 50
+        post_samples = post_samples if post_samples is not None else 100
         ac_frequency = ac_frequency if ac_frequency is not None else 60.0
         trigger_method = trigger_method if trigger_method else 'histogram_knee'
 
