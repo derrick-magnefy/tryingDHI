@@ -1706,6 +1706,27 @@ def create_app(data_dir=DATA_DIR):
             ], id='noise-threshold-container', style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
 
+        # Raw dataset processing section (shown only for [RAW] datasets)
+        html.Div([
+            html.Div([
+                html.Span("⚠️ This dataset needs feature extraction before visualization. ",
+                         style={'color': '#856404', 'marginRight': '10px'}),
+                html.Button("Extract Features & Analyze", id='extract-features-btn', n_clicks=0,
+                           style={'backgroundColor': '#28a745', 'color': 'white',
+                                  'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
+                                  'cursor': 'pointer', 'fontWeight': 'bold'}),
+                dcc.Loading(
+                    id='extract-features-loading',
+                    type='circle',
+                    children=html.Span(id='extract-features-status', style={'marginLeft': '15px'})
+                ),
+            ], style={'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap'})
+        ], id='raw-dataset-notice', style={
+            'width': '90%', 'margin': '10px auto', 'padding': '12px',
+            'backgroundColor': '#fff3cd', 'borderRadius': '8px',
+            'border': '1px solid #ffc107', 'display': 'none'
+        }),
+
         # PD Type Summary (always visible - shown prominently in simplified view)
         html.Div([
             html.Div(id='pd-type-summary-display', style={
@@ -6619,6 +6640,104 @@ def create_app(data_dir=DATA_DIR):
         except Exception as e:
             return html.Div(f"Error during analysis: {str(e)}",
                           style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'})
+
+    # ===== Raw Dataset Processing Callbacks =====
+
+    @app.callback(
+        Output('raw-dataset-notice', 'style'),
+        Input('dataset-dropdown', 'value')
+    )
+    def toggle_raw_dataset_notice(prefix):
+        """Show/hide the raw dataset notice based on whether dataset needs processing."""
+        hidden = {'width': '90%', 'margin': '10px auto', 'padding': '12px',
+                  'backgroundColor': '#fff3cd', 'borderRadius': '8px',
+                  'border': '1px solid #ffc107', 'display': 'none'}
+        visible = {'width': '90%', 'margin': '10px auto', 'padding': '12px',
+                   'backgroundColor': '#fff3cd', 'borderRadius': '8px',
+                   'border': '1px solid #ffc107', 'display': 'block'}
+
+        if not prefix:
+            return hidden
+
+        dataset_info = loader.dataset_info.get(prefix, {})
+        has_features = dataset_info.get('has_features', True)
+
+        return visible if not has_features else hidden
+
+    @app.callback(
+        Output('extract-features-status', 'children'),
+        Output('dataset-dropdown', 'options'),
+        Output('dataset-dropdown', 'value'),
+        Input('extract-features-btn', 'n_clicks'),
+        State('dataset-dropdown', 'value'),
+        prevent_initial_call=True
+    )
+    def extract_features_for_dataset(n_clicks, prefix):
+        """Run the full analysis pipeline for a raw dataset."""
+        if not n_clicks or not prefix:
+            raise PreventUpdate
+
+        dataset_info = loader.dataset_info.get(prefix, {})
+        data_path = dataset_info.get('path', DATA_DIR)
+        clean_prefix = loader.get_clean_prefix(prefix)
+
+        print(f"\n{'='*60}")
+        print(f"Running pipeline for: {clean_prefix}")
+        print(f"Data path: {data_path}")
+        print(f"{'='*60}")
+
+        try:
+            # Import pipeline functions
+            from run_pipeline_integrated import (
+                extract_features,
+                run_clustering,
+                aggregate_cluster_features,
+                classify_clusters
+            )
+
+            # Step 1: Extract features
+            print("\n[1/4] Extracting features...")
+            extract_features(data_path, file_prefix=clean_prefix)
+            print("  ✓ Features extracted")
+
+            # Step 2: Clustering
+            print("\n[2/4] Clustering pulses...")
+            run_clustering(data_path, file_prefix=clean_prefix, method='dbscan')
+            print("  ✓ Clustering complete")
+
+            # Step 3: Aggregate cluster features
+            print("\n[3/4] Aggregating cluster features...")
+            aggregate_cluster_features(data_path, file_prefix=clean_prefix, method='dbscan')
+            print("  ✓ Aggregation complete")
+
+            # Step 4: Classify PD types
+            print("\n[4/4] Classifying PD types...")
+            classify_clusters(data_path, file_prefix=clean_prefix, method='dbscan')
+            print("  ✓ Classification complete")
+
+            print(f"\n{'='*60}")
+            print("Pipeline complete!")
+            print(f"{'='*60}")
+
+            # Refresh the dataset list
+            loader.find_datasets()
+            new_options = [{'label': d, 'value': d} for d in loader.datasets]
+
+            # The dataset should now appear without [RAW] prefix
+            new_value = clean_prefix if clean_prefix in loader.datasets else prefix
+
+            status = html.Span([
+                html.Span("✓ ", style={'color': 'green'}),
+                "Pipeline complete! Refresh the page or reselect dataset to view results."
+            ], style={'color': '#28a745'})
+
+            return status, new_options, new_value
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Error: {str(e)}")
+            return html.Span(f"✗ Error: {str(e)}", style={'color': 'red'}), no_update, no_update
 
     # ===== IEEE Data Preprocessing Callbacks =====
 
