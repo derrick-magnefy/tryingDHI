@@ -6584,15 +6584,31 @@ def create_app(data_dir=DATA_DIR):
         prevent_initial_call=True
     )
     def scan_ieee_directory(n_clicks, input_dir):
-        """Scan directory for .mat files."""
+        """Scan directory recursively for .mat files in subdirectories."""
         if not n_clicks or not input_dir:
             return []
 
         if not os.path.exists(input_dir):
             return []
 
-        mat_files = glob.glob(os.path.join(input_dir, "*.mat"))
-        options = [{'label': os.path.basename(f), 'value': f} for f in sorted(mat_files)]
+        # Search recursively for .mat files in subdirectories
+        mat_files = glob.glob(os.path.join(input_dir, "**", "*.mat"), recursive=True)
+        # Also check top-level directory
+        mat_files += glob.glob(os.path.join(input_dir, "*.mat"))
+        # Remove duplicates and sort
+        mat_files = sorted(set(mat_files))
+
+        # Create options with relative path shown for files in subdirectories
+        options = []
+        for f in mat_files:
+            rel_path = os.path.relpath(f, input_dir)
+            # Show subfolder/filename for nested files, just filename for top-level
+            if os.path.dirname(rel_path):
+                label = rel_path.replace(os.sep, '/')  # Use forward slashes for display
+            else:
+                label = os.path.basename(f)
+            options.append({'label': label, 'value': f})
+
         return options
 
     @app.callback(
@@ -6684,9 +6700,22 @@ def create_app(data_dir=DATA_DIR):
 
         for fpath, ch in files_to_process:
             try:
-                # Generate output prefix including channel name
-                base_name = os.path.splitext(os.path.basename(fpath))[0]
-                output_prefix = f"{base_name}_{ch}"
+                # Generate output prefix including subfolder and channel name
+                # Get relative path from input directory to preserve folder structure
+                if input_dir and os.path.exists(input_dir):
+                    rel_path = os.path.relpath(fpath, input_dir)
+                    # Replace path separators with underscores for the prefix
+                    rel_dir = os.path.dirname(rel_path)
+                    base_name = os.path.splitext(os.path.basename(fpath))[0]
+                    if rel_dir and rel_dir != '.':
+                        # Include subfolder name in prefix (e.g., "Corona_dataset1_Ch1")
+                        subfolder = rel_dir.replace(os.sep, '_').replace(' ', '_')
+                        output_prefix = f"{subfolder}_{base_name}_{ch}"
+                    else:
+                        output_prefix = f"{base_name}_{ch}"
+                else:
+                    base_name = os.path.splitext(os.path.basename(fpath))[0]
+                    output_prefix = f"{base_name}_{ch}"
 
                 result = process_raw_stream(
                     filepath=fpath,
@@ -6700,11 +6729,17 @@ def create_app(data_dir=DATA_DIR):
                     verbose=False
                 )
 
+                # Get display name (relative path for nested files)
+                if input_dir and os.path.exists(input_dir):
+                    display_name = os.path.relpath(fpath, input_dir).replace(os.sep, '/')
+                else:
+                    display_name = os.path.basename(fpath)
+
                 if result['status'] == 'success':
                     success_count += 1
                     results.append(html.Div([
                         html.Span("✓ ", style={'color': 'green'}),
-                        html.Span(f"{os.path.basename(fpath)} ({ch}): "),
+                        html.Span(f"{display_name} ({ch}): "),
                         html.Span(f"{result['num_waveforms']} waveforms extracted",
                                  style={'color': '#28a745'})
                     ], style={'fontSize': '12px', 'marginBottom': '3px'}))
@@ -6712,14 +6747,19 @@ def create_app(data_dir=DATA_DIR):
                     error_count += 1
                     results.append(html.Div([
                         html.Span("✗ ", style={'color': 'red'}),
-                        html.Span(f"{os.path.basename(fpath)}: No triggers detected")
+                        html.Span(f"{display_name}: No triggers detected")
                     ], style={'fontSize': '12px', 'marginBottom': '3px'}))
 
             except Exception as e:
                 error_count += 1
+                # Get display name for error case
+                if input_dir and os.path.exists(input_dir):
+                    display_name = os.path.relpath(fpath, input_dir).replace(os.sep, '/')
+                else:
+                    display_name = os.path.basename(fpath)
                 results.append(html.Div([
                     html.Span("✗ ", style={'color': 'red'}),
-                    html.Span(f"{os.path.basename(fpath)}: {str(e)}")
+                    html.Span(f"{display_name}: {str(e)}")
                 ], style={'fontSize': '12px', 'marginBottom': '3px'}))
 
         # Summary
