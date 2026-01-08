@@ -2477,8 +2477,53 @@ def create_app(data_dir=DATA_DIR):
                                         value=DEFAULT_TRIGGER_METHOD,
                                         style={'width': '200px', 'display': 'inline-block'}
                                     ),
-                                    html.Span(" histogram_knee is usually most robust", style={'marginLeft': '10px', 'fontSize': '11px', 'color': '#666'}),
                                 ], style={'marginBottom': '10px'}),
+
+                                # Method-specific configuration (shown/hidden based on method)
+                                # stdev method: k-sigma multiplier
+                                html.Div([
+                                    html.Label("K-Sigma:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-k-sigma',
+                                        type='number',
+                                        value=5.0,
+                                        min=1.0,
+                                        max=20.0,
+                                        step=0.5,
+                                        style={'width': '80px', 'marginRight': '10px'}
+                                    ),
+                                    html.Span("× standard deviation above baseline", style={'fontSize': '11px', 'color': '#666'}),
+                                ], id='ieee-stdev-config', style={'marginBottom': '10px', 'marginLeft': '120px', 'display': 'none'}),
+
+                                # pulse_rate method: target pulses per cycle
+                                html.Div([
+                                    html.Label("Target Rate:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-target-rate',
+                                        type='number',
+                                        value=100,
+                                        min=1,
+                                        max=1000,
+                                        step=10,
+                                        style={'width': '80px', 'marginRight': '10px'}
+                                    ),
+                                    html.Span("max pulses per AC cycle", style={'fontSize': '11px', 'color': '#666'}),
+                                ], id='ieee-pulse-rate-config', style={'marginBottom': '10px', 'marginLeft': '120px', 'display': 'none'}),
+
+                                # histogram_knee method: sensitivity
+                                html.Div([
+                                    html.Label("Sensitivity:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-sensitivity',
+                                        type='number',
+                                        value=1.0,
+                                        min=0.1,
+                                        max=5.0,
+                                        step=0.1,
+                                        style={'width': '80px', 'marginRight': '10px'}
+                                    ),
+                                    html.Span("knee detection sensitivity (higher = more sensitive)", style={'fontSize': '11px', 'color': '#666'}),
+                                ], id='ieee-histogram-config', style={'marginBottom': '10px', 'marginLeft': '120px', 'display': 'block'}),
 
                                 # Pre/post samples
                                 html.Div([
@@ -6578,6 +6623,24 @@ def create_app(data_dir=DATA_DIR):
     # ===== IEEE Data Preprocessing Callbacks =====
 
     @app.callback(
+        Output('ieee-stdev-config', 'style'),
+        Output('ieee-pulse-rate-config', 'style'),
+        Output('ieee-histogram-config', 'style'),
+        Input('ieee-trigger-method', 'value')
+    )
+    def toggle_method_config(method):
+        """Show/hide method-specific configuration based on selected trigger method."""
+        hidden = {'marginBottom': '10px', 'marginLeft': '120px', 'display': 'none'}
+        visible = {'marginBottom': '10px', 'marginLeft': '120px', 'display': 'block'}
+
+        if method == 'stdev':
+            return visible, hidden, hidden
+        elif method == 'pulse_rate':
+            return hidden, visible, hidden
+        else:  # histogram_knee
+            return hidden, hidden, visible
+
+    @app.callback(
         Output('ieee-file-dropdown', 'options'),
         Input('ieee-scan-btn', 'n_clicks'),
         State('ieee-input-dir', 'value'),
@@ -6651,10 +6714,14 @@ def create_app(data_dir=DATA_DIR):
         State('ieee-post-samples', 'value'),
         State('ieee-ac-frequency', 'value'),
         State('ieee-input-dir', 'value'),
+        State('ieee-k-sigma', 'value'),
+        State('ieee-target-rate', 'value'),
+        State('ieee-sensitivity', 'value'),
         prevent_initial_call=True
     )
     def process_ieee_data(n_clicks_single, n_clicks_all, filepath, all_files, channel,
-                          trigger_method, pre_samples, post_samples, ac_frequency, input_dir):
+                          trigger_method, pre_samples, post_samples, ac_frequency, input_dir,
+                          k_sigma, target_rate, sensitivity):
         """Process IEEE data file(s)."""
         if not PRE_MIDDLEWARE_AVAILABLE:
             return html.Div("Pre-middleware not available. Cannot process IEEE data.",
@@ -6666,6 +6733,15 @@ def create_app(data_dir=DATA_DIR):
 
         # Ensure output directory exists
         os.makedirs(IEEE_PROCESSED_DIR, exist_ok=True)
+
+        # Build method-specific kwargs
+        trigger_kwargs = {}
+        if trigger_method == 'stdev':
+            trigger_kwargs['k_sigma'] = k_sigma or 5.0
+        elif trigger_method == 'pulse_rate':
+            trigger_kwargs['target_rate_per_cycle'] = target_rate or 100
+        elif trigger_method == 'histogram_knee':
+            trigger_kwargs['sensitivity'] = sensitivity or 1.0
 
         results = []
 
@@ -6726,7 +6802,8 @@ def create_app(data_dir=DATA_DIR):
                     post_samples=post_samples,
                     ac_frequency=ac_frequency,
                     signal_var=ch,
-                    verbose=False
+                    verbose=False,
+                    **trigger_kwargs
                 )
 
                 # Get display name (relative path for nested files)
