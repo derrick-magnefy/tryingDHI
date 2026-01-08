@@ -115,8 +115,23 @@ def process_raw_stream(
     else:
         raise ValueError(f"Unsupported file format: {filepath.suffix}")
 
-    signal = data['signal']
-    sample_rate = data['sample_rate']
+    signal = data.get('signal')
+    sample_rate = data.get('sample_rate')
+
+    # Validate loaded data
+    if signal is None or len(signal) == 0:
+        available_vars = list(data.get('metadata', {}).keys())
+        raise ValueError(
+            f"Could not find signal data in {filepath.name}. "
+            f"Available variables: {available_vars}. "
+            f"Try specifying --signal-var or --channel."
+        )
+
+    if sample_rate is None or sample_rate <= 0:
+        raise ValueError(
+            f"Could not determine sample rate for {filepath.name}. "
+            f"Try specifying --sample-rate-var."
+        )
 
     if verbose:
         print(f"  Signal length: {len(signal):,} samples")
