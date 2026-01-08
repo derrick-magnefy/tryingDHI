@@ -6774,7 +6774,13 @@ def create_app(data_dir=DATA_DIR):
         success_count = 0
         error_count = 0
 
-        for fpath, ch in files_to_process:
+        for idx, (fpath, ch) in enumerate(files_to_process):
+            # Get display name (relative path for nested files)
+            if input_dir and os.path.exists(input_dir):
+                display_name = os.path.relpath(fpath, input_dir).replace(os.sep, '/')
+            else:
+                display_name = os.path.basename(fpath)
+
             try:
                 # Generate output prefix including subfolder and channel name
                 # Get relative path from input directory to preserve folder structure
@@ -6793,6 +6799,9 @@ def create_app(data_dir=DATA_DIR):
                     base_name = os.path.splitext(os.path.basename(fpath))[0]
                     output_prefix = f"{base_name}_{ch}"
 
+                # Print progress to terminal
+                print(f"\n[{idx + 1}/{len(files_to_process)}] Processing: {display_name} ({ch})")
+
                 result = process_raw_stream(
                     filepath=fpath,
                     output_dir=IEEE_PROCESSED_DIR,
@@ -6802,15 +6811,9 @@ def create_app(data_dir=DATA_DIR):
                     post_samples=post_samples,
                     ac_frequency=ac_frequency,
                     signal_var=ch,
-                    verbose=False,
+                    verbose=True,  # Show detailed progress in terminal
                     **trigger_kwargs
                 )
-
-                # Get display name (relative path for nested files)
-                if input_dir and os.path.exists(input_dir):
-                    display_name = os.path.relpath(fpath, input_dir).replace(os.sep, '/')
-                else:
-                    display_name = os.path.basename(fpath)
 
                 if result['status'] == 'success':
                     success_count += 1
@@ -6829,11 +6832,6 @@ def create_app(data_dir=DATA_DIR):
 
             except Exception as e:
                 error_count += 1
-                # Get display name for error case
-                if input_dir and os.path.exists(input_dir):
-                    display_name = os.path.relpath(fpath, input_dir).replace(os.sep, '/')
-                else:
-                    display_name = os.path.basename(fpath)
                 results.append(html.Div([
                     html.Span("✗ ", style={'color': 'red'}),
                     html.Span(f"{display_name}: {str(e)}")
