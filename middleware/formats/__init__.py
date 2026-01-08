@@ -3,8 +3,8 @@ middleware.formats - Format-Specific Data Loaders
 
 Provides loaders for different PD data formats:
 - RuggedLoader: Rugged format (-WFMs.txt, -SG.txt files)
-- TUDelftLoader: TU Delft/Tektronix binary WFM format (future)
-- GenericLoader: CSV/generic formats (future)
+- TektronixWFMParser: TU Delft/Tektronix binary WFM format
+- PDN utilities: Binary PDN file decoder
 
 Usage:
     from middleware.formats import AutoLoader, RuggedLoader
@@ -16,6 +16,10 @@ Usage:
     # Or use specific loader
     rugged = RuggedLoader('Rugged Data Files')
     waveforms = rugged.load_waveforms('dataset_name')
+
+    # Tektronix WFM parser
+    from middleware.formats import TektronixWFMParser
+    parser = TektronixWFMParser('file.wfm')
 """
 
 from .base import BaseLoader, DatasetInfo
@@ -28,6 +32,13 @@ from .detection import (
     get_dataset_info,
     AutoLoader,
 )
+
+# Tektronix/TU Delft format
+try:
+    from .tektronix import TektronixWFMParser, load_tu_delft_timing, convert_timing_to_phase
+    TEKTRONIX_AVAILABLE = True
+except ImportError:
+    TEKTRONIX_AVAILABLE = False
 
 __all__ = [
     # Base
@@ -44,4 +55,7 @@ __all__ = [
     'list_datasets',
     'get_dataset_info',
     'AutoLoader',
+    # Tektronix
+    'TektronixWFMParser',
+    'TEKTRONIX_AVAILABLE',
 ]

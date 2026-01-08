@@ -13,11 +13,8 @@ This pipeline processes partial discharge waveform data and performs:
 ## Quick Start
 
 ```bash
-# Run the complete pipeline (recommended - uses pdlib modules)
+# Run the complete pipeline
 python run_pipeline_integrated.py --input-dir "Rugged Data Files" --clustering-method hdbscan
-
-# Or use the legacy subprocess-based pipeline
-python run_analysis_pipeline.py --clustering-method dbscan
 
 # Launch the web GUI for interactive visualization
 python pd_visualization_gui.py --port 8050
@@ -377,15 +374,6 @@ python pd_visualization_gui.py --port 8050
 # Features: PRPD plots, waveform viewer, interactive clustering, PD classification
 ```
 
-### Legacy Pipeline (Subprocess-based)
-```bash
-# Run full pipeline with DBSCAN
-python run_analysis_pipeline.py --clustering-method dbscan
-
-# Run with both clustering methods
-python run_analysis_pipeline.py --clustering-method both
-```
-
 ### Python API
 ```python
 from pdlib.features import PDFeatureExtractor
@@ -466,23 +454,15 @@ tryingDHI/
 │   └── formats/
 │       ├── base.py               # BaseLoader interface
 │       ├── rugged.py             # Rugged format loader
+│       ├── tektronix.py          # Tektronix WFM parser (TU Delft)
+│       ├── pdn.py                # PDN binary file utilities
 │       └── detection.py          # Auto-detect format
-│
-├── tests/                        # Test suite
-│   ├── test_pdlib_comparison.py  # Validate pdlib vs old impl
-│   └── test_pipeline_comparison.py # Compare pipeline outputs
 │
 ├── docs/                         # Documentation
 │   └── ARCHITECTURE.md           # Detailed module documentation
 │
-├── run_pipeline_integrated.py    # Main pipeline (uses pdlib)
-├── run_analysis_pipeline.py      # Legacy pipeline (subprocess)
+├── run_pipeline_integrated.py    # Main pipeline entry point
 ├── pd_visualization_gui.py       # Web-based GUI (Dash/Plotly)
-│
-├── extract_features.py           # Standalone feature extraction
-├── cluster_pulses.py             # Standalone clustering
-├── aggregate_cluster_features.py # Standalone aggregation
-├── classify_pd_type.py           # Standalone classification
 │
 └── Rugged Data Files/            # Data directory
     ├── *-WFMs.txt                # Raw waveform data

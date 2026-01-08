@@ -52,7 +52,7 @@ from pdlib.classification import PDTypeClassifier, PD_TYPES
 from middleware.formats import RuggedLoader, list_datasets
 
 # Import polarity methods
-from polarity_methods import POLARITY_METHODS, DEFAULT_POLARITY_METHOD
+from pdlib.features.polarity import POLARITY_METHODS, DEFAULT_POLARITY_METHOD
 
 # Import config
 try:

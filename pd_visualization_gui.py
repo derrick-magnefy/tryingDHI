@@ -44,38 +44,33 @@ except ImportError:
     PCA_AVAILABLE = False
     print("sklearn not available for PCA. Install with: pip install scikit-learn")
 
-from polarity_methods import (
+# Import pdlib modules
+from pdlib.features import PDFeatureExtractor, FEATURE_NAMES as PDLIB_FEATURE_NAMES
+from pdlib.features.polarity import (
     calculate_polarity, compare_methods, POLARITY_METHODS,
     DEFAULT_POLARITY_METHOD, get_method_description
 )
-from classify_pd_type import (
-    PDTypeClassifier, load_cluster_features,
-    NOISE_THRESHOLDS, PHASE_SPREAD_THRESHOLDS, SURFACE_DETECTION_THRESHOLDS,
-    CORONA_INTERNAL_THRESHOLDS, AMPLITUDE_THRESHOLDS, QUADRANT_THRESHOLDS
+from pdlib.clustering import (
+    cluster_pulses as pdlib_cluster_pulses,
+    compute_cluster_features as pdlib_compute_cluster_features,
+    HDBSCAN_AVAILABLE
 )
+from pdlib.classification import PDTypeClassifier, PD_TYPES
 
-# Import pdlib modules for direct function calls (replaces subprocess calls)
-try:
-    from pdlib.features import PDFeatureExtractor, FEATURE_NAMES as PDLIB_FEATURE_NAMES
-    from pdlib.clustering import (
-        cluster_pulses as pdlib_cluster_pulses,
-        compute_cluster_features as pdlib_compute_cluster_features,
-        HDBSCAN_AVAILABLE
-    )
-    from pdlib.classification import PDTypeClassifier as PDLibClassifier, PD_TYPES
-    from middleware.formats import RuggedLoader
-    PDLIB_AVAILABLE = True
-except ImportError as e:
-    PDLIB_AVAILABLE = False
-    print(f"pdlib not fully available: {e}. Using subprocess fallback.")
+# Import middleware
+from middleware.formats import RuggedLoader
+
+# For backward compatibility
+PDLibClassifier = PDTypeClassifier
+PDLIB_AVAILABLE = True
 
 # Try to import the Tektronix WFM parser
 try:
-    from wfm_parser import TektronixWFMParser, load_tu_delft_timing, convert_timing_to_phase
+    from middleware.formats import TektronixWFMParser, load_tu_delft_timing, convert_timing_to_phase
     WFM_PARSER_AVAILABLE = True
 except ImportError:
     WFM_PARSER_AVAILABLE = False
-    print("WFM parser not available. TU Delft format files will not be supported.")
+    print("Tektronix WFM parser not available. TU Delft format files will not be supported.")
 
 # Data directories - primary and external
 DATA_DIR = "Rugged Data Files"
