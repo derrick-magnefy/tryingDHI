@@ -223,3 +223,6 @@ pd-classification-summary-*.txt
 
 # Generated summary report (can be regenerated with run_analysis_pipeline.py)
 analysis-summary-report.txt
+
+# IEEE Data Folder is too big.  Only have one example in the Example Data Folder
+IEEE Data/

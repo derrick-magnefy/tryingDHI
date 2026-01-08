@@ -35,8 +35,11 @@ class MatLoader:
 
     # Common variable name patterns
     SIGNAL_NAMES = ['signal', 'data', 'waveform', 'voltage', 'v', 'y', 'ch1', 'ch2', 'channel1']
+    CHANNEL_PATTERN = ['Ch1', 'Ch2', 'Ch3', 'Ch4', 'ch1', 'ch2', 'ch3', 'ch4', 'CH1', 'CH2', 'CH3', 'CH4']
     SAMPLE_RATE_NAMES = ['fs', 'Fs', 'FS', 'sample_rate', 'samplerate', 'sr', 'SampleRate']
-    TIME_NAMES = ['t', 'time', 'Time', 'T']
+    SAMPLE_INTERVAL_NAMES = ['dt', 'Dt', 'DT', 'sample_interval', 'delta_t', 'ts', 'Ts']
+    TIME_NAMES = ['t', 'time', 'Time']  # Removed 'T' - often used for total time in IEEE format
+    TOTAL_TIME_NAMES = ['T', 'total_time', 'duration', 'acq_time']
     AC_FREQ_NAMES = ['f_ac', 'fac', 'ac_freq', 'frequency', 'f_line', 'line_freq']
 
     def __init__(
@@ -62,60 +65,6 @@ class MatLoader:
 
         self._mat_data: Optional[Dict] = None
         self._is_v73 = False
-
-    def load(self) -> Dict[str, Any]:
-        """
-        Load the .mat file and extract PD data.
-
-        Returns:
-            Dict with keys:
-            - 'signal': numpy array of signal data
-            - 'sample_rate': sample rate in Hz
-            - 'time': time vector (if available)
-            - 'ac_frequency': AC line frequency (if available)
-            - 'metadata': dict of other variables
-            - 'filepath': source file path
-        """
-        self._load_mat_file()
-
-        result = {
-            'filepath': str(self.filepath),
-            'metadata': {},
-        }
-
-        # Extract signal
-        signal, signal_name = self._find_signal()
-        result['signal'] = signal
-        result['signal_var'] = signal_name
-
-        # Extract or calculate sample rate
-        sample_rate, sr_source = self._find_sample_rate()
-        result['sample_rate'] = sample_rate
-        result['sample_rate_source'] = sr_source
-
-        # Extract time vector if available
-        time_vec = self._find_time_vector()
-        if time_vec is not None:
-            result['time'] = time_vec
-
-        # Extract AC frequency if available
-        ac_freq = self._find_ac_frequency()
-        if ac_freq is not None:
-            result['ac_frequency'] = ac_freq
-        else:
-            result['ac_frequency'] = 60.0  # Default
-
-        # Store remaining variables as metadata
-        for key, value in self._mat_data.items():
-            if key.startswith('_'):
-                continue
-            if key not in [signal_name, self.sample_rate_var, self.time_var]:
-                if isinstance(value, np.ndarray):
-                    result['metadata'][key] = value
-                elif np.isscalar(value):
-                    result['metadata'][key] = value
-
-        return result
 
     def _load_mat_file(self):
         """Load the .mat file using appropriate loader."""
@@ -158,6 +107,13 @@ class MatLoader:
         if self.signal_var and self.signal_var in self._mat_data:
             signal = self._mat_data[self.signal_var]
             return np.asarray(signal).flatten(), self.signal_var
+
+        # Check for channel patterns (common in IEEE format: Ch1, Ch2, etc.)
+        for name in self.CHANNEL_PATTERN:
+            if name in self._mat_data:
+                signal = self._mat_data[name]
+                if isinstance(signal, np.ndarray) and signal.size > 1000:
+                    return np.asarray(signal).flatten(), name
 
         # Auto-detect from common names
         for name in self.SIGNAL_NAMES:
@@ -206,6 +162,22 @@ class MatLoader:
                 if key.lower() == name.lower():
                     sr = self._mat_data[key]
                     return float(np.asarray(sr).flatten()[0]), 'variable'
+
+        # Check for sample interval (dt) - common in IEEE format
+        for name in self.SAMPLE_INTERVAL_NAMES:
+            if name in self._mat_data:
+                dt = self._mat_data[name]
+                dt_val = float(np.asarray(dt).flatten()[0])
+                if dt_val > 0:
+                    return 1.0 / dt_val, 'calculated_from_dt'
+
+            # Case-insensitive
+            for key in self._mat_data.keys():
+                if key.lower() == name.lower():
+                    dt = self._mat_data[key]
+                    dt_val = float(np.asarray(dt).flatten()[0])
+                    if dt_val > 0:
+                        return 1.0 / dt_val, 'calculated_from_dt'
 
         # Try to calculate from time vector
         time_vec = self._find_time_vector()
@@ -271,6 +243,114 @@ class MatLoader:
         """List all variable names in the .mat file."""
         self._load_mat_file()
         return [k for k in self._mat_data.keys() if not k.startswith('_')]
+
+    def list_channels(self) -> List[str]:
+        """
+        List all available signal channels in the .mat file.
+
+        Looks for common channel naming patterns: Ch1, Ch2, channel1, etc.
+
+        Returns:
+            List of channel variable names found
+        """
+        self._load_mat_file()
+        channels = []
+
+        # Check for common channel patterns
+        channel_patterns = ['Ch', 'ch', 'CH', 'Channel', 'channel', 'CHANNEL']
+
+        for key in self._mat_data.keys():
+            if key.startswith('_'):
+                continue
+            value = self._mat_data[key]
+            if not isinstance(value, np.ndarray) or value.size < 1000:
+                continue
+
+            # Check if it matches a channel pattern
+            for pattern in channel_patterns:
+                if key.startswith(pattern):
+                    channels.append(key)
+                    break
+
+        return sorted(channels)
+
+    def load_channel(self, channel: str) -> Dict[str, Any]:
+        """
+        Load a specific channel from a multi-channel .mat file.
+
+        Args:
+            channel: Channel variable name (e.g., 'Ch1', 'Ch2')
+
+        Returns:
+            Dict with signal data and metadata for the specified channel
+        """
+        return self.load(signal_var_override=channel)
+
+    def load(self, signal_var_override: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Load the .mat file and extract PD data.
+
+        Args:
+            signal_var_override: Override the signal variable to load
+
+        Returns:
+            Dict with keys:
+            - 'signal': numpy array of signal data
+            - 'sample_rate': sample rate in Hz
+            - 'time': time vector (if available)
+            - 'ac_frequency': AC line frequency (if available)
+            - 'metadata': dict of other variables
+            - 'filepath': source file path
+            - 'available_channels': list of channel names found
+        """
+        self._load_mat_file()
+
+        result = {
+            'filepath': str(self.filepath),
+            'metadata': {},
+        }
+
+        # Use override if provided
+        effective_signal_var = signal_var_override or self.signal_var
+
+        # Extract signal
+        if effective_signal_var:
+            self.signal_var = effective_signal_var
+        signal, signal_name = self._find_signal()
+        result['signal'] = signal
+        result['signal_var'] = signal_name
+
+        # List available channels
+        result['available_channels'] = self.list_channels()
+
+        # Extract or calculate sample rate
+        sample_rate, sr_source = self._find_sample_rate()
+        result['sample_rate'] = sample_rate
+        result['sample_rate_source'] = sr_source
+
+        # Extract time vector if available
+        time_vec = self._find_time_vector()
+        if time_vec is not None:
+            result['time'] = time_vec
+
+        # Extract AC frequency if available
+        ac_freq = self._find_ac_frequency()
+        if ac_freq is not None:
+            result['ac_frequency'] = ac_freq
+        else:
+            result['ac_frequency'] = 60.0  # Default
+
+        # Store remaining variables as metadata
+        for key, value in self._mat_data.items():
+            if key.startswith('_'):
+                continue
+            if key not in [signal_name, self.sample_rate_var, self.time_var]:
+                if isinstance(value, np.ndarray):
+                    result['metadata'][key] = value
+                elif np.isscalar(value):
+                    result['metadata'][key] = value
+
+        return result
 
 
 def load_mat_file(

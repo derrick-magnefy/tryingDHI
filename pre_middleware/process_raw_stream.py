@@ -379,8 +379,17 @@ Examples:
         help='Variable name for signal in .mat file (auto-detect if not specified)'
     )
     parser.add_argument(
+        '-c', '--channel',
+        help='Channel to process for multi-channel files (e.g., Ch1, Ch2). Same as --signal-var but more intuitive for IEEE data.'
+    )
+    parser.add_argument(
         '--sample-rate-var',
         help='Variable name for sample rate (auto-detect if not specified)'
+    )
+    parser.add_argument(
+        '--list-channels',
+        action='store_true',
+        help='List available channels in the .mat file and exit'
     )
 
     # Other options
@@ -416,11 +425,27 @@ Examples:
                 print(f"  {name}: {details['type']}")
         return
 
+    # List channels mode
+    if args.list_channels:
+        loader = MatLoader(args.input)
+        channels = loader.list_channels()
+        print(f"\nAvailable channels in {args.input}:")
+        print("-" * 50)
+        if channels:
+            for ch in channels:
+                print(f"  {ch}")
+        else:
+            print("  No channels found. Use --list-vars to see all variables.")
+        return
+
+    # Handle --channel as alias for --signal-var
+    signal_var = args.signal_var or args.channel
+
     # Compare methods mode
     if args.compare_methods:
         compare_methods_report(
             args.input,
-            signal_var=args.signal_var,
+            signal_var=signal_var,
             sample_rate_var=args.sample_rate_var,
             ac_frequency=args.ac_frequency,
         )
@@ -447,7 +472,7 @@ Examples:
             ac_frequency=args.ac_frequency,
             polarity=args.polarity,
             min_separation=args.min_separation,
-            signal_var=args.signal_var,
+            signal_var=signal_var,
             sample_rate_var=args.sample_rate_var,
             verbose=not args.quiet,
             **trigger_kwargs
