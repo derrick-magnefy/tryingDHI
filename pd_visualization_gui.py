@@ -535,10 +535,19 @@ class PDDataLoader:
         labels = []
         with open(filepath, 'r') as f:
             for line in f:
-                if not line.startswith('#') and not line.startswith('waveform'):
-                    parts = line.strip().split(',')
-                    if len(parts) >= 2:
+                line = line.strip()
+                # Skip comments and header rows
+                if not line or line.startswith('#'):
+                    continue
+                # Skip headers (various formats)
+                if line.startswith('waveform') or line.startswith('pulse_id') or 'cluster' in line.split(',')[0:2]:
+                    continue
+                parts = line.split(',')
+                if len(parts) >= 2:
+                    try:
                         labels.append(int(parts[1]))
+                    except ValueError:
+                        continue  # Skip non-numeric rows
 
         return np.array(labels)
 
