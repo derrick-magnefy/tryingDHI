@@ -5375,7 +5375,7 @@ def create_app(data_dir=DATA_DIR):
         return create_waveform_plot(None, None, None, None, None, None), None
 
     # Define cluster feature lists for the selector
-    from aggregate_cluster_features import (
+    from pdlib.clustering.definitions import (
         CLUSTER_FEATURE_NAMES as AGG_CLUSTER_FEATURE_NAMES,
         WAVEFORM_MEAN_FEATURE_NAMES,
         WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES,
