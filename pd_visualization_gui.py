@@ -60,6 +60,18 @@ from pdlib.classification import PDTypeClassifier, PD_TYPES
 # Import middleware
 from middleware.formats import RuggedLoader
 
+# Import pre_middleware for IEEE data preprocessing
+try:
+    from pre_middleware.process_raw_stream import process_raw_stream
+    from pre_middleware.trigger_detection import TRIGGER_METHODS, DEFAULT_TRIGGER_METHOD
+    from pre_middleware.loaders import MatLoader
+    PRE_MIDDLEWARE_AVAILABLE = True
+except ImportError:
+    PRE_MIDDLEWARE_AVAILABLE = False
+    TRIGGER_METHODS = ['histogram_knee', 'stdev', 'pulse_rate']
+    DEFAULT_TRIGGER_METHOD = 'histogram_knee'
+    print("Pre-middleware not available. IEEE data preprocessing will be disabled.")
+
 # For backward compatibility
 PDLibClassifier = PDTypeClassifier
 PDLIB_AVAILABLE = True
@@ -77,7 +89,12 @@ DATA_DIR = "Rugged Data Files"
 EXTERNAL_DATA_DIRS = [
     "../datasets",  # External datasets not in git
     "TU Delft WFMs",  # TU Delft format data
+    "IEEE Data Processed",  # Processed IEEE data files (not in git)
 ]
+
+# Default directories for IEEE data preprocessing
+IEEE_RAW_DATA_DIR = "IEEE Data"  # Default input directory for raw IEEE .mat files
+IEEE_PROCESSED_DIR = "IEEE Data Processed"  # Default output directory for processed data
 
 # Clustering methods available
 CLUSTERING_METHODS = ['dbscan', 'kmeans']
@@ -2402,6 +2419,131 @@ def create_app(data_dir=DATA_DIR):
                                        style={'fontSize': '11px', 'color': '#666', 'fontStyle': 'italic', 'marginTop': '10px'})
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ]),
+
+                        # Row 5: IEEE Data Preprocessing
+                        html.Details([
+                            html.Summary("IEEE Data Preprocessing", style={
+                                'cursor': 'pointer',
+                                'fontWeight': 'bold',
+                                'padding': '8px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '4px'
+                            }),
+                            html.Div([
+                                html.P("Process raw IEEE .mat files to extract triggered waveforms. Output will be saved to 'IEEE Data Processed' directory.",
+                                       style={'fontSize': '12px', 'color': '#666', 'marginBottom': '10px'}),
+
+                                # Input directory
+                                html.Div([
+                                    html.Label("Input Directory:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-input-dir',
+                                        type='text',
+                                        value=IEEE_RAW_DATA_DIR,
+                                        style={'width': '300px', 'marginRight': '10px'}
+                                    ),
+                                    html.Button("Scan", id='ieee-scan-btn', n_clicks=0,
+                                               style={'padding': '5px 15px', 'cursor': 'pointer'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # File selector
+                                html.Div([
+                                    html.Label("Select File:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Dropdown(
+                                        id='ieee-file-dropdown',
+                                        options=[],
+                                        placeholder='Click "Scan" to find .mat files...',
+                                        style={'width': '400px', 'display': 'inline-block'}
+                                    ),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Channel selector
+                                html.Div([
+                                    html.Label("Channel:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Dropdown(
+                                        id='ieee-channel-dropdown',
+                                        options=[],
+                                        placeholder='Select a file first...',
+                                        style={'width': '200px', 'display': 'inline-block'}
+                                    ),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Trigger method
+                                html.Div([
+                                    html.Label("Trigger Method:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Dropdown(
+                                        id='ieee-trigger-method',
+                                        options=[{'label': m, 'value': m} for m in TRIGGER_METHODS],
+                                        value=DEFAULT_TRIGGER_METHOD,
+                                        style={'width': '200px', 'display': 'inline-block'}
+                                    ),
+                                    html.Span(" histogram_knee is usually most robust", style={'marginLeft': '10px', 'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Pre/post samples
+                                html.Div([
+                                    html.Label("Pre-trigger:", style={'fontWeight': 'bold', 'marginRight': '5px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-pre-samples',
+                                        type='number',
+                                        value=500,
+                                        min=100,
+                                        max=2000,
+                                        style={'width': '80px', 'marginRight': '20px'}
+                                    ),
+                                    html.Label("Post-trigger:", style={'fontWeight': 'bold', 'marginRight': '5px'}),
+                                    dcc.Input(
+                                        id='ieee-post-samples',
+                                        type='number',
+                                        value=1500,
+                                        min=500,
+                                        max=5000,
+                                        style={'width': '80px', 'marginRight': '10px'}
+                                    ),
+                                    html.Span("samples", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # AC Frequency
+                                html.Div([
+                                    html.Label("AC Frequency:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-ac-frequency',
+                                        type='number',
+                                        value=60.0,
+                                        min=50,
+                                        max=60,
+                                        step=10,
+                                        style={'width': '80px', 'marginRight': '5px'}
+                                    ),
+                                    html.Span("Hz", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '15px'}),
+
+                                # Process button
+                                html.Div([
+                                    html.Button("Process IEEE Data", id='ieee-process-btn', n_clicks=0,
+                                               style={'backgroundColor': '#28a745', 'color': 'white',
+                                                      'padding': '10px 20px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    html.Button("Process All Files", id='ieee-process-all-btn', n_clicks=0,
+                                               style={'backgroundColor': '#17a2b8', 'color': 'white',
+                                                      'padding': '10px 20px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Status/result
+                                dcc.Loading(
+                                    id='ieee-processing-loading',
+                                    type='circle',
+                                    children=html.Div(id='ieee-process-result', style={'marginTop': '10px'})
+                                ),
+
+                                html.P([
+                                    "Output directory: ",
+                                    html.Code(IEEE_PROCESSED_DIR),
+                                    " (excluded from git)"
+                                ], style={'fontSize': '11px', 'color': '#666', 'fontStyle': 'italic', 'marginTop': '10px'})
+                            ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+                        ]) if PRE_MIDDLEWARE_AVAILABLE else html.Div(),
                     ]),
                 ], style={'padding': '15px', 'border': '1px solid #ddd', 'borderRadius': '4px', 'marginTop': '5px'})
             ])
@@ -6432,6 +6574,165 @@ def create_app(data_dir=DATA_DIR):
         except Exception as e:
             return html.Div(f"Error during analysis: {str(e)}",
                           style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'})
+
+    # ===== IEEE Data Preprocessing Callbacks =====
+
+    @app.callback(
+        Output('ieee-file-dropdown', 'options'),
+        Input('ieee-scan-btn', 'n_clicks'),
+        State('ieee-input-dir', 'value'),
+        prevent_initial_call=True
+    )
+    def scan_ieee_directory(n_clicks, input_dir):
+        """Scan directory for .mat files."""
+        if not n_clicks or not input_dir:
+            return []
+
+        if not os.path.exists(input_dir):
+            return []
+
+        mat_files = glob.glob(os.path.join(input_dir, "*.mat"))
+        options = [{'label': os.path.basename(f), 'value': f} for f in sorted(mat_files)]
+        return options
+
+    @app.callback(
+        Output('ieee-channel-dropdown', 'options'),
+        Output('ieee-channel-dropdown', 'value'),
+        Input('ieee-file-dropdown', 'value'),
+        prevent_initial_call=True
+    )
+    def update_channel_options(filepath):
+        """Update channel options when a file is selected."""
+        if not filepath or not PRE_MIDDLEWARE_AVAILABLE:
+            return [], None
+
+        try:
+            mat_loader = MatLoader(filepath)
+            channels = mat_loader.list_channels()
+            if channels:
+                options = [{'label': ch, 'value': ch} for ch in channels]
+                return options, channels[0]  # Default to first channel
+            else:
+                # No standard channels found, list all variables
+                info = mat_loader.get_info()
+                var_options = []
+                for name, details in info.get('variables', {}).items():
+                    if isinstance(details, dict) and 'shape' in details:
+                        var_options.append({'label': f"{name} {details['shape']}", 'value': name})
+                return var_options, var_options[0]['value'] if var_options else None
+        except Exception as e:
+            return [{'label': f'Error: {str(e)}', 'value': None}], None
+
+    @app.callback(
+        Output('ieee-process-result', 'children'),
+        Input('ieee-process-btn', 'n_clicks'),
+        Input('ieee-process-all-btn', 'n_clicks'),
+        State('ieee-file-dropdown', 'value'),
+        State('ieee-file-dropdown', 'options'),
+        State('ieee-channel-dropdown', 'value'),
+        State('ieee-trigger-method', 'value'),
+        State('ieee-pre-samples', 'value'),
+        State('ieee-post-samples', 'value'),
+        State('ieee-ac-frequency', 'value'),
+        State('ieee-input-dir', 'value'),
+        prevent_initial_call=True
+    )
+    def process_ieee_data(n_clicks_single, n_clicks_all, filepath, all_files, channel,
+                          trigger_method, pre_samples, post_samples, ac_frequency, input_dir):
+        """Process IEEE data file(s)."""
+        if not PRE_MIDDLEWARE_AVAILABLE:
+            return html.Div("Pre-middleware not available. Cannot process IEEE data.",
+                          style={'color': 'red'})
+
+        triggered_id = ctx.triggered_id
+        if triggered_id is None:
+            raise PreventUpdate
+
+        # Ensure output directory exists
+        os.makedirs(IEEE_PROCESSED_DIR, exist_ok=True)
+
+        results = []
+
+        if triggered_id == 'ieee-process-btn':
+            # Process single file
+            if not filepath:
+                return html.Div("Please select a file to process.", style={'color': 'orange'})
+            if not channel:
+                return html.Div("Please select a channel.", style={'color': 'orange'})
+
+            files_to_process = [(filepath, channel)]
+        else:
+            # Process all files
+            if not all_files:
+                return html.Div("No files found. Click 'Scan' first.", style={'color': 'orange'})
+
+            # Process all files with the selected channel (or first available)
+            files_to_process = []
+            for opt in all_files:
+                fpath = opt['value']
+                try:
+                    mat_loader = MatLoader(fpath)
+                    channels = mat_loader.list_channels()
+                    ch = channel if channel and channel in channels else (channels[0] if channels else None)
+                    if ch:
+                        files_to_process.append((fpath, ch))
+                except Exception:
+                    pass
+
+        success_count = 0
+        error_count = 0
+
+        for fpath, ch in files_to_process:
+            try:
+                # Generate output prefix including channel name
+                base_name = os.path.splitext(os.path.basename(fpath))[0]
+                output_prefix = f"{base_name}_{ch}"
+
+                result = process_raw_stream(
+                    filepath=fpath,
+                    output_dir=IEEE_PROCESSED_DIR,
+                    output_prefix=output_prefix,
+                    trigger_method=trigger_method,
+                    pre_samples=pre_samples,
+                    post_samples=post_samples,
+                    ac_frequency=ac_frequency,
+                    signal_var=ch,
+                    verbose=False
+                )
+
+                if result['status'] == 'success':
+                    success_count += 1
+                    results.append(html.Div([
+                        html.Span("✓ ", style={'color': 'green'}),
+                        html.Span(f"{os.path.basename(fpath)} ({ch}): "),
+                        html.Span(f"{result['num_waveforms']} waveforms extracted",
+                                 style={'color': '#28a745'})
+                    ], style={'fontSize': '12px', 'marginBottom': '3px'}))
+                else:
+                    error_count += 1
+                    results.append(html.Div([
+                        html.Span("✗ ", style={'color': 'red'}),
+                        html.Span(f"{os.path.basename(fpath)}: No triggers detected")
+                    ], style={'fontSize': '12px', 'marginBottom': '3px'}))
+
+            except Exception as e:
+                error_count += 1
+                results.append(html.Div([
+                    html.Span("✗ ", style={'color': 'red'}),
+                    html.Span(f"{os.path.basename(fpath)}: {str(e)}")
+                ], style={'fontSize': '12px', 'marginBottom': '3px'}))
+
+        # Summary
+        summary_style = {'color': '#28a745', 'fontWeight': 'bold'} if error_count == 0 else {'color': '#ffc107', 'fontWeight': 'bold'}
+        summary = html.Div([
+            html.Div(f"Processed {success_count}/{len(files_to_process)} files successfully",
+                    style=summary_style),
+            html.Div(f"Output saved to: {IEEE_PROCESSED_DIR}", style={'fontSize': '11px', 'color': '#666'}),
+            html.Div("Refresh the page to see new datasets in the dropdown.",
+                    style={'fontSize': '11px', 'color': '#1976d2', 'fontStyle': 'italic', 'marginTop': '5px'})
+        ], style={'marginBottom': '10px'})
+
+        return html.Div([summary] + results)
 
     return app
 

@@ -226,3 +226,7 @@ analysis-summary-report.txt
 
 # IEEE Data Folder is too big.  Only have one example in the Example Data Folder
 IEEE Data/
+
+# IEEE Data Processed - output from preprocessing raw IEEE data files
+# These can be regenerated using the GUI or pre_middleware/process_raw_stream.py
+IEEE Data Processed/
