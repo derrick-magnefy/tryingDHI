@@ -93,7 +93,7 @@ EXTERNAL_DATA_DIRS = [
 ]
 
 # Default directories for IEEE data preprocessing
-IEEE_RAW_DATA_DIR = "Example Data"  # Default input directory for raw IEEE .mat files (was "IEEE Data")
+IEEE_RAW_DATA_DIR = "IEEE Data"  # Default input directory for raw IEEE .mat files
 IEEE_PROCESSED_DIR = "IEEE Data Processed"  # Default output directory for processed data
 
 # Clustering methods available
