@@ -6700,9 +6700,22 @@ def create_app(data_dir=DATA_DIR):
             extract_features(data_path, file_prefix=clean_prefix)
             print("  ✓ Features extracted")
 
-            # Step 2: Clustering
-            print("\n[2/4] Clustering pulses...")
-            run_clustering(data_path, file_prefix=clean_prefix, method='dbscan')
+            # Check how many pulses we have (read features file)
+            features_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+            num_pulses = 0
+            if os.path.exists(features_file):
+                with open(features_file, 'r') as f:
+                    num_pulses = sum(1 for _ in f) - 1  # Subtract header
+
+            # Step 2: Clustering - adjust min_samples for small datasets
+            print(f"\n[2/4] Clustering pulses ({num_pulses} pulses)...")
+            if num_pulses < 5:
+                # Use min_samples = max(2, num_pulses - 1) for small datasets
+                min_samples = max(2, num_pulses - 1)
+                print(f"  ⚠ Small dataset: using min_samples={min_samples}")
+                run_clustering(data_path, file_prefix=clean_prefix, method='dbscan', min_samples=min_samples)
+            else:
+                run_clustering(data_path, file_prefix=clean_prefix, method='dbscan')
             print("  ✓ Clustering complete")
 
             # Step 3: Aggregate cluster features
