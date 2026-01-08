@@ -6875,6 +6875,12 @@ def create_app(data_dir=DATA_DIR):
         # Ensure output directory exists
         os.makedirs(IEEE_PROCESSED_DIR, exist_ok=True)
 
+        # Apply default values for None inputs (GUI input fields may be empty)
+        pre_samples = pre_samples if pre_samples is not None else 500
+        post_samples = post_samples if post_samples is not None else 1500
+        ac_frequency = ac_frequency if ac_frequency is not None else 60.0
+        trigger_method = trigger_method if trigger_method else 'histogram_knee'
+
         # Build method-specific kwargs
         trigger_kwargs = {}
         if trigger_method == 'stdev':
