@@ -1,0 +1,50 @@
+# General Settings Configuration
+# Default settings for PD analysis
+
+# ADC configuration (for noise floor calculation)
+adc:
+  bits: 12
+  range_v: 4.0  # Total voltage range (-2V to +2V)
+  # Calculated: adc_step_v = range_v / 2^bits = 4.0 / 4096 ≈ 0.000977V
+
+# Signal processing
+signal:
+  default_sample_interval: 4.0e-9  # 4ns (250 MHz sampling)
+  power_line_frequency: 60  # Hz (50 or 60)
+
+# Polarity calculation
+polarity:
+  default_method: first_peak
+  available_methods:
+    - peak
+    - first_peak
+    - integrated_charge
+    - energy_weighted
+    - dominant_half_cycle
+    - initial_slope
+
+# Output file formats
+output:
+  date_format: "%Y-%m-%d %H:%M:%S"
+  float_precision: 6
+
+# PD Type definitions
+pd_types:
+  NOISE:
+    description: "Non-PD signals or measurement artifacts"
+    color: "#808080"
+  CORONA:
+    description: "Asymmetric discharge in one half-cycle"
+    subtypes:
+      - CORONA_POSITIVE
+      - CORONA_NEGATIVE
+    color: "#ff6b6b"
+  INTERNAL:
+    description: "Symmetric void discharge in both half-cycles"
+    color: "#4dabf7"
+  SURFACE:
+    description: "Tracking discharge near zero-crossings"
+    color: "#51cf66"
+  UNKNOWN:
+    description: "Unclassified or ambiguous pattern"
+    color: "#fab005"

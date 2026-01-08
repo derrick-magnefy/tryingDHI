@@ -1,0 +1,176 @@
+# Classification Thresholds Configuration
+# Decision tree thresholds for PD type classification
+
+# Branch 1: Noise Detection
+noise_detection:
+  dbscan_noise_label: -1
+  # Spectral characteristics - Noise is < 1 MHz, real PD is higher frequency
+  min_spectral_flatness: 0.6        # High flatness = random noise (white noise ~1.0)
+  max_bandwidth_3db: 2.0e6          # Noise has < 2 MHz bandwidth
+  max_dominant_frequency: 1.0e6     # Noise is < 1 MHz (60Hz hum, EMI)
+  # Pulse shape characteristics
+  min_slew_rate: 1.0e6              # Real PD has fast rise (V/s), noise is slower
+  min_crest_factor: 3.0             # Real PD is impulsive (high crest factor)
+  max_oscillation_count: 20         # Excessive ringing = noise/EMI
+  # Signal quality
+  min_signal_to_noise_ratio: 3.0    # Minimum SNR for valid signal (dB)
+  min_cross_correlation: 0.3        # Shape consistency across pulses
+  max_coefficient_of_variation: 2.0 # CV too high = random amplitude noise
+  # Multi-pulse detection
+  min_pulses_for_multipulse: 2      # >= 2 pulses per waveform = multi-pulse
+
+# Branch 2: Phase Spread Check (Surface PD initial detection)
+phase_spread:
+  surface_phase_spread_min: 120.0   # Phase spread > 120° → Surface PD
+
+# Branch 3: Surface PD Detection (8-feature weighted score-based)
+surface_detection:
+  # Weights for scoring (max score: 4 + 3*3 + 2*2 + 1*2 = 19)
+  weights:
+    primary: 4        # phase_spread
+    secondary: 3      # slew_rate, spectral_power_ratio, cv
+    mid: 2            # crest_factor, cross_correlation
+    supporting: 1     # spectral_flatness, repetition_rate_variance
+
+  # Minimum score to classify as Surface PD
+  min_surface_score: 10
+
+  # PRIMARY FEATURE: Phase spread
+  surface_phase_spread: 120.0       # >120° suggests Surface PD
+  corona_phase_spread: 100.0        # <100° suggests Corona/Internal
+
+  # SECONDARY FEATURES
+  # Slew rate (V/s) - Surface has slower rise
+  surface_max_slew_rate: 5.0e6
+  corona_min_slew_rate: 1.0e7
+
+  # Spectral power ratio (low/high frequency)
+  surface_max_spectral_power_ratio: 0.5
+  corona_min_spectral_power_ratio: 0.8
+
+  # Coefficient of variation
+  surface_min_cv: 0.4
+  corona_max_cv: 0.3
+
+  # MID-WEIGHT FEATURES
+  # Crest factor
+  surface_min_crest_factor: 4.0
+  surface_max_crest_factor: 6.0
+  corona_min_crest_factor: 6.0
+
+  # Cross-correlation
+  surface_min_cross_corr: 0.4
+  surface_max_cross_corr: 0.6
+  corona_min_cross_corr: 0.7
+
+  # SUPPORTING FEATURES
+  # Spectral flatness
+  surface_min_spectral_flatness: 0.4
+  surface_max_spectral_flatness: 0.5
+  corona_max_spectral_flatness: 0.35
+
+  # Repetition rate variance
+  surface_min_rep_rate_var: 0.5
+  corona_max_rep_rate_var: 0.3
+
+  # Dominant frequency - Surface PD is 1-5 MHz
+  surface_min_dominant_freq: 1.0e6
+  surface_max_dominant_freq: 5.0e6
+
+# Branch 4: Corona vs Internal Detection (Score-based)
+corona_internal:
+  # Weights for scoring
+  weights:
+    primary: 4
+    secondary: 2
+    supporting: 1
+
+  # Minimum scores to classify
+  min_corona_score: 8
+  min_internal_score: 8
+
+  # PRIMARY FEATURES
+  # Discharge asymmetry
+  corona_neg_max_asymmetry: -0.6    # Negative Corona: < -0.6
+  corona_pos_min_asymmetry: 0.6     # Positive Corona: > +0.6
+  internal_min_asymmetry: -0.9      # Internal: -0.9 to +0.9
+  internal_max_asymmetry: 0.9
+
+  # Phase of max activity (degrees)
+  corona_neg_phase_min: 180         # Negative Corona: 180°-270°
+  corona_neg_phase_max: 270
+  corona_pos_phase_q1_min: 0        # Positive Corona: 0°-90°
+  corona_pos_phase_q1_max: 90
+  corona_pos_phase_q4_min: 270      # Positive Corona: 270°-360°
+  corona_pos_phase_q4_max: 360
+  internal_phase_q1_min: 45         # Internal: 45°-90° or 225°-270°
+  internal_phase_q1_max: 90
+  internal_phase_q3_min: 225
+  internal_phase_q3_max: 270
+
+  # Amplitude-phase correlation
+  internal_min_amp_phase_corr: 0.5  # Internal: High correlation (>0.5)
+  corona_max_amp_phase_corr: 0.3    # Corona: Low correlation (<0.3)
+
+  # Spectral power (low frequency fraction)
+  internal_min_spectral_power_low: 0.85  # Internal: >85% power in low frequencies
+  corona_max_spectral_power_low: 0.60    # Corona: <60% power in low frequencies
+
+  # SECONDARY FEATURES
+  # Slew rate
+  corona_min_slew_rate: 5.0e7       # Corona: Very high (>50 MV/s)
+  internal_min_slew_rate: 1.0e7     # Internal: Moderate (10-50 MV/s)
+  internal_max_slew_rate: 5.0e7
+
+  # Normalized slew rate
+  corona_min_norm_slew_rate: 8.0
+  internal_max_norm_slew_rate: 5.0
+
+  # Spectral power ratio
+  corona_min_spectral_ratio: 1.5    # Corona: > 1.5
+  internal_min_spectral_ratio: 0.8  # Internal: 0.8-1.5
+  internal_max_spectral_ratio: 1.5
+
+  # Oscillation count
+  corona_min_oscillation: 90        # Corona: >= 90 (ringing after spike)
+  internal_max_oscillation: 90      # Internal: < 90
+
+  # Crest factor
+  corona_min_crest_factor: 7.0      # Corona: >= 7.0 (very impulsive)
+  internal_min_crest_factor: 4.0    # Internal: 4.0-6.5
+  internal_max_crest_factor: 6.5
+
+  # Dominant frequency (Hz)
+  corona_neg_min_dominant_freq: 1.5e7   # Negative Corona: >= 15 MHz
+  corona_pos_min_dominant_freq: 5.0e6   # Positive Corona: 5-15 MHz
+  corona_pos_max_dominant_freq: 1.5e7
+  internal_min_dominant_freq: 5.0e6     # Internal: 5-30 MHz
+  internal_max_dominant_freq: 3.0e7
+
+  # SUPPORTING FEATURES
+  # Coefficient of variation
+  corona_max_cv: 0.15               # Corona: < 0.15
+  internal_min_cv: 0.15             # Internal: 0.15-0.35
+  internal_max_cv: 0.35
+
+  # Quadrant 3 percentage
+  corona_neg_min_q3_pct: 55         # Negative Corona: > 55% in Q3
+  internal_min_q3_pct: 35           # Internal: 35-50%
+  internal_max_q3_pct: 50
+
+  # Repetition rate
+  corona_min_rep_rate: 100          # Corona: High (>100 pulses/cycle)
+  internal_min_rep_rate: 20         # Internal: Moderate (20-100)
+  internal_max_rep_rate: 100
+
+# Branch 5: Amplitude Characteristics (fallback)
+amplitude:
+  corona_amplitude_ratio_threshold: 3.0
+  internal_weibull_beta_min: 2.0
+  internal_weibull_beta_max: 15.0
+
+# Branch 5: Quadrant Distribution
+quadrant:
+  single_halfcycle_threshold: 80.0  # >80% in one half = corona
+  symmetric_quadrant_min: 15.0      # Each quadrant >15% = symmetric
+  symmetric_quadrant_max: 35.0      # Each quadrant <35% = symmetric

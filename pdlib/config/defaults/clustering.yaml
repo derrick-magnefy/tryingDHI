@@ -1,0 +1,30 @@
+# Clustering Configuration
+# Default parameters for clustering algorithms
+
+# Default clustering method
+default_method: hdbscan
+
+# HDBSCAN parameters (recommended default)
+hdbscan:
+  min_samples: 5
+  min_cluster_size: null  # null = same as min_samples
+  cluster_selection_method: eom  # 'eom' (Excess of Mass) or 'leaf'
+  metric: euclidean
+
+# DBSCAN parameters
+dbscan:
+  min_samples: 5
+  eps: null  # null = auto-estimate using k-nearest neighbors
+  auto_percentile: 60  # Percentile for auto eps estimation (50-90, lower=tighter)
+
+# K-means parameters
+kmeans:
+  n_clusters: 5
+  n_init: 10
+  random_state: 42
+  max_iter: 300
+
+# Feature scaling
+scaling:
+  method: standard  # 'standard' (StandardScaler) or 'minmax' (MinMaxScaler)
+  # Note: Feature weights are applied AFTER scaling
