@@ -2622,6 +2622,21 @@ def create_app(data_dir=DATA_DIR):
                                     html.Span("Hz", style={'fontSize': '11px', 'color': '#666'}),
                                 ], style={'marginBottom': '10px'}),
 
+                                # Dead time between triggers
+                                html.Div([
+                                    html.Label("Dead Time:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-dead-time',
+                                        type='number',
+                                        value=1.0,
+                                        min=0,
+                                        max=100,
+                                        step=0.1,
+                                        style={'width': '80px', 'marginRight': '5px'}
+                                    ),
+                                    html.Span("µs (min time between triggers)", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
                                 # Trigger refinement options
                                 html.Div([
                                     html.Label("Trigger Position:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
@@ -6983,6 +6998,7 @@ def create_app(data_dir=DATA_DIR):
         State('ieee-pre-samples', 'value'),
         State('ieee-post-samples', 'value'),
         State('ieee-ac-frequency', 'value'),
+        State('ieee-dead-time', 'value'),
         State('ieee-input-dir', 'value'),
         State('ieee-k-sigma', 'value'),
         State('ieee-target-rate', 'value'),
@@ -6992,8 +7008,8 @@ def create_app(data_dir=DATA_DIR):
         prevent_initial_call=True
     )
     def process_ieee_data(n_clicks_single, n_clicks_all, filepath, all_files, channel,
-                          trigger_method, pre_samples, post_samples, ac_frequency, input_dir,
-                          k_sigma, target_rate, sensitivity, trigger_refinement, validate_peak):
+                          trigger_method, pre_samples, post_samples, ac_frequency, dead_time_us,
+                          input_dir, k_sigma, target_rate, sensitivity, trigger_refinement, validate_peak):
         """Process IEEE data file(s)."""
         if not PRE_MIDDLEWARE_AVAILABLE:
             return html.Div("Pre-middleware not available. Cannot process IEEE data.",
@@ -7095,6 +7111,7 @@ def create_app(data_dir=DATA_DIR):
                     pre_samples=pre_samples,
                     post_samples=post_samples,
                     ac_frequency=ac_frequency,
+                    dead_time_us=dead_time_us,
                     refine_to_onset=refine_to_onset,
                     refine_to_peak=refine_to_peak,
                     validate_peak_position=validate_peak_position,

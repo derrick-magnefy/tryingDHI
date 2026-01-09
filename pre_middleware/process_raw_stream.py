@@ -68,6 +68,7 @@ def process_raw_stream(
     ac_frequency: float = 60.0,
     polarity: str = 'both',
     min_separation: int = 100,
+    dead_time_us: Optional[float] = None,
     refine_to_onset: bool = False,
     refine_to_peak: bool = False,
     validate_peak_position: bool = False,
@@ -89,7 +90,8 @@ def process_raw_stream(
         post_samples: Samples after trigger (default: 200)
         ac_frequency: AC power frequency in Hz (default: 60)
         polarity: Trigger polarity ('positive', 'negative', 'both')
-        min_separation: Minimum samples between triggers
+        min_separation: Minimum samples between triggers (default: 100)
+        dead_time_us: Dead time between triggers in microseconds (overrides min_separation if set)
         refine_to_onset: Adjust triggers backward to pulse onset (default: False)
         refine_to_peak: Adjust triggers forward to pulse peak (default: False)
         validate_peak_position: Discard waveforms where peak is far from trigger (default: False)
@@ -147,9 +149,16 @@ def process_raw_stream(
         print(f"  Sample rate: {sample_rate/1e6:.2f} MHz")
         print(f"  AC frequency: {data.get('ac_frequency', ac_frequency)} Hz")
 
+    # Convert dead_time_us to samples if specified
+    if dead_time_us is not None:
+        min_separation = int(dead_time_us * sample_rate / 1e6)
+        if verbose:
+            print(f"  Dead time: {dead_time_us} µs = {min_separation} samples")
+
     # Detect triggers
     if verbose:
         print(f"\n[2/4] Detecting triggers (method: {trigger_method})...")
+        print(f"  Min separation: {min_separation} samples ({1e6 * min_separation / sample_rate:.2f} µs)")
 
     detector = TriggerDetector(
         method=trigger_method,
@@ -363,6 +372,12 @@ Examples:
         default=100,
         help='Minimum samples between triggers (default: 100)'
     )
+    parser.add_argument(
+        '--dead-time', '--dead-time-us',
+        type=float,
+        dest='dead_time_us',
+        help='Dead time between triggers in microseconds (overrides --min-separation)'
+    )
 
     # Method-specific options
     parser.add_argument(
@@ -528,6 +543,7 @@ Examples:
             ac_frequency=args.ac_frequency,
             polarity=args.polarity,
             min_separation=args.min_separation,
+            dead_time_us=args.dead_time_us,
             refine_to_onset=args.refine_to_onset,
             refine_to_peak=args.refine_to_peak,
             validate_peak_position=args.validate_peak_position,
