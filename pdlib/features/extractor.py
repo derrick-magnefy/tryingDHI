@@ -366,7 +366,8 @@ class PDFeatureExtractor:
         features = {}
 
         if not PYWT_AVAILABLE:
-            return features
+            # Return empty wavelet features with zeros so columns exist in output
+            return self._get_empty_wavelet_features(max_level)
 
         # Determine maximum possible decomposition level
         max_possible_level = pywt.dwt_max_level(len(wfm), wavelet)
