@@ -50,6 +50,7 @@ from pdlib.features.polarity import (
     calculate_polarity, compare_methods, POLARITY_METHODS,
     DEFAULT_POLARITY_METHOD, get_method_description
 )
+from pdlib.features.extractor import PYWT_AVAILABLE
 from pdlib.clustering import (
     cluster_pulses as pdlib_cluster_pulses,
     compute_cluster_features as pdlib_compute_cluster_features,
@@ -3765,6 +3766,19 @@ def create_app(data_dir=DATA_DIR):
             return html.Div("Please select at least 2 features for clustering",
                           style={'color': 'orange', 'padding': '10px'})
 
+        # Check for wavelet features when PyWavelets is not available
+        wavelet_feature_names = [f for f in selected_features if f.startswith('wavelet_')]
+        wavelet_warning = ""
+        if wavelet_feature_names and not PYWT_AVAILABLE:
+            selected_features = [f for f in selected_features if not f.startswith('wavelet_')]
+            if len(selected_features) < 2:
+                return html.Div([
+                    html.Div("Cannot cluster: PyWavelets not installed", style={'color': 'red', 'fontWeight': 'bold'}),
+                    html.Div(f"Selected {len(wavelet_feature_names)} wavelet features, but PyWavelets is required."),
+                    html.Div("Install with: pip install PyWavelets", style={'fontFamily': 'monospace', 'marginTop': '5px'})
+                ], style={'padding': '10px'})
+            wavelet_warning = f"⚠ Skipped {len(wavelet_feature_names)} wavelet features (PyWavelets not installed)"
+
         if not prefix:
             return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
 
@@ -3884,6 +3898,19 @@ def create_app(data_dir=DATA_DIR):
         if not selected_features or len(selected_features) < 2:
             return html.Div("Please select at least 2 features for clustering",
                           style={'color': 'orange', 'padding': '10px'})
+
+        # Check for wavelet features when PyWavelets is not available
+        wavelet_feature_names = [f for f in selected_features if f.startswith('wavelet_')]
+        wavelet_warning = ""
+        if wavelet_feature_names and not PYWT_AVAILABLE:
+            selected_features = [f for f in selected_features if not f.startswith('wavelet_')]
+            if len(selected_features) < 2:
+                return html.Div([
+                    html.Div("Cannot cluster: PyWavelets not installed", style={'color': 'red', 'fontWeight': 'bold'}),
+                    html.Div(f"Selected {len(wavelet_feature_names)} wavelet features, but PyWavelets is required."),
+                    html.Div("Install with: pip install PyWavelets", style={'fontFamily': 'monospace', 'marginTop': '5px'})
+                ], style={'padding': '10px'})
+            wavelet_warning = f"⚠ Skipped {len(wavelet_feature_names)} wavelet features (PyWavelets not installed)"
 
         if not prefix:
             return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
@@ -4467,6 +4494,22 @@ def create_app(data_dir=DATA_DIR):
             return (html.Div("Please select at least 2 features for clustering",
                           style={'color': 'orange', 'padding': '10px'}), no_update)
 
+        # Check for wavelet features when PyWavelets is not available
+        wavelet_feature_names = [f for f in selected_features if f.startswith('wavelet_')]
+        if wavelet_feature_names and not PYWT_AVAILABLE:
+            # Filter out wavelet features and warn user
+            selected_features = [f for f in selected_features if not f.startswith('wavelet_')]
+            if len(selected_features) < 2:
+                return (html.Div([
+                    html.Div("Cannot cluster: PyWavelets not installed", style={'color': 'red', 'fontWeight': 'bold'}),
+                    html.Div(f"Selected {len(wavelet_feature_names)} wavelet features, but PyWavelets is required."),
+                    html.Div("Install with: pip install PyWavelets", style={'fontFamily': 'monospace', 'marginTop': '5px'})
+                ], style={'padding': '10px'}), no_update)
+            # Show warning but continue with remaining features
+            wavelet_warning = f"⚠ Skipping {len(wavelet_feature_names)} wavelet features (PyWavelets not installed). "
+        else:
+            wavelet_warning = ""
+
         # Get all datasets
         datasets = loader.datasets
         if not datasets:
@@ -4538,6 +4581,9 @@ def create_app(data_dir=DATA_DIR):
                             continue
 
                         results_details.append(f"↻ {dataset}: Re-extracted features ({len(missing_features)} were missing)")
+                        # Update loader's dataset_info to reflect that features now exist
+                        if dataset in loader.dataset_info:
+                            loader.dataset_info[dataset]['has_features'] = True
                     except subprocess.TimeoutExpired:
                         fail_count += 1
                         results_details.append(f"✗ {dataset}: Feature extraction timeout (>300s)")
@@ -4590,6 +4636,9 @@ def create_app(data_dir=DATA_DIR):
 
                 if pipeline_success:
                     success_count += 1
+                    # Update loader's dataset_info to reflect that features now exist
+                    if dataset in loader.dataset_info:
+                        loader.dataset_info[dataset]['has_features'] = True
                     # Update re-extraction entry to show success, or add new success entry
                     updated = False
                     for j, d in enumerate(results_details):
@@ -4632,9 +4681,14 @@ def create_app(data_dir=DATA_DIR):
             summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets"
 
         weights_info = " | Weights applied" if feature_weights_str and feature_weights_str.strip() else ""
-        result_div = html.Div([
+        result_children = [
             html.Div(summary_msg,
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
+        ]
+        # Add wavelet warning if applicable
+        if wavelet_warning:
+            result_children.append(html.Div(wavelet_warning, style={'fontSize': '12px', 'color': '#ff9800', 'marginTop': '3px'}))
+        result_children.extend([
             html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}{weights_info}", style={'fontSize': '12px', 'color': '#666'}),
             html.Details([
                 html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
@@ -4643,7 +4697,8 @@ def create_app(data_dir=DATA_DIR):
             ]) if results_details else None,
             html.Div("Feature selection copied to all datasets.",
                     style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
-        ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+        ])
+        result_div = html.Div(result_children, style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
 
         return (result_div, updated_features_data)
 
@@ -5246,6 +5301,16 @@ def create_app(data_dir=DATA_DIR):
         # Check if this is an unprocessed dataset
         dataset_info = loader.dataset_info.get(prefix, {})
         has_features = dataset_info.get('has_features', True)
+
+        # Also check actual file existence (in case extraction happened after initial scan)
+        if not has_features:
+            data_path = loader.get_dataset_path(prefix)
+            clean_prefix = loader.get_clean_prefix(prefix)
+            features_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+            if os.path.exists(features_file):
+                # Update cached value
+                loader.dataset_info[prefix]['has_features'] = True
+                has_features = True
 
         if not has_features:
             empty_fig = go.Figure()
@@ -6698,6 +6763,16 @@ def create_app(data_dir=DATA_DIR):
 
         dataset_info = loader.dataset_info.get(prefix, {})
         has_features = dataset_info.get('has_features', True)
+
+        # Also check actual file existence (in case extraction happened after initial scan)
+        if not has_features:
+            data_path = loader.get_dataset_path(prefix)
+            clean_prefix = loader.get_clean_prefix(prefix)
+            features_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+            if os.path.exists(features_file):
+                # Update cached value and hide the notice
+                loader.dataset_info[prefix]['has_features'] = True
+                has_features = True
 
         return visible if not has_features else hidden
 
