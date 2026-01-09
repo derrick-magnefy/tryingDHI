@@ -5,7 +5,8 @@ Extracts individual PD pulse waveforms around detected trigger points,
 producing output compatible with the Rugged Data Files format.
 
 Usage:
-    extractor = WaveformExtractor(pre_samples=500, post_samples=1500)
+    # Default: 2µs waveform @ 125 MSPS with 25% pre-trigger
+    extractor = WaveformExtractor(pre_samples=62, post_samples=188)
     waveforms, trigger_times = extractor.extract(signal, triggers, sample_rate)
 """
 
@@ -35,15 +36,20 @@ class WaveformExtractor:
     - Settings metadata
 
     Attributes:
-        pre_samples: Number of samples before trigger point (default: 500)
-        post_samples: Number of samples after trigger point (default: 1500)
-        total_samples: Total waveform length (pre_samples + post_samples)
+        pre_samples: Number of samples before trigger point (default: 62)
+        post_samples: Number of samples after trigger point (default: 188)
+        total_samples: Total waveform length (pre_samples + post_samples = 250)
+
+    Default calculation (2µs @ 125 MSPS, 25% pre-trigger):
+        total = 2.0 µs * 125 MSPS = 250 samples
+        pre = 250 * 0.25 = 62 samples
+        post = 250 - 62 = 188 samples
     """
 
     def __init__(
         self,
-        pre_samples: int = 500,
-        post_samples: int = 1500,
+        pre_samples: int = 62,
+        post_samples: int = 188,
         overlap_handling: str = 'skip',
         validate_peak_position: bool = False,
         peak_tolerance: float = 0.5,
@@ -52,8 +58,8 @@ class WaveformExtractor:
         Initialize waveform extractor.
 
         Args:
-            pre_samples: Samples before trigger (default: 500)
-            post_samples: Samples after trigger (default: 1500)
+            pre_samples: Samples before trigger (default: 62)
+            post_samples: Samples after trigger (default: 188)
             overlap_handling: How to handle overlapping windows
                              'skip': Skip overlapping triggers
                              'truncate': Truncate to non-overlapping portion
@@ -348,8 +354,8 @@ def extract_waveforms(
     signal: np.ndarray,
     triggers: np.ndarray,
     sample_rate: float,
-    pre_samples: int = 500,
-    post_samples: int = 1500,
+    pre_samples: int = 62,
+    post_samples: int = 188,
     **kwargs
 ) -> ExtractionResult:
     """

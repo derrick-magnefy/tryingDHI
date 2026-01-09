@@ -25,8 +25,8 @@ Usage:
     detector = TriggerDetector(method='histogram_knee')
     triggers = detector.detect(data['signal'], sample_rate=data['sample_rate'])
 
-    # Extract waveforms
-    extractor = WaveformExtractor(pre_samples=500, post_samples=1500)
+    # Extract waveforms (2µs @ 125 MSPS, 25% pre-trigger = 250 samples)
+    extractor = WaveformExtractor(pre_samples=62, post_samples=188)
     waveforms = extractor.extract(data['signal'], triggers.triggers)
 
 CLI Usage:

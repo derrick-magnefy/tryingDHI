@@ -109,8 +109,8 @@ def process_single_channel(
     channel: str,
     output_dir: str,
     method: str = DEFAULT_TRIGGER_METHOD,
-    pre_samples: int = 500,
-    post_samples: int = 1500,
+    pre_samples: int = 62,
+    post_samples: int = 188,
 ):
     """Process a single channel from an IEEE data file."""
     print(f"\n{'='*60}")
@@ -137,8 +137,8 @@ def process_all_channels(
     filepath: str,
     output_dir: str,
     method: str = DEFAULT_TRIGGER_METHOD,
-    pre_samples: int = 500,
-    post_samples: int = 1500,
+    pre_samples: int = 62,
+    post_samples: int = 188,
 ):
     """Process all channels in an IEEE data file."""
     loader = MatLoader(filepath)
@@ -212,8 +212,8 @@ def main():
         channel='Ch1',
         output_dir=output_dir,
         method='histogram_knee',  # Default - often most robust
-        pre_samples=500,
-        post_samples=1500,
+        pre_samples=62,   # 25% of 2µs @ 125 MSPS
+        post_samples=188,  # 75% of 2µs @ 125 MSPS
     )
 
     if result['status'] == 'success':

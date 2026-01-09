@@ -2622,7 +2622,7 @@ def create_app(data_dir=DATA_DIR):
                                         step=1,
                                         style={'width': '80px', 'marginRight': '5px'}
                                     ),
-                                    html.Span("MSPS (auto-detected from file if available)", style={'fontSize': '11px', 'color': '#666'}),
+                                    html.Span("MSPS (auto-filled from file when selected)", style={'fontSize': '11px', 'color': '#666'}),
                                 ], style={'marginBottom': '10px'}),
 
                                 # AC Frequency
@@ -6980,20 +6980,32 @@ def create_app(data_dir=DATA_DIR):
     @app.callback(
         Output('ieee-channel-dropdown', 'options'),
         Output('ieee-channel-dropdown', 'value'),
+        Output('ieee-sample-rate', 'value'),
         Input('ieee-file-dropdown', 'value'),
         prevent_initial_call=True
     )
-    def update_channel_options(filepath):
-        """Update channel options when a file is selected."""
+    def update_channel_options_and_sample_rate(filepath):
+        """Update channel options and sample rate when a file is selected."""
         if not filepath or not PRE_MIDDLEWARE_AVAILABLE:
-            return [], None
+            return [], None, 125  # Default sample rate
 
         try:
             mat_loader = MatLoader(filepath)
             channels = mat_loader.list_channels()
+
+            # Try to get sample rate from file
+            sample_rate_msps = 125  # Default
+            try:
+                data = mat_loader.load()
+                if 'sample_rate' in data and data['sample_rate']:
+                    sample_rate_msps = int(data['sample_rate'] / 1e6)  # Convert Hz to MSPS
+                    print(f"Auto-detected sample rate: {sample_rate_msps} MSPS")
+            except Exception as e:
+                print(f"Could not auto-detect sample rate: {e}")
+
             if channels:
                 options = [{'label': ch, 'value': ch} for ch in channels]
-                return options, channels[0]  # Default to first channel
+                return options, channels[0], sample_rate_msps
             else:
                 # No standard channels found, list all variables
                 info = mat_loader.get_info()
@@ -7001,9 +7013,9 @@ def create_app(data_dir=DATA_DIR):
                 for name, details in info.get('variables', {}).items():
                     if isinstance(details, dict) and 'shape' in details:
                         var_options.append({'label': f"{name} {details['shape']}", 'value': name})
-                return var_options, var_options[0]['value'] if var_options else None
+                return var_options, var_options[0]['value'] if var_options else None, sample_rate_msps
         except Exception as e:
-            return [{'label': f'Error: {str(e)}', 'value': None}], None
+            return [{'label': f'Error: {str(e)}', 'value': None}], None, 125
 
     @app.callback(
         Output('ieee-process-result', 'children'),
