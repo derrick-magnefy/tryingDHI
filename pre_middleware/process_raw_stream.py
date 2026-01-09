@@ -63,11 +63,16 @@ def process_raw_stream(
     output_dir: str,
     output_prefix: Optional[str] = None,
     trigger_method: str = DEFAULT_TRIGGER_METHOD,
-    pre_samples: int = 500,
-    post_samples: int = 1500,
+    pre_samples: int = 50,
+    post_samples: int = 200,
     ac_frequency: float = 60.0,
     polarity: str = 'both',
     min_separation: int = 100,
+    dead_time_us: Optional[float] = None,
+    refine_to_onset: bool = False,
+    refine_to_peak: bool = False,
+    validate_peak_position: bool = False,
+    peak_tolerance: float = 0.5,
     signal_var: Optional[str] = None,
     sample_rate_var: Optional[str] = None,
     verbose: bool = True,
@@ -81,11 +86,16 @@ def process_raw_stream(
         output_dir: Output directory for Rugged format files
         output_prefix: Prefix for output files (default: input filename)
         trigger_method: Detection method ('stdev', 'pulse_rate', 'histogram_knee')
-        pre_samples: Samples before trigger (default: 500)
-        post_samples: Samples after trigger (default: 1500)
+        pre_samples: Samples before trigger (default: 50)
+        post_samples: Samples after trigger (default: 200)
         ac_frequency: AC power frequency in Hz (default: 60)
         polarity: Trigger polarity ('positive', 'negative', 'both')
-        min_separation: Minimum samples between triggers
+        min_separation: Minimum samples between triggers (default: 100)
+        dead_time_us: Dead time between triggers in microseconds (overrides min_separation if set)
+        refine_to_onset: Adjust triggers backward to pulse onset (default: False)
+        refine_to_peak: Adjust triggers forward to pulse peak (default: False)
+        validate_peak_position: Discard waveforms where peak is far from trigger (default: False)
+        peak_tolerance: Fraction of window where peak must appear (default: 0.5 = first half)
         signal_var: Variable name for signal in .mat file (auto-detect if None)
         sample_rate_var: Variable name for sample rate (auto-detect if None)
         verbose: Print progress messages
@@ -115,8 +125,23 @@ def process_raw_stream(
     else:
         raise ValueError(f"Unsupported file format: {filepath.suffix}")
 
-    signal = data['signal']
-    sample_rate = data['sample_rate']
+    signal = data.get('signal')
+    sample_rate = data.get('sample_rate')
+
+    # Validate loaded data
+    if signal is None or len(signal) == 0:
+        available_vars = list(data.get('metadata', {}).keys())
+        raise ValueError(
+            f"Could not find signal data in {filepath.name}. "
+            f"Available variables: {available_vars}. "
+            f"Try specifying --signal-var or --channel."
+        )
+
+    if sample_rate is None or sample_rate <= 0:
+        raise ValueError(
+            f"Could not determine sample rate for {filepath.name}. "
+            f"Try specifying --sample-rate-var."
+        )
 
     if verbose:
         print(f"  Signal length: {len(signal):,} samples")
@@ -124,14 +149,23 @@ def process_raw_stream(
         print(f"  Sample rate: {sample_rate/1e6:.2f} MHz")
         print(f"  AC frequency: {data.get('ac_frequency', ac_frequency)} Hz")
 
+    # Convert dead_time_us to samples if specified
+    if dead_time_us is not None:
+        min_separation = int(dead_time_us * sample_rate / 1e6)
+        if verbose:
+            print(f"  Dead time: {dead_time_us} µs = {min_separation} samples")
+
     # Detect triggers
     if verbose:
         print(f"\n[2/4] Detecting triggers (method: {trigger_method})...")
+        print(f"  Min separation: {min_separation} samples ({1e6 * min_separation / sample_rate:.2f} µs)")
 
     detector = TriggerDetector(
         method=trigger_method,
         polarity=polarity,
         min_separation=min_separation,
+        refine_to_onset=refine_to_onset,
+        refine_to_peak=refine_to_peak,
         **trigger_kwargs
     )
     trigger_result = detector.detect(signal, sample_rate, ac_frequency)
@@ -139,6 +173,8 @@ def process_raw_stream(
     if verbose:
         print(f"  Threshold: {trigger_result.threshold:.4e}")
         print(f"  Triggers found: {len(trigger_result.triggers):,}")
+        if 'refinement' in trigger_result.stats:
+            print(f"  Trigger refinement: {trigger_result.stats['refinement']}")
         if 'achieved_rate_per_cycle' in trigger_result.stats:
             print(f"  Rate per cycle: {trigger_result.stats['achieved_rate_per_cycle']:.1f}")
 
@@ -157,7 +193,11 @@ def process_raw_stream(
         print(f"  Post-trigger samples: {post_samples}")
         print(f"  Total waveform length: {pre_samples + post_samples}")
 
-    extractor = WaveformExtractor(pre_samples, post_samples)
+    extractor = WaveformExtractor(
+        pre_samples, post_samples,
+        validate_peak_position=validate_peak_position,
+        peak_tolerance=peak_tolerance
+    )
     extraction_result = extractor.extract(
         signal, trigger_result.triggers, sample_rate
     )
@@ -171,6 +211,8 @@ def process_raw_stream(
             print(f"  Skipped (end): {stats['skipped_end']}")
         if stats['skipped_overlap'] > 0:
             print(f"  Skipped (overlap): {stats['skipped_overlap']}")
+        if stats.get('skipped_peak_position', 0) > 0:
+            print(f"  Skipped (peak position): {stats['skipped_peak_position']}")
 
     # Save in Rugged format
     if verbose:
@@ -330,6 +372,12 @@ Examples:
         default=100,
         help='Minimum samples between triggers (default: 100)'
     )
+    parser.add_argument(
+        '--dead-time', '--dead-time-us',
+        type=float,
+        dest='dead_time_us',
+        help='Dead time between triggers in microseconds (overrides --min-separation)'
+    )
 
     # Method-specific options
     parser.add_argument(
@@ -349,6 +397,29 @@ Examples:
         type=float,
         default=1.0,
         help='Knee detection sensitivity for histogram_knee (default: 1.0)'
+    )
+
+    # Trigger refinement options
+    parser.add_argument(
+        '--refine-to-onset',
+        action='store_true',
+        help='Adjust triggers backward to pulse onset (helps when pulse starts before threshold crossing)'
+    )
+    parser.add_argument(
+        '--refine-to-peak',
+        action='store_true',
+        help='Adjust triggers forward to pulse peak (helps when trigger is early)'
+    )
+    parser.add_argument(
+        '--validate-peak-position',
+        action='store_true',
+        help='Discard waveforms where peak is far from trigger (for high pulse density data)'
+    )
+    parser.add_argument(
+        '--peak-tolerance',
+        type=float,
+        default=0.5,
+        help='Fraction of window where peak must appear (default: 0.5 = first half)'
     )
 
     # Waveform extraction options
@@ -472,6 +543,11 @@ Examples:
             ac_frequency=args.ac_frequency,
             polarity=args.polarity,
             min_separation=args.min_separation,
+            dead_time_us=args.dead_time_us,
+            refine_to_onset=args.refine_to_onset,
+            refine_to_peak=args.refine_to_peak,
+            validate_peak_position=args.validate_peak_position,
+            peak_tolerance=args.peak_tolerance,
             signal_var=signal_var,
             sample_rate_var=args.sample_rate_var,
             verbose=not args.quiet,

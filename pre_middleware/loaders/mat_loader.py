@@ -244,11 +244,73 @@ class MatLoader:
         self._load_mat_file()
         return [k for k in self._mat_data.keys() if not k.startswith('_')]
 
-    def list_channels(self) -> List[str]:
+    def _is_reference_channel(self, signal: np.ndarray, sample_rate: float) -> bool:
+        """
+        Check if a channel is a reference signal (50/60 Hz sine wave) vs PD sensor data.
+
+        Reference channels have:
+        - Smooth sinusoidal waveform
+        - Dominant frequency at 50 or 60 Hz
+        - Low high-frequency content (no pulses/spikes)
+
+        Args:
+            signal: The signal data
+            sample_rate: Sample rate in Hz
+
+        Returns:
+            True if this appears to be a reference channel
+        """
+        from scipy.fft import fft, fftfreq
+
+        # Use a segment of the signal for analysis
+        n_samples = min(len(signal), int(sample_rate * 0.1))  # 100ms or available
+        if n_samples < 100:
+            return False
+
+        segment = signal[:n_samples]
+
+        # Compute FFT
+        freqs = fftfreq(n_samples, 1/sample_rate)
+        fft_vals = np.abs(fft(segment))
+
+        # Only look at positive frequencies
+        pos_mask = freqs > 0
+        freqs = freqs[pos_mask]
+        fft_vals = fft_vals[pos_mask]
+
+        # Find dominant frequency
+        dominant_idx = np.argmax(fft_vals)
+        dominant_freq = freqs[dominant_idx]
+
+        # Check if dominant frequency is near 50 or 60 Hz
+        is_line_freq = (45 <= dominant_freq <= 65)
+
+        if not is_line_freq:
+            return False
+
+        # Check if the signal is mostly sinusoidal (high energy at fundamental, low elsewhere)
+        # Reference signals have >80% of energy at the fundamental frequency
+        fundamental_energy = fft_vals[dominant_idx] ** 2
+        total_energy = np.sum(fft_vals ** 2)
+
+        if total_energy > 0:
+            fundamental_ratio = fundamental_energy / total_energy
+            # Reference channels typically have >50% energy at fundamental
+            # PD sensor channels have broadband noise and pulses
+            if fundamental_ratio > 0.3:
+                return True
+
+        return False
+
+    def list_channels(self, include_reference: bool = False) -> List[str]:
         """
         List all available signal channels in the .mat file.
 
         Looks for common channel naming patterns: Ch1, Ch2, channel1, etc.
+        By default, excludes reference channels (50/60 Hz sine waves).
+
+        Args:
+            include_reference: If True, include reference channels in the list
 
         Returns:
             List of channel variable names found
@@ -259,6 +321,15 @@ class MatLoader:
         # Check for common channel patterns
         channel_patterns = ['Ch', 'ch', 'CH', 'Channel', 'channel', 'CHANNEL']
 
+        # Try to get sample rate for reference detection
+        sample_rate = None
+        if not include_reference:
+            try:
+                sr, _ = self._find_sample_rate()
+                sample_rate = sr
+            except Exception:
+                pass
+
         for key in self._mat_data.keys():
             if key.startswith('_'):
                 continue
@@ -267,10 +338,26 @@ class MatLoader:
                 continue
 
             # Check if it matches a channel pattern
+            is_channel = False
             for pattern in channel_patterns:
                 if key.startswith(pattern):
-                    channels.append(key)
+                    is_channel = True
                     break
+
+            if not is_channel:
+                continue
+
+            # Filter out reference channels unless requested
+            if not include_reference and sample_rate is not None:
+                try:
+                    signal = np.asarray(value).flatten()
+                    if self._is_reference_channel(signal, sample_rate):
+                        print(f"  Skipping reference channel: {key}")
+                        continue
+                except Exception:
+                    pass  # If detection fails, include the channel
+
+            channels.append(key)
 
         return sorted(channels)
 

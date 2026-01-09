@@ -50,6 +50,7 @@ from pdlib.features.polarity import (
     calculate_polarity, compare_methods, POLARITY_METHODS,
     DEFAULT_POLARITY_METHOD, get_method_description
 )
+from pdlib.features.extractor import PYWT_AVAILABLE
 from pdlib.clustering import (
     cluster_pulses as pdlib_cluster_pulses,
     compute_cluster_features as pdlib_compute_cluster_features,
@@ -59,6 +60,18 @@ from pdlib.classification import PDTypeClassifier, PD_TYPES
 
 # Import middleware
 from middleware.formats import RuggedLoader
+
+# Import pre_middleware for IEEE data preprocessing
+try:
+    from pre_middleware.process_raw_stream import process_raw_stream
+    from pre_middleware.trigger_detection import TRIGGER_METHODS, DEFAULT_TRIGGER_METHOD
+    from pre_middleware.loaders import MatLoader
+    PRE_MIDDLEWARE_AVAILABLE = True
+except ImportError:
+    PRE_MIDDLEWARE_AVAILABLE = False
+    TRIGGER_METHODS = ['histogram_knee', 'stdev', 'pulse_rate']
+    DEFAULT_TRIGGER_METHOD = 'histogram_knee'
+    print("Pre-middleware not available. IEEE data preprocessing will be disabled.")
 
 # For backward compatibility
 PDLibClassifier = PDTypeClassifier
@@ -77,7 +90,12 @@ DATA_DIR = "Rugged Data Files"
 EXTERNAL_DATA_DIRS = [
     "../datasets",  # External datasets not in git
     "TU Delft WFMs",  # TU Delft format data
+    "IEEE Data Processed",  # Processed IEEE data files (not in git)
 ]
+
+# Default directories for IEEE data preprocessing
+IEEE_RAW_DATA_DIR = "IEEE Data"  # Default input directory for raw IEEE .mat files
+IEEE_PROCESSED_DIR = "IEEE Data Processed"  # Default output directory for processed data
 
 # Clustering methods available
 CLUSTERING_METHODS = ['dbscan', 'kmeans']
@@ -142,6 +160,28 @@ PULSE_FEATURES = [
     'norm_bandwidth_3db',
     'norm_zero_crossing_rate',
     'norm_oscillation_rate',
+    # Wavelet features (DWT decomposition)
+    'wavelet_energy_approx',
+    'wavelet_energy_d1',
+    'wavelet_energy_d2',
+    'wavelet_energy_d3',
+    'wavelet_energy_d4',
+    'wavelet_energy_d5',
+    'wavelet_rel_energy_approx',
+    'wavelet_rel_energy_d1',
+    'wavelet_rel_energy_d2',
+    'wavelet_rel_energy_d3',
+    'wavelet_rel_energy_d4',
+    'wavelet_rel_energy_d5',
+    'wavelet_detail_approx_ratio',
+    'wavelet_dominant_level',
+    'wavelet_entropy',
+    'wavelet_approx_mean',
+    'wavelet_approx_std',
+    'wavelet_approx_max',
+    'wavelet_d1_mean',
+    'wavelet_d1_std',
+    'wavelet_d1_max',
 ]
 
 # Load default clustering features from config
@@ -330,7 +370,13 @@ FEATURE_GROUPS = {
                'cumulative_energy_area_ratio', 'energy_charge_ratio'],
     'Frequency': ['dominant_frequency', 'center_frequency', 'bandwidth_3db',
                   'spectral_power_low', 'spectral_power_high', 'spectral_flatness', 'spectral_entropy'],
-    'Shape': ['rise_fall_ratio', 'zero_crossing_count', 'oscillation_count']
+    'Shape': ['rise_fall_ratio', 'zero_crossing_count', 'oscillation_count'],
+    'Wavelet': ['wavelet_energy_approx', 'wavelet_energy_d1', 'wavelet_energy_d2', 'wavelet_energy_d3',
+                'wavelet_energy_d4', 'wavelet_energy_d5', 'wavelet_rel_energy_approx', 'wavelet_rel_energy_d1',
+                'wavelet_rel_energy_d2', 'wavelet_rel_energy_d3', 'wavelet_rel_energy_d4', 'wavelet_rel_energy_d5',
+                'wavelet_detail_approx_ratio', 'wavelet_dominant_level', 'wavelet_entropy',
+                'wavelet_approx_mean', 'wavelet_approx_std', 'wavelet_approx_max',
+                'wavelet_d1_mean', 'wavelet_d1_std', 'wavelet_d1_max']
 }
 
 # Default visible features (match default pulse features for consistency)
@@ -518,10 +564,19 @@ class PDDataLoader:
         labels = []
         with open(filepath, 'r') as f:
             for line in f:
-                if not line.startswith('#') and not line.startswith('waveform'):
-                    parts = line.strip().split(',')
-                    if len(parts) >= 2:
+                line = line.strip()
+                # Skip comments and header rows
+                if not line or line.startswith('#'):
+                    continue
+                # Skip headers (various formats)
+                if line.startswith('waveform') or line.startswith('pulse_id') or 'cluster' in line.split(',')[0:2]:
+                    continue
+                parts = line.split(',')
+                if len(parts) >= 2:
+                    try:
                         labels.append(int(parts[1]))
+                    except ValueError:
+                        continue  # Skip non-numeric rows
 
         return np.array(labels)
 
@@ -1689,6 +1744,27 @@ def create_app(data_dir=DATA_DIR):
             ], id='noise-threshold-container', style={'width': '35%', 'display': 'inline-block', 'verticalAlign': 'top'}),
         ], style={'width': '90%', 'margin': '10px auto'}),
 
+        # Raw dataset processing section (shown only for [RAW] datasets)
+        html.Div([
+            html.Div([
+                html.Span("⚠️ This dataset needs feature extraction before visualization. ",
+                         style={'color': '#856404', 'marginRight': '10px'}),
+                html.Button("Extract Features & Analyze", id='extract-features-btn', n_clicks=0,
+                           style={'backgroundColor': '#28a745', 'color': 'white',
+                                  'padding': '8px 16px', 'border': 'none', 'borderRadius': '4px',
+                                  'cursor': 'pointer', 'fontWeight': 'bold'}),
+                dcc.Loading(
+                    id='extract-features-loading',
+                    type='circle',
+                    children=html.Span(id='extract-features-status', style={'marginLeft': '15px'})
+                ),
+            ], style={'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap'})
+        ], id='raw-dataset-notice', style={
+            'width': '90%', 'margin': '10px auto', 'padding': '12px',
+            'backgroundColor': '#fff3cd', 'borderRadius': '8px',
+            'border': '1px solid #ffc107', 'display': 'none'
+        }),
+
         # PD Type Summary (always visible - shown prominently in simplified view)
         html.Div([
             html.Div(id='pd-type-summary-display', style={
@@ -2402,6 +2478,235 @@ def create_app(data_dir=DATA_DIR):
                                        style={'fontSize': '11px', 'color': '#666', 'fontStyle': 'italic', 'marginTop': '10px'})
                             ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
                         ]),
+
+                        # Row 5: IEEE Data Preprocessing
+                        html.Details([
+                            html.Summary("IEEE Data Preprocessing", style={
+                                'cursor': 'pointer',
+                                'fontWeight': 'bold',
+                                'padding': '8px',
+                                'backgroundColor': '#f8f9fa',
+                                'borderRadius': '4px'
+                            }),
+                            html.Div([
+                                html.P("Process raw IEEE .mat files to extract triggered waveforms. Output will be saved to 'IEEE Data Processed' directory.",
+                                       style={'fontSize': '12px', 'color': '#666', 'marginBottom': '10px'}),
+
+                                # Input directory
+                                html.Div([
+                                    html.Label("Input Directory:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-input-dir',
+                                        type='text',
+                                        value=IEEE_RAW_DATA_DIR,
+                                        style={'width': '300px', 'marginRight': '10px'}
+                                    ),
+                                    html.Button("Scan", id='ieee-scan-btn', n_clicks=0,
+                                               style={'padding': '5px 15px', 'cursor': 'pointer'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # File selector
+                                html.Div([
+                                    html.Label("Select File:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Dropdown(
+                                        id='ieee-file-dropdown',
+                                        options=[],
+                                        placeholder='Click "Scan" to find .mat files...',
+                                        style={'width': '400px', 'display': 'inline-block'}
+                                    ),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Channel selector
+                                html.Div([
+                                    html.Label("Channel:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Dropdown(
+                                        id='ieee-channel-dropdown',
+                                        options=[],
+                                        placeholder='Select a file first...',
+                                        style={'width': '200px', 'display': 'inline-block'}
+                                    ),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Trigger method
+                                html.Div([
+                                    html.Label("Trigger Method:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Dropdown(
+                                        id='ieee-trigger-method',
+                                        options=[{'label': m, 'value': m} for m in TRIGGER_METHODS],
+                                        value=DEFAULT_TRIGGER_METHOD,
+                                        style={'width': '200px', 'display': 'inline-block'}
+                                    ),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Method-specific configuration (shown/hidden based on method)
+                                # stdev method: k-sigma multiplier
+                                html.Div([
+                                    html.Label("K-Sigma:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-k-sigma',
+                                        type='number',
+                                        value=5.0,
+                                        min=1.0,
+                                        max=20.0,
+                                        step=0.5,
+                                        style={'width': '80px', 'marginRight': '10px'}
+                                    ),
+                                    html.Span("× standard deviation above baseline", style={'fontSize': '11px', 'color': '#666'}),
+                                ], id='ieee-stdev-config', style={'marginBottom': '10px', 'marginLeft': '120px', 'display': 'none'}),
+
+                                # pulse_rate method: target pulses per cycle
+                                html.Div([
+                                    html.Label("Target Rate:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-target-rate',
+                                        type='number',
+                                        value=100,
+                                        min=1,
+                                        max=1000,
+                                        step=10,
+                                        style={'width': '80px', 'marginRight': '10px'}
+                                    ),
+                                    html.Span("max pulses per AC cycle", style={'fontSize': '11px', 'color': '#666'}),
+                                ], id='ieee-pulse-rate-config', style={'marginBottom': '10px', 'marginLeft': '120px', 'display': 'none'}),
+
+                                # histogram_knee method: sensitivity
+                                html.Div([
+                                    html.Label("Sensitivity:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-sensitivity',
+                                        type='number',
+                                        value=1.0,
+                                        min=0.1,
+                                        max=5.0,
+                                        step=0.1,
+                                        style={'width': '80px', 'marginRight': '10px'}
+                                    ),
+                                    html.Span("knee detection sensitivity (higher = more sensitive)", style={'fontSize': '11px', 'color': '#666'}),
+                                ], id='ieee-histogram-config', style={'marginBottom': '10px', 'marginLeft': '120px', 'display': 'block'}),
+
+                                # Waveform extraction settings (time-based)
+                                html.Div([
+                                    html.Label("Waveform Length:", style={'fontWeight': 'bold', 'marginRight': '5px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-waveform-length',
+                                        type='number',
+                                        value=2.0,
+                                        min=0.1,
+                                        max=100,
+                                        step=0.1,
+                                        style={'width': '80px', 'marginRight': '5px'}
+                                    ),
+                                    html.Span("µs", style={'fontSize': '11px', 'color': '#666', 'marginRight': '15px'}),
+                                    html.Label("Pre-trigger:", style={'fontWeight': 'bold', 'marginRight': '5px'}),
+                                    dcc.Input(
+                                        id='ieee-pre-trigger-pct',
+                                        type='number',
+                                        value=25,
+                                        min=1,
+                                        max=99,
+                                        step=1,
+                                        style={'width': '60px', 'marginRight': '5px'}
+                                    ),
+                                    html.Span("% (default 25%)", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Sample rate (auto-detected or manual)
+                                html.Div([
+                                    html.Label("Sample Rate:", style={'fontWeight': 'bold', 'marginRight': '5px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-sample-rate',
+                                        type='number',
+                                        value=125,
+                                        min=1,
+                                        max=10000,
+                                        step=1,
+                                        style={'width': '80px', 'marginRight': '5px'}
+                                    ),
+                                    html.Span("MSPS (auto-filled from file when selected)", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # AC Frequency
+                                html.Div([
+                                    html.Label("AC Frequency:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-ac-frequency',
+                                        type='number',
+                                        value=60.0,
+                                        min=50,
+                                        max=60,
+                                        step=10,
+                                        style={'width': '80px', 'marginRight': '5px'}
+                                    ),
+                                    html.Span("Hz", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Dead time between triggers (in samples)
+                                html.Div([
+                                    html.Label("Dead Time:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-dead-time-samples',
+                                        type='number',
+                                        value=100,
+                                        min=0,
+                                        max=10000,
+                                        step=1,
+                                        style={'width': '80px', 'marginRight': '5px'}
+                                    ),
+                                    html.Span("samples (min separation between triggers, default 100)", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Trigger refinement options
+                                html.Div([
+                                    html.Label("Trigger Position:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.RadioItems(
+                                        id='ieee-trigger-refinement',
+                                        options=[
+                                            {'label': ' Threshold crossing (default)', 'value': 'none'},
+                                            {'label': ' Refine to pulse onset (if pulse appears late in waveform)', 'value': 'onset'},
+                                            {'label': ' Refine to pulse peak', 'value': 'peak'},
+                                        ],
+                                        value='none',
+                                        style={'display': 'inline-block'},
+                                        labelStyle={'display': 'block', 'marginBottom': '3px', 'fontSize': '12px'}
+                                    ),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Peak position validation (for high pulse density data)
+                                html.Div([
+                                    dcc.Checklist(
+                                        id='ieee-validate-peak',
+                                        options=[{'label': ' Validate peak position (discard waveforms where pulse appears far from trigger)', 'value': 'validate'}],
+                                        value=[],
+                                        style={'fontSize': '12px'}
+                                    ),
+                                ], style={'marginBottom': '15px'}),
+
+                                # Process button
+                                html.Div([
+                                    html.Button("Process IEEE Data", id='ieee-process-btn', n_clicks=0,
+                                               style={'backgroundColor': '#28a745', 'color': 'white',
+                                                      'padding': '10px 20px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    html.Button("Process All Files", id='ieee-process-all-btn', n_clicks=0,
+                                               style={'backgroundColor': '#17a2b8', 'color': 'white',
+                                                      'padding': '10px 20px', 'border': 'none', 'borderRadius': '4px',
+                                                      'cursor': 'pointer', 'fontWeight': 'bold'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Status/result
+                                dcc.Loading(
+                                    id='ieee-processing-loading',
+                                    type='circle',
+                                    children=html.Div(id='ieee-process-result', style={'marginTop': '10px'})
+                                ),
+
+                                html.P([
+                                    "Output directory: ",
+                                    html.Code(IEEE_PROCESSED_DIR),
+                                    " (excluded from git)"
+                                ], style={'fontSize': '11px', 'color': '#666', 'fontStyle': 'italic', 'marginTop': '10px'})
+                            ], style={'padding': '10px', 'backgroundColor': '#fff', 'borderRadius': '4px', 'marginTop': '5px'})
+                        ]) if PRE_MIDDLEWARE_AVAILABLE else html.Div(),
                     ]),
                 ], style={'padding': '15px', 'border': '1px solid #ddd', 'borderRadius': '4px', 'marginTop': '5px'})
             ])
@@ -3520,6 +3825,19 @@ def create_app(data_dir=DATA_DIR):
             return html.Div("Please select at least 2 features for clustering",
                           style={'color': 'orange', 'padding': '10px'})
 
+        # Check for wavelet features when PyWavelets is not available
+        wavelet_feature_names = [f for f in selected_features if f.startswith('wavelet_')]
+        wavelet_warning = ""
+        if wavelet_feature_names and not PYWT_AVAILABLE:
+            selected_features = [f for f in selected_features if not f.startswith('wavelet_')]
+            if len(selected_features) < 2:
+                return html.Div([
+                    html.Div("Cannot cluster: PyWavelets not installed", style={'color': 'red', 'fontWeight': 'bold'}),
+                    html.Div(f"Selected {len(wavelet_feature_names)} wavelet features, but PyWavelets is required."),
+                    html.Div("Install with: pip install PyWavelets", style={'fontFamily': 'monospace', 'marginTop': '5px'})
+                ], style={'padding': '10px'})
+            wavelet_warning = f"⚠ Skipped {len(wavelet_feature_names)} wavelet features (PyWavelets not installed)"
+
         if not prefix:
             return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
 
@@ -3639,6 +3957,19 @@ def create_app(data_dir=DATA_DIR):
         if not selected_features or len(selected_features) < 2:
             return html.Div("Please select at least 2 features for clustering",
                           style={'color': 'orange', 'padding': '10px'})
+
+        # Check for wavelet features when PyWavelets is not available
+        wavelet_feature_names = [f for f in selected_features if f.startswith('wavelet_')]
+        wavelet_warning = ""
+        if wavelet_feature_names and not PYWT_AVAILABLE:
+            selected_features = [f for f in selected_features if not f.startswith('wavelet_')]
+            if len(selected_features) < 2:
+                return html.Div([
+                    html.Div("Cannot cluster: PyWavelets not installed", style={'color': 'red', 'fontWeight': 'bold'}),
+                    html.Div(f"Selected {len(wavelet_feature_names)} wavelet features, but PyWavelets is required."),
+                    html.Div("Install with: pip install PyWavelets", style={'fontFamily': 'monospace', 'marginTop': '5px'})
+                ], style={'padding': '10px'})
+            wavelet_warning = f"⚠ Skipped {len(wavelet_feature_names)} wavelet features (PyWavelets not installed)"
 
         if not prefix:
             return html.Div("No dataset selected", style={'color': 'red', 'padding': '10px'})
@@ -4222,6 +4553,22 @@ def create_app(data_dir=DATA_DIR):
             return (html.Div("Please select at least 2 features for clustering",
                           style={'color': 'orange', 'padding': '10px'}), no_update)
 
+        # Check for wavelet features when PyWavelets is not available
+        wavelet_feature_names = [f for f in selected_features if f.startswith('wavelet_')]
+        if wavelet_feature_names and not PYWT_AVAILABLE:
+            # Filter out wavelet features and warn user
+            selected_features = [f for f in selected_features if not f.startswith('wavelet_')]
+            if len(selected_features) < 2:
+                return (html.Div([
+                    html.Div("Cannot cluster: PyWavelets not installed", style={'color': 'red', 'fontWeight': 'bold'}),
+                    html.Div(f"Selected {len(wavelet_feature_names)} wavelet features, but PyWavelets is required."),
+                    html.Div("Install with: pip install PyWavelets", style={'fontFamily': 'monospace', 'marginTop': '5px'})
+                ], style={'padding': '10px'}), no_update)
+            # Show warning but continue with remaining features
+            wavelet_warning = f"⚠ Skipping {len(wavelet_feature_names)} wavelet features (PyWavelets not installed). "
+        else:
+            wavelet_warning = ""
+
         # Get all datasets
         datasets = loader.datasets
         if not datasets:
@@ -4293,6 +4640,9 @@ def create_app(data_dir=DATA_DIR):
                             continue
 
                         results_details.append(f"↻ {dataset}: Re-extracted features ({len(missing_features)} were missing)")
+                        # Update loader's dataset_info to reflect that features now exist
+                        if dataset in loader.dataset_info:
+                            loader.dataset_info[dataset]['has_features'] = True
                     except subprocess.TimeoutExpired:
                         fail_count += 1
                         results_details.append(f"✗ {dataset}: Feature extraction timeout (>300s)")
@@ -4345,6 +4695,9 @@ def create_app(data_dir=DATA_DIR):
 
                 if pipeline_success:
                     success_count += 1
+                    # Update loader's dataset_info to reflect that features now exist
+                    if dataset in loader.dataset_info:
+                        loader.dataset_info[dataset]['has_features'] = True
                     # Update re-extraction entry to show success, or add new success entry
                     updated = False
                     for j, d in enumerate(results_details):
@@ -4387,9 +4740,14 @@ def create_app(data_dir=DATA_DIR):
             summary_msg = f"Reclustered {success_count}/{len(datasets)} datasets"
 
         weights_info = " | Weights applied" if feature_weights_str and feature_weights_str.strip() else ""
-        result_div = html.Div([
+        result_children = [
             html.Div(summary_msg,
                     style={'color': '#2e7d32' if fail_count == 0 else '#ff9800', 'fontWeight': 'bold'}),
+        ]
+        # Add wavelet warning if applicable
+        if wavelet_warning:
+            result_children.append(html.Div(wavelet_warning, style={'fontSize': '12px', 'color': '#ff9800', 'marginTop': '3px'}))
+        result_children.extend([
             html.Div(f"Method: {method.upper()} | Features: {len(selected_features)}{weights_info}", style={'fontSize': '12px', 'color': '#666'}),
             html.Details([
                 html.Summary("Details", style={'cursor': 'pointer', 'fontSize': '12px'}),
@@ -4398,7 +4756,8 @@ def create_app(data_dir=DATA_DIR):
             ]) if results_details else None,
             html.Div("Feature selection copied to all datasets.",
                     style={'fontSize': '12px', 'color': '#1976d2', 'marginTop': '5px', 'fontStyle': 'italic'})
-        ], style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
+        ])
+        result_div = html.Div(result_children, style={'padding': '10px', 'backgroundColor': '#e8f5e9', 'borderRadius': '4px'})
 
         return (result_div, updated_features_data)
 
@@ -5002,6 +5361,16 @@ def create_app(data_dir=DATA_DIR):
         dataset_info = loader.dataset_info.get(prefix, {})
         has_features = dataset_info.get('has_features', True)
 
+        # Also check actual file existence (in case extraction happened after initial scan)
+        if not has_features:
+            data_path = loader.get_dataset_path(prefix)
+            clean_prefix = loader.get_clean_prefix(prefix)
+            features_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+            if os.path.exists(features_file):
+                # Update cached value
+                loader.dataset_info[prefix]['has_features'] = True
+                has_features = True
+
         if not has_features:
             empty_fig = go.Figure()
             empty_fig.add_annotation(
@@ -5036,6 +5405,43 @@ def create_app(data_dir=DATA_DIR):
             return empty_fig, empty_fig, empty_fig, stats_msg, prefix
 
         data = loader.load_all(prefix)
+
+        # Check for size mismatch between waveforms and features (stale features after reprocessing)
+        n_waveforms = len(data['waveforms']) if data.get('waveforms') is not None else 0
+        n_features = len(data['features']) if data.get('features') is not None else 0
+
+        if n_waveforms > 0 and n_features > 0 and n_waveforms != n_features:
+            empty_fig = go.Figure()
+            empty_fig.add_annotation(
+                text="⚠️ Data Mismatch Detected",
+                xref="paper", yref="paper",
+                x=0.5, y=0.7, showarrow=False,
+                font=dict(size=20, color="red")
+            )
+            empty_fig.add_annotation(
+                text=f"Waveforms: {n_waveforms} vs Features: {n_features}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.55, showarrow=False,
+                font=dict(size=14, color="orange")
+            )
+            empty_fig.add_annotation(
+                text="The waveforms were reprocessed but features are stale.",
+                xref="paper", yref="paper",
+                x=0.5, y=0.4, showarrow=False,
+                font=dict(size=12)
+            )
+            empty_fig.add_annotation(
+                text="Please re-extract features using 'Cluster All' or the analysis pipeline.",
+                xref="paper", yref="paper",
+                x=0.5, y=0.3, showarrow=False,
+                font=dict(size=12)
+            )
+            empty_fig.update_layout(
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False)
+            )
+            stats_msg = f"Dataset: {prefix}\nStatus: Data mismatch\n\nWaveforms ({n_waveforms}) and features ({n_features}) have different counts.\nRe-extract features after reprocessing."
+            return empty_fig, empty_fig, empty_fig, stats_msg, prefix
 
         # Determine polarity method to use
         pm = polarity_method if polarity_method and polarity_method != 'stored' else None
@@ -5233,7 +5639,7 @@ def create_app(data_dir=DATA_DIR):
         return create_waveform_plot(None, None, None, None, None, None), None
 
     # Define cluster feature lists for the selector
-    from aggregate_cluster_features import (
+    from pdlib.clustering.definitions import (
         CLUSTER_FEATURE_NAMES as AGG_CLUSTER_FEATURE_NAMES,
         WAVEFORM_MEAN_FEATURE_NAMES,
         WAVEFORM_TRIMMED_MEAN_FEATURE_NAMES,
@@ -6432,6 +6838,409 @@ def create_app(data_dir=DATA_DIR):
         except Exception as e:
             return html.Div(f"Error during analysis: {str(e)}",
                           style={'color': '#721c24', 'backgroundColor': '#f8d7da', 'padding': '10px', 'borderRadius': '4px'})
+
+    # ===== Raw Dataset Processing Callbacks =====
+
+    @app.callback(
+        Output('raw-dataset-notice', 'style'),
+        Input('dataset-dropdown', 'value')
+    )
+    def toggle_raw_dataset_notice(prefix):
+        """Show/hide the raw dataset notice based on whether dataset needs processing."""
+        hidden = {'width': '90%', 'margin': '10px auto', 'padding': '12px',
+                  'backgroundColor': '#fff3cd', 'borderRadius': '8px',
+                  'border': '1px solid #ffc107', 'display': 'none'}
+        visible = {'width': '90%', 'margin': '10px auto', 'padding': '12px',
+                   'backgroundColor': '#fff3cd', 'borderRadius': '8px',
+                   'border': '1px solid #ffc107', 'display': 'block'}
+
+        if not prefix:
+            return hidden
+
+        dataset_info = loader.dataset_info.get(prefix, {})
+        has_features = dataset_info.get('has_features', True)
+
+        # Also check actual file existence (in case extraction happened after initial scan)
+        if not has_features:
+            data_path = loader.get_dataset_path(prefix)
+            clean_prefix = loader.get_clean_prefix(prefix)
+            features_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+            if os.path.exists(features_file):
+                # Update cached value and hide the notice
+                loader.dataset_info[prefix]['has_features'] = True
+                has_features = True
+
+        return visible if not has_features else hidden
+
+    @app.callback(
+        Output('extract-features-status', 'children'),
+        Output('dataset-dropdown', 'options'),
+        Output('dataset-dropdown', 'value'),
+        Input('extract-features-btn', 'n_clicks'),
+        State('dataset-dropdown', 'value'),
+        prevent_initial_call=True
+    )
+    def extract_features_for_dataset(n_clicks, prefix):
+        """Run the full analysis pipeline for a raw dataset."""
+        if not n_clicks or not prefix:
+            raise PreventUpdate
+
+        dataset_info = loader.dataset_info.get(prefix, {})
+        data_path = dataset_info.get('path', DATA_DIR)
+        clean_prefix = loader.get_clean_prefix(prefix)
+
+        print(f"\n{'='*60}")
+        print(f"Running pipeline for: {clean_prefix}")
+        print(f"Data path: {data_path}")
+        print(f"{'='*60}")
+
+        try:
+            # Import pipeline functions
+            from run_pipeline_integrated import (
+                extract_features,
+                run_clustering,
+                aggregate_cluster_features,
+                classify_clusters
+            )
+
+            # Step 1: Extract features
+            print("\n[1/4] Extracting features...")
+            extract_features(data_path, file_prefix=clean_prefix)
+            print("  ✓ Features extracted")
+
+            # Check how many pulses we have (read features file)
+            features_file = os.path.join(data_path, f"{clean_prefix}-features.csv")
+            num_pulses = 0
+            if os.path.exists(features_file):
+                with open(features_file, 'r') as f:
+                    num_pulses = sum(1 for _ in f) - 1  # Subtract header
+
+            # Step 2: Clustering - adjust min_samples for small datasets
+            print(f"\n[2/4] Clustering pulses ({num_pulses} pulses)...")
+            if num_pulses < 5:
+                # Use min_samples = max(2, num_pulses - 1) for small datasets
+                min_samples = max(2, num_pulses - 1)
+                print(f"  ⚠ Small dataset: using min_samples={min_samples}")
+                run_clustering(data_path, file_prefix=clean_prefix, method='dbscan', min_samples=min_samples)
+            else:
+                run_clustering(data_path, file_prefix=clean_prefix, method='dbscan')
+            print("  ✓ Clustering complete")
+
+            # Step 3: Aggregate cluster features
+            print("\n[3/4] Aggregating cluster features...")
+            aggregate_cluster_features(data_path, file_prefix=clean_prefix, method='dbscan')
+            print("  ✓ Aggregation complete")
+
+            # Step 4: Classify PD types
+            print("\n[4/4] Classifying PD types...")
+            classify_clusters(data_path, file_prefix=clean_prefix, method='dbscan')
+            print("  ✓ Classification complete")
+
+            print(f"\n{'='*60}")
+            print("Pipeline complete!")
+            print(f"{'='*60}")
+
+            # Refresh the dataset list
+            loader.find_datasets()
+            new_options = [{'label': d, 'value': d} for d in loader.datasets]
+
+            # The dataset should now appear without [RAW] prefix
+            new_value = clean_prefix if clean_prefix in loader.datasets else prefix
+
+            status = html.Span([
+                html.Span("✓ ", style={'color': 'green'}),
+                "Pipeline complete! Refresh the page or reselect dataset to view results."
+            ], style={'color': '#28a745'})
+
+            return status, new_options, new_value
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Error: {str(e)}")
+            return html.Span(f"✗ Error: {str(e)}", style={'color': 'red'}), no_update, no_update
+
+    # ===== IEEE Data Preprocessing Callbacks =====
+
+    @app.callback(
+        Output('ieee-stdev-config', 'style'),
+        Output('ieee-pulse-rate-config', 'style'),
+        Output('ieee-histogram-config', 'style'),
+        Input('ieee-trigger-method', 'value')
+    )
+    def toggle_method_config(method):
+        """Show/hide method-specific configuration based on selected trigger method."""
+        hidden = {'marginBottom': '10px', 'marginLeft': '120px', 'display': 'none'}
+        visible = {'marginBottom': '10px', 'marginLeft': '120px', 'display': 'block'}
+
+        if method == 'stdev':
+            return visible, hidden, hidden
+        elif method == 'pulse_rate':
+            return hidden, visible, hidden
+        else:  # histogram_knee
+            return hidden, hidden, visible
+
+    @app.callback(
+        Output('ieee-file-dropdown', 'options'),
+        Input('ieee-scan-btn', 'n_clicks'),
+        State('ieee-input-dir', 'value'),
+        prevent_initial_call=True
+    )
+    def scan_ieee_directory(n_clicks, input_dir):
+        """Scan directory recursively for .mat files in subdirectories."""
+        if not n_clicks or not input_dir:
+            return []
+
+        if not os.path.exists(input_dir):
+            return []
+
+        # Search recursively for .mat files in subdirectories
+        mat_files = glob.glob(os.path.join(input_dir, "**", "*.mat"), recursive=True)
+        # Also check top-level directory
+        mat_files += glob.glob(os.path.join(input_dir, "*.mat"))
+        # Remove duplicates and sort
+        mat_files = sorted(set(mat_files))
+
+        # Create options with relative path shown for files in subdirectories
+        options = []
+        for f in mat_files:
+            rel_path = os.path.relpath(f, input_dir)
+            # Show subfolder/filename for nested files, just filename for top-level
+            if os.path.dirname(rel_path):
+                label = rel_path.replace(os.sep, '/')  # Use forward slashes for display
+            else:
+                label = os.path.basename(f)
+            options.append({'label': label, 'value': f})
+
+        return options
+
+    @app.callback(
+        Output('ieee-channel-dropdown', 'options'),
+        Output('ieee-channel-dropdown', 'value'),
+        Output('ieee-sample-rate', 'value'),
+        Input('ieee-file-dropdown', 'value'),
+        prevent_initial_call=True
+    )
+    def update_channel_options_and_sample_rate(filepath):
+        """Update channel options and sample rate when a file is selected."""
+        if not filepath or not PRE_MIDDLEWARE_AVAILABLE:
+            return [], None, 125  # Default sample rate
+
+        try:
+            mat_loader = MatLoader(filepath)
+            channels = mat_loader.list_channels()
+
+            # Try to get sample rate from file
+            sample_rate_msps = 125  # Default
+            try:
+                data = mat_loader.load()
+                if 'sample_rate' in data and data['sample_rate']:
+                    sample_rate_msps = int(data['sample_rate'] / 1e6)  # Convert Hz to MSPS
+                    print(f"Auto-detected sample rate: {sample_rate_msps} MSPS")
+            except Exception as e:
+                print(f"Could not auto-detect sample rate: {e}")
+
+            if channels:
+                options = [{'label': ch, 'value': ch} for ch in channels]
+                return options, channels[0], sample_rate_msps
+            else:
+                # No standard channels found, list all variables
+                info = mat_loader.get_info()
+                var_options = []
+                for name, details in info.get('variables', {}).items():
+                    if isinstance(details, dict) and 'shape' in details:
+                        var_options.append({'label': f"{name} {details['shape']}", 'value': name})
+                return var_options, var_options[0]['value'] if var_options else None, sample_rate_msps
+        except Exception as e:
+            return [{'label': f'Error: {str(e)}', 'value': None}], None, 125
+
+    @app.callback(
+        Output('ieee-process-result', 'children'),
+        Input('ieee-process-btn', 'n_clicks'),
+        Input('ieee-process-all-btn', 'n_clicks'),
+        State('ieee-file-dropdown', 'value'),
+        State('ieee-file-dropdown', 'options'),
+        State('ieee-channel-dropdown', 'value'),
+        State('ieee-trigger-method', 'value'),
+        State('ieee-waveform-length', 'value'),
+        State('ieee-pre-trigger-pct', 'value'),
+        State('ieee-sample-rate', 'value'),
+        State('ieee-ac-frequency', 'value'),
+        State('ieee-dead-time-samples', 'value'),
+        State('ieee-input-dir', 'value'),
+        State('ieee-k-sigma', 'value'),
+        State('ieee-target-rate', 'value'),
+        State('ieee-sensitivity', 'value'),
+        State('ieee-trigger-refinement', 'value'),
+        State('ieee-validate-peak', 'value'),
+        prevent_initial_call=True
+    )
+    def process_ieee_data(n_clicks_single, n_clicks_all, filepath, all_files, channel,
+                          trigger_method, waveform_length_us, pre_trigger_pct, sample_rate_msps,
+                          ac_frequency, dead_time_samples,
+                          input_dir, k_sigma, target_rate, sensitivity, trigger_refinement, validate_peak):
+        """Process IEEE data file(s)."""
+        if not PRE_MIDDLEWARE_AVAILABLE:
+            return html.Div("Pre-middleware not available. Cannot process IEEE data.",
+                          style={'color': 'red'})
+
+        triggered_id = ctx.triggered_id
+        if triggered_id is None:
+            raise PreventUpdate
+
+        # Ensure output directory exists
+        os.makedirs(IEEE_PROCESSED_DIR, exist_ok=True)
+
+        # Apply default values for None inputs (GUI input fields may be empty)
+        waveform_length_us = waveform_length_us if waveform_length_us is not None else 2.0
+        pre_trigger_pct = pre_trigger_pct if pre_trigger_pct is not None else 25
+        sample_rate_msps = sample_rate_msps if sample_rate_msps is not None else 125
+        dead_time_samples = dead_time_samples if dead_time_samples is not None else 100
+        ac_frequency = ac_frequency if ac_frequency is not None else 60.0
+        trigger_method = trigger_method if trigger_method else 'histogram_knee'
+
+        # Calculate pre_samples and post_samples from time-based parameters
+        # sample_rate_msps is in MHz (million samples per second)
+        # waveform_length_us is in microseconds
+        # total_samples = waveform_length_us * sample_rate_msps
+        total_samples = int(waveform_length_us * sample_rate_msps)
+        pre_samples = int(total_samples * (pre_trigger_pct / 100.0))
+        post_samples = total_samples - pre_samples
+
+        print(f"Waveform extraction: {waveform_length_us} µs @ {sample_rate_msps} MSPS = {total_samples} samples")
+        print(f"  Pre-trigger: {pre_trigger_pct}% = {pre_samples} samples, Post-trigger: {post_samples} samples")
+        print(f"  Dead time: {dead_time_samples} samples")
+
+        # Parse trigger refinement option
+        refine_to_onset = trigger_refinement == 'onset'
+        refine_to_peak = trigger_refinement == 'peak'
+
+        # Parse validate peak option
+        validate_peak_position = 'validate' in (validate_peak or [])
+
+        # Build method-specific kwargs
+        trigger_kwargs = {}
+        if trigger_method == 'stdev':
+            trigger_kwargs['k_sigma'] = k_sigma or 5.0
+        elif trigger_method == 'pulse_rate':
+            trigger_kwargs['target_rate_per_cycle'] = target_rate or 100
+        elif trigger_method == 'histogram_knee':
+            trigger_kwargs['sensitivity'] = sensitivity or 1.0
+
+        results = []
+
+        if triggered_id == 'ieee-process-btn':
+            # Process single file
+            if not filepath:
+                return html.Div("Please select a file to process.", style={'color': 'orange'})
+            if not channel:
+                return html.Div("Please select a channel.", style={'color': 'orange'})
+
+            files_to_process = [(filepath, channel)]
+        else:
+            # Process all files
+            if not all_files:
+                return html.Div("No files found. Click 'Scan' first.", style={'color': 'orange'})
+
+            # Process all files with ALL available channels
+            files_to_process = []
+            for opt in all_files:
+                fpath = opt['value']
+                try:
+                    mat_loader = MatLoader(fpath)
+                    channels = mat_loader.list_channels()
+                    if channels:
+                        # Add all channels for this file
+                        for ch in channels:
+                            files_to_process.append((fpath, ch))
+                    else:
+                        # No standard channels, try to use selected channel
+                        if channel:
+                            files_to_process.append((fpath, channel))
+                except Exception:
+                    pass
+
+        success_count = 0
+        error_count = 0
+
+        for idx, (fpath, ch) in enumerate(files_to_process):
+            # Get display name (relative path for nested files)
+            if input_dir and os.path.exists(input_dir):
+                display_name = os.path.relpath(fpath, input_dir).replace(os.sep, '/')
+            else:
+                display_name = os.path.basename(fpath)
+
+            try:
+                # Generate output prefix including subfolder and channel name
+                # Get relative path from input directory to preserve folder structure
+                if input_dir and os.path.exists(input_dir):
+                    rel_path = os.path.relpath(fpath, input_dir)
+                    # Replace path separators with underscores for the prefix
+                    rel_dir = os.path.dirname(rel_path)
+                    base_name = os.path.splitext(os.path.basename(fpath))[0]
+                    if rel_dir and rel_dir != '.':
+                        # Include subfolder name in prefix (e.g., "Corona_dataset1_Ch1")
+                        subfolder = rel_dir.replace(os.sep, '_').replace(' ', '_')
+                        output_prefix = f"{subfolder}_{base_name}_{ch}"
+                    else:
+                        output_prefix = f"{base_name}_{ch}"
+                else:
+                    base_name = os.path.splitext(os.path.basename(fpath))[0]
+                    output_prefix = f"{base_name}_{ch}"
+
+                # Print progress to terminal
+                print(f"\n[{idx + 1}/{len(files_to_process)}] Processing: {display_name} ({ch})")
+
+                result = process_raw_stream(
+                    filepath=fpath,
+                    output_dir=IEEE_PROCESSED_DIR,
+                    output_prefix=output_prefix,
+                    trigger_method=trigger_method,
+                    pre_samples=pre_samples,
+                    post_samples=post_samples,
+                    ac_frequency=ac_frequency,
+                    min_separation=dead_time_samples,  # Dead time in samples
+                    refine_to_onset=refine_to_onset,
+                    refine_to_peak=refine_to_peak,
+                    validate_peak_position=validate_peak_position,
+                    signal_var=ch,
+                    verbose=True,  # Show detailed progress in terminal
+                    **trigger_kwargs
+                )
+
+                if result['status'] == 'success':
+                    success_count += 1
+                    results.append(html.Div([
+                        html.Span("✓ ", style={'color': 'green'}),
+                        html.Span(f"{display_name} ({ch}): "),
+                        html.Span(f"{result['num_waveforms']} waveforms extracted",
+                                 style={'color': '#28a745'})
+                    ], style={'fontSize': '12px', 'marginBottom': '3px'}))
+                else:
+                    error_count += 1
+                    results.append(html.Div([
+                        html.Span("✗ ", style={'color': 'red'}),
+                        html.Span(f"{display_name}: No triggers detected")
+                    ], style={'fontSize': '12px', 'marginBottom': '3px'}))
+
+            except Exception as e:
+                error_count += 1
+                results.append(html.Div([
+                    html.Span("✗ ", style={'color': 'red'}),
+                    html.Span(f"{display_name}: {str(e)}")
+                ], style={'fontSize': '12px', 'marginBottom': '3px'}))
+
+        # Summary
+        summary_style = {'color': '#28a745', 'fontWeight': 'bold'} if error_count == 0 else {'color': '#ffc107', 'fontWeight': 'bold'}
+        summary = html.Div([
+            html.Div(f"Processed {success_count}/{len(files_to_process)} files successfully",
+                    style=summary_style),
+            html.Div(f"Output saved to: {IEEE_PROCESSED_DIR}", style={'fontSize': '11px', 'color': '#666'}),
+            html.Div("Refresh the page to see new datasets in the dropdown.",
+                    style={'fontSize': '11px', 'color': '#1976d2', 'fontStyle': 'italic', 'marginTop': '5px'})
+        ], style={'marginBottom': '10px'})
+
+        return html.Div([summary] + results)
 
     return app
 

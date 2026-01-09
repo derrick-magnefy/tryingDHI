@@ -5,7 +5,8 @@ Extracts individual PD pulse waveforms around detected trigger points,
 producing output compatible with the Rugged Data Files format.
 
 Usage:
-    extractor = WaveformExtractor(pre_samples=500, post_samples=1500)
+    # Default: 2µs waveform @ 125 MSPS with 25% pre-trigger
+    extractor = WaveformExtractor(pre_samples=62, post_samples=188)
     waveforms, trigger_times = extractor.extract(signal, triggers, sample_rate)
 """
 
@@ -35,32 +36,43 @@ class WaveformExtractor:
     - Settings metadata
 
     Attributes:
-        pre_samples: Number of samples before trigger point (default: 500)
-        post_samples: Number of samples after trigger point (default: 1500)
-        total_samples: Total waveform length (pre_samples + post_samples)
+        pre_samples: Number of samples before trigger point (default: 62)
+        post_samples: Number of samples after trigger point (default: 188)
+        total_samples: Total waveform length (pre_samples + post_samples = 250)
+
+    Default calculation (2µs @ 125 MSPS, 25% pre-trigger):
+        total = 2.0 µs * 125 MSPS = 250 samples
+        pre = 250 * 0.25 = 62 samples
+        post = 250 - 62 = 188 samples
     """
 
     def __init__(
         self,
-        pre_samples: int = 500,
-        post_samples: int = 1500,
+        pre_samples: int = 62,
+        post_samples: int = 188,
         overlap_handling: str = 'skip',
+        validate_peak_position: bool = False,
+        peak_tolerance: float = 0.5,
     ):
         """
         Initialize waveform extractor.
 
         Args:
-            pre_samples: Samples before trigger (default: 500)
-            post_samples: Samples after trigger (default: 1500)
+            pre_samples: Samples before trigger (default: 62)
+            post_samples: Samples after trigger (default: 188)
             overlap_handling: How to handle overlapping windows
                              'skip': Skip overlapping triggers
                              'truncate': Truncate to non-overlapping portion
                              'allow': Allow overlaps (may duplicate data)
+            validate_peak_position: If True, discard waveforms where peak is far from trigger
+            peak_tolerance: Fraction of window where peak must appear (0.5 = first half)
         """
         self.pre_samples = pre_samples
         self.post_samples = post_samples
         self.total_samples = pre_samples + post_samples
         self.overlap_handling = overlap_handling
+        self.validate_peak_position = validate_peak_position
+        self.peak_tolerance = peak_tolerance
 
     def extract(
         self,
@@ -128,6 +140,33 @@ class WaveformExtractor:
             end_idx = t + self.post_samples
             waveforms[i, :] = signal[start_idx:end_idx]
 
+        # Validate peak positions if enabled
+        skipped_peak_position = 0
+        if self.validate_peak_position:
+            # Check that peak is within tolerance of trigger position
+            # Peak should be near pre_samples (the trigger point in the waveform)
+            max_peak_idx = int(self.total_samples * self.peak_tolerance)
+            valid_indices = []
+            for i, wfm in enumerate(waveforms):
+                peak_idx = np.argmax(np.abs(wfm))
+                if peak_idx <= max_peak_idx:
+                    valid_indices.append(i)
+                else:
+                    valid_mask[i] = False
+                    skipped_peak_position += 1
+
+            if valid_indices:
+                waveforms = waveforms[valid_indices]
+                valid_triggers = valid_triggers[valid_indices]
+                valid_mask = valid_mask[valid_indices]
+                num_waveforms = len(valid_indices)
+            else:
+                # All waveforms failed validation
+                waveforms = np.array([]).reshape(0, self.total_samples)
+                valid_triggers = np.array([], dtype=np.int64)
+                valid_mask = np.array([], dtype=bool)
+                num_waveforms = 0
+
         # Calculate trigger times
         trigger_times = start_time + valid_triggers * sample_interval
 
@@ -143,6 +182,7 @@ class WaveformExtractor:
                 'skipped_start': skipped_start,
                 'skipped_end': skipped_end,
                 'skipped_overlap': skipped_overlap,
+                'skipped_peak_position': skipped_peak_position,
                 'pre_samples': self.pre_samples,
                 'post_samples': self.post_samples,
                 'sample_rate': sample_rate,
@@ -314,8 +354,8 @@ def extract_waveforms(
     signal: np.ndarray,
     triggers: np.ndarray,
     sample_rate: float,
-    pre_samples: int = 500,
-    post_samples: int = 1500,
+    pre_samples: int = 62,
+    post_samples: int = 188,
     **kwargs
 ) -> ExtractionResult:
     """

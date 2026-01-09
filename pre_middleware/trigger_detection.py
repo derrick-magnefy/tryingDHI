@@ -54,6 +54,8 @@ class TriggerDetector:
         method: str = DEFAULT_TRIGGER_METHOD,
         polarity: str = 'both',
         min_separation: int = 100,
+        refine_to_onset: bool = False,
+        refine_to_peak: bool = False,
         **kwargs
     ):
         """
@@ -63,6 +65,8 @@ class TriggerDetector:
             method: Detection method (see TRIGGER_METHODS)
             polarity: 'positive', 'negative', or 'both'
             min_separation: Minimum samples between triggers
+            refine_to_onset: Adjust triggers backward to pulse onset (default: False)
+            refine_to_peak: Adjust triggers forward to pulse peak (default: False)
             **kwargs: Method-specific parameters
         """
         if method not in TRIGGER_METHODS:
@@ -71,6 +75,8 @@ class TriggerDetector:
         self.method = method
         self.polarity = polarity
         self.min_separation = min_separation
+        self.refine_to_onset = refine_to_onset
+        self.refine_to_peak = refine_to_peak
         self.params = kwargs
 
     def detect(
@@ -96,13 +102,19 @@ class TriggerDetector:
         params = {**self.params, **kwargs}
 
         if self.method == 'stdev':
-            return self._detect_stdev(signal, sample_rate, **params)
+            result = self._detect_stdev(signal, sample_rate, **params)
         elif self.method == 'pulse_rate':
-            return self._detect_pulse_rate(signal, sample_rate, ac_frequency, **params)
+            result = self._detect_pulse_rate(signal, sample_rate, ac_frequency, **params)
         elif self.method == 'histogram_knee':
-            return self._detect_histogram_knee(signal, sample_rate, **params)
+            result = self._detect_histogram_knee(signal, sample_rate, **params)
         else:
             raise ValueError(f"Unknown method: {self.method}")
+
+        # Apply trigger refinement if enabled
+        if (self.refine_to_peak or self.refine_to_onset) and len(result.triggers) > 0:
+            result = self._refine_triggers(signal, result)
+
+        return result
 
     def _detect_stdev(
         self,
@@ -350,6 +362,99 @@ class TriggerDetector:
             triggers = filtered
 
         return np.array(triggers, dtype=np.int64)
+
+    def _refine_triggers(
+        self,
+        signal: np.ndarray,
+        result: TriggerResult,
+        search_window: int = 100,
+        onset_threshold_factor: float = 0.1,
+    ) -> TriggerResult:
+        """
+        Refine trigger positions to align with pulse onset or peak.
+
+        This helps when the threshold crossing happens in the middle of a pulse
+        rather than at its start.
+
+        Args:
+            signal: Original signal
+            result: TriggerResult from initial detection
+            search_window: Samples to search forward for peak (default: 100)
+            onset_threshold_factor: Fraction of peak amplitude to define onset
+
+        Returns:
+            TriggerResult with refined trigger positions
+        """
+        baseline = np.median(signal)
+        centered = signal - baseline
+        refined_triggers = []
+
+        for t in result.triggers:
+            # Define search region (forward from trigger)
+            search_start = t
+            search_end = min(t + search_window, len(signal))
+
+            if search_end <= search_start:
+                refined_triggers.append(t)
+                continue
+
+            region = centered[search_start:search_end]
+
+            # Determine polarity from initial trigger point
+            if centered[t] >= 0:
+                # Positive pulse - find maximum
+                peak_offset = np.argmax(region)
+                peak_value = region[peak_offset]
+            else:
+                # Negative pulse - find minimum
+                peak_offset = np.argmin(region)
+                peak_value = region[peak_offset]
+
+            peak_idx = search_start + peak_offset
+
+            if self.refine_to_peak:
+                # Use peak position as trigger
+                refined_triggers.append(peak_idx)
+            elif self.refine_to_onset:
+                # Find onset: search backward from peak to find where signal
+                # first exceeds onset_threshold_factor * peak_amplitude
+                onset_threshold = abs(peak_value) * onset_threshold_factor
+
+                # Search backward from peak to original trigger (or further)
+                search_back_start = max(0, t - search_window // 2)
+                onset_idx = peak_idx
+
+                for i in range(peak_idx - 1, search_back_start - 1, -1):
+                    if abs(centered[i]) < onset_threshold:
+                        # Found the onset point (signal drops below threshold)
+                        onset_idx = i + 1  # One sample after baseline
+                        break
+
+                refined_triggers.append(onset_idx)
+            else:
+                refined_triggers.append(t)
+
+        # Re-apply minimum separation filter
+        refined_triggers = sorted(set(refined_triggers))
+        if self.min_separation > 0 and len(refined_triggers) > 1:
+            filtered = [refined_triggers[0]]
+            for t in refined_triggers[1:]:
+                if t - filtered[-1] >= self.min_separation:
+                    filtered.append(t)
+            refined_triggers = filtered
+
+        # Update stats
+        new_stats = dict(result.stats)
+        new_stats['refinement'] = 'peak' if self.refine_to_peak else 'onset'
+        new_stats['triggers_before_refinement'] = len(result.triggers)
+        new_stats['triggers_after_refinement'] = len(refined_triggers)
+
+        return TriggerResult(
+            triggers=np.array(refined_triggers, dtype=np.int64),
+            threshold=result.threshold,
+            method=result.method,
+            stats=new_stats
+        )
 
     def estimate_noise_floor(self, signal: np.ndarray) -> Dict[str, float]:
         """
