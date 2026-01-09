@@ -7142,16 +7142,21 @@ def create_app(data_dir=DATA_DIR):
             if not all_files:
                 return html.Div("No files found. Click 'Scan' first.", style={'color': 'orange'})
 
-            # Process all files with the selected channel (or first available)
+            # Process all files with ALL available channels
             files_to_process = []
             for opt in all_files:
                 fpath = opt['value']
                 try:
                     mat_loader = MatLoader(fpath)
                     channels = mat_loader.list_channels()
-                    ch = channel if channel and channel in channels else (channels[0] if channels else None)
-                    if ch:
-                        files_to_process.append((fpath, ch))
+                    if channels:
+                        # Add all channels for this file
+                        for ch in channels:
+                            files_to_process.append((fpath, ch))
+                    else:
+                        # No standard channels, try to use selected channel
+                        if channel:
+                            files_to_process.append((fpath, channel))
                 except Exception:
                     pass
 
