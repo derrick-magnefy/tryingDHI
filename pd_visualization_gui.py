@@ -2584,27 +2584,45 @@ def create_app(data_dir=DATA_DIR):
                                     html.Span("knee detection sensitivity (higher = more sensitive)", style={'fontSize': '11px', 'color': '#666'}),
                                 ], id='ieee-histogram-config', style={'marginBottom': '10px', 'marginLeft': '120px', 'display': 'block'}),
 
-                                # Pre/post samples
+                                # Waveform extraction settings (time-based)
                                 html.Div([
-                                    html.Label("Pre-trigger:", style={'fontWeight': 'bold', 'marginRight': '5px', 'width': '120px', 'display': 'inline-block'}),
+                                    html.Label("Waveform Length:", style={'fontWeight': 'bold', 'marginRight': '5px', 'width': '120px', 'display': 'inline-block'}),
                                     dcc.Input(
-                                        id='ieee-pre-samples',
+                                        id='ieee-waveform-length',
                                         type='number',
-                                        value=50,
-                                        min=1,
-                                        max=2000,
-                                        style={'width': '80px', 'marginRight': '20px'}
+                                        value=2.0,
+                                        min=0.1,
+                                        max=100,
+                                        step=0.1,
+                                        style={'width': '80px', 'marginRight': '5px'}
                                     ),
-                                    html.Label("Post-trigger:", style={'fontWeight': 'bold', 'marginRight': '5px'}),
+                                    html.Span("µs", style={'fontSize': '11px', 'color': '#666', 'marginRight': '15px'}),
+                                    html.Label("Pre-trigger:", style={'fontWeight': 'bold', 'marginRight': '5px'}),
                                     dcc.Input(
-                                        id='ieee-post-samples',
+                                        id='ieee-pre-trigger-pct',
                                         type='number',
-                                        value=200,
+                                        value=25,
                                         min=1,
-                                        max=5000,
-                                        style={'width': '80px', 'marginRight': '10px'}
+                                        max=99,
+                                        step=1,
+                                        style={'width': '60px', 'marginRight': '5px'}
                                     ),
-                                    html.Span("samples", style={'fontSize': '11px', 'color': '#666'}),
+                                    html.Span("% (default 25%)", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Sample rate (auto-detected or manual)
+                                html.Div([
+                                    html.Label("Sample Rate:", style={'fontWeight': 'bold', 'marginRight': '5px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.Input(
+                                        id='ieee-sample-rate',
+                                        type='number',
+                                        value=125,
+                                        min=1,
+                                        max=10000,
+                                        step=1,
+                                        style={'width': '80px', 'marginRight': '5px'}
+                                    ),
+                                    html.Span("MSPS (auto-detected from file if available)", style={'fontSize': '11px', 'color': '#666'}),
                                 ], style={'marginBottom': '10px'}),
 
                                 # AC Frequency
@@ -2622,19 +2640,19 @@ def create_app(data_dir=DATA_DIR):
                                     html.Span("Hz", style={'fontSize': '11px', 'color': '#666'}),
                                 ], style={'marginBottom': '10px'}),
 
-                                # Dead time between triggers
+                                # Dead time between triggers (in samples)
                                 html.Div([
                                     html.Label("Dead Time:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
                                     dcc.Input(
-                                        id='ieee-dead-time',
+                                        id='ieee-dead-time-samples',
                                         type='number',
-                                        value=1.0,
+                                        value=100,
                                         min=0,
-                                        max=100,
-                                        step=0.1,
+                                        max=10000,
+                                        step=1,
                                         style={'width': '80px', 'marginRight': '5px'}
                                     ),
-                                    html.Span("µs (min time between triggers)", style={'fontSize': '11px', 'color': '#666'}),
+                                    html.Span("samples (min separation between triggers, default 100)", style={'fontSize': '11px', 'color': '#666'}),
                                 ], style={'marginBottom': '10px'}),
 
                                 # Trigger refinement options
@@ -6995,10 +7013,11 @@ def create_app(data_dir=DATA_DIR):
         State('ieee-file-dropdown', 'options'),
         State('ieee-channel-dropdown', 'value'),
         State('ieee-trigger-method', 'value'),
-        State('ieee-pre-samples', 'value'),
-        State('ieee-post-samples', 'value'),
+        State('ieee-waveform-length', 'value'),
+        State('ieee-pre-trigger-pct', 'value'),
+        State('ieee-sample-rate', 'value'),
         State('ieee-ac-frequency', 'value'),
-        State('ieee-dead-time', 'value'),
+        State('ieee-dead-time-samples', 'value'),
         State('ieee-input-dir', 'value'),
         State('ieee-k-sigma', 'value'),
         State('ieee-target-rate', 'value'),
@@ -7008,7 +7027,8 @@ def create_app(data_dir=DATA_DIR):
         prevent_initial_call=True
     )
     def process_ieee_data(n_clicks_single, n_clicks_all, filepath, all_files, channel,
-                          trigger_method, pre_samples, post_samples, ac_frequency, dead_time_us,
+                          trigger_method, waveform_length_us, pre_trigger_pct, sample_rate_msps,
+                          ac_frequency, dead_time_samples,
                           input_dir, k_sigma, target_rate, sensitivity, trigger_refinement, validate_peak):
         """Process IEEE data file(s)."""
         if not PRE_MIDDLEWARE_AVAILABLE:
@@ -7023,10 +7043,24 @@ def create_app(data_dir=DATA_DIR):
         os.makedirs(IEEE_PROCESSED_DIR, exist_ok=True)
 
         # Apply default values for None inputs (GUI input fields may be empty)
-        pre_samples = pre_samples if pre_samples is not None else 50
-        post_samples = post_samples if post_samples is not None else 200
+        waveform_length_us = waveform_length_us if waveform_length_us is not None else 2.0
+        pre_trigger_pct = pre_trigger_pct if pre_trigger_pct is not None else 25
+        sample_rate_msps = sample_rate_msps if sample_rate_msps is not None else 125
+        dead_time_samples = dead_time_samples if dead_time_samples is not None else 100
         ac_frequency = ac_frequency if ac_frequency is not None else 60.0
         trigger_method = trigger_method if trigger_method else 'histogram_knee'
+
+        # Calculate pre_samples and post_samples from time-based parameters
+        # sample_rate_msps is in MHz (million samples per second)
+        # waveform_length_us is in microseconds
+        # total_samples = waveform_length_us * sample_rate_msps
+        total_samples = int(waveform_length_us * sample_rate_msps)
+        pre_samples = int(total_samples * (pre_trigger_pct / 100.0))
+        post_samples = total_samples - pre_samples
+
+        print(f"Waveform extraction: {waveform_length_us} µs @ {sample_rate_msps} MSPS = {total_samples} samples")
+        print(f"  Pre-trigger: {pre_trigger_pct}% = {pre_samples} samples, Post-trigger: {post_samples} samples")
+        print(f"  Dead time: {dead_time_samples} samples")
 
         # Parse trigger refinement option
         refine_to_onset = trigger_refinement == 'onset'
@@ -7111,7 +7145,7 @@ def create_app(data_dir=DATA_DIR):
                     pre_samples=pre_samples,
                     post_samples=post_samples,
                     ac_frequency=ac_frequency,
-                    dead_time_us=dead_time_us,
+                    min_separation=dead_time_samples,  # Dead time in samples
                     refine_to_onset=refine_to_onset,
                     refine_to_peak=refine_to_peak,
                     validate_peak_position=validate_peak_position,
