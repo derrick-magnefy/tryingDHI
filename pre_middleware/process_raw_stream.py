@@ -70,6 +70,8 @@ def process_raw_stream(
     min_separation: int = 100,
     refine_to_onset: bool = False,
     refine_to_peak: bool = False,
+    validate_peak_position: bool = False,
+    peak_tolerance: float = 0.5,
     signal_var: Optional[str] = None,
     sample_rate_var: Optional[str] = None,
     verbose: bool = True,
@@ -90,6 +92,8 @@ def process_raw_stream(
         min_separation: Minimum samples between triggers
         refine_to_onset: Adjust triggers backward to pulse onset (default: False)
         refine_to_peak: Adjust triggers forward to pulse peak (default: False)
+        validate_peak_position: Discard waveforms where peak is far from trigger (default: False)
+        peak_tolerance: Fraction of window where peak must appear (default: 0.5 = first half)
         signal_var: Variable name for signal in .mat file (auto-detect if None)
         sample_rate_var: Variable name for sample rate (auto-detect if None)
         verbose: Print progress messages
@@ -180,7 +184,11 @@ def process_raw_stream(
         print(f"  Post-trigger samples: {post_samples}")
         print(f"  Total waveform length: {pre_samples + post_samples}")
 
-    extractor = WaveformExtractor(pre_samples, post_samples)
+    extractor = WaveformExtractor(
+        pre_samples, post_samples,
+        validate_peak_position=validate_peak_position,
+        peak_tolerance=peak_tolerance
+    )
     extraction_result = extractor.extract(
         signal, trigger_result.triggers, sample_rate
     )
@@ -194,6 +202,8 @@ def process_raw_stream(
             print(f"  Skipped (end): {stats['skipped_end']}")
         if stats['skipped_overlap'] > 0:
             print(f"  Skipped (overlap): {stats['skipped_overlap']}")
+        if stats.get('skipped_peak_position', 0) > 0:
+            print(f"  Skipped (peak position): {stats['skipped_peak_position']}")
 
     # Save in Rugged format
     if verbose:
@@ -385,6 +395,17 @@ Examples:
         action='store_true',
         help='Adjust triggers forward to pulse peak (helps when trigger is early)'
     )
+    parser.add_argument(
+        '--validate-peak-position',
+        action='store_true',
+        help='Discard waveforms where peak is far from trigger (for high pulse density data)'
+    )
+    parser.add_argument(
+        '--peak-tolerance',
+        type=float,
+        default=0.5,
+        help='Fraction of window where peak must appear (default: 0.5 = first half)'
+    )
 
     # Waveform extraction options
     parser.add_argument(
@@ -509,6 +530,8 @@ Examples:
             min_separation=args.min_separation,
             refine_to_onset=args.refine_to_onset,
             refine_to_peak=args.refine_to_peak,
+            validate_peak_position=args.validate_peak_position,
+            peak_tolerance=args.peak_tolerance,
             signal_var=signal_var,
             sample_rate_var=args.sample_rate_var,
             verbose=not args.quiet,

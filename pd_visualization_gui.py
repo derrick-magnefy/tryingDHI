@@ -2636,6 +2636,16 @@ def create_app(data_dir=DATA_DIR):
                                         style={'display': 'inline-block'},
                                         labelStyle={'display': 'block', 'marginBottom': '3px', 'fontSize': '12px'}
                                     ),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Peak position validation (for high pulse density data)
+                                html.Div([
+                                    dcc.Checklist(
+                                        id='ieee-validate-peak',
+                                        options=[{'label': ' Validate peak position (discard waveforms where pulse appears far from trigger)', 'value': 'validate'}],
+                                        value=[],
+                                        style={'fontSize': '12px'}
+                                    ),
                                 ], style={'marginBottom': '15px'}),
 
                                 # Process button
@@ -6978,11 +6988,12 @@ def create_app(data_dir=DATA_DIR):
         State('ieee-target-rate', 'value'),
         State('ieee-sensitivity', 'value'),
         State('ieee-trigger-refinement', 'value'),
+        State('ieee-validate-peak', 'value'),
         prevent_initial_call=True
     )
     def process_ieee_data(n_clicks_single, n_clicks_all, filepath, all_files, channel,
                           trigger_method, pre_samples, post_samples, ac_frequency, input_dir,
-                          k_sigma, target_rate, sensitivity, trigger_refinement):
+                          k_sigma, target_rate, sensitivity, trigger_refinement, validate_peak):
         """Process IEEE data file(s)."""
         if not PRE_MIDDLEWARE_AVAILABLE:
             return html.Div("Pre-middleware not available. Cannot process IEEE data.",
@@ -7004,6 +7015,9 @@ def create_app(data_dir=DATA_DIR):
         # Parse trigger refinement option
         refine_to_onset = trigger_refinement == 'onset'
         refine_to_peak = trigger_refinement == 'peak'
+
+        # Parse validate peak option
+        validate_peak_position = 'validate' in (validate_peak or [])
 
         # Build method-specific kwargs
         trigger_kwargs = {}
@@ -7083,6 +7097,7 @@ def create_app(data_dir=DATA_DIR):
                     ac_frequency=ac_frequency,
                     refine_to_onset=refine_to_onset,
                     refine_to_peak=refine_to_peak,
+                    validate_peak_position=validate_peak_position,
                     signal_var=ch,
                     verbose=True,  # Show detailed progress in terminal
                     **trigger_kwargs
