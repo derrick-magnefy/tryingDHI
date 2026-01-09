@@ -5406,6 +5406,43 @@ def create_app(data_dir=DATA_DIR):
 
         data = loader.load_all(prefix)
 
+        # Check for size mismatch between waveforms and features (stale features after reprocessing)
+        n_waveforms = len(data['waveforms']) if data.get('waveforms') is not None else 0
+        n_features = len(data['features']) if data.get('features') is not None else 0
+
+        if n_waveforms > 0 and n_features > 0 and n_waveforms != n_features:
+            empty_fig = go.Figure()
+            empty_fig.add_annotation(
+                text="⚠️ Data Mismatch Detected",
+                xref="paper", yref="paper",
+                x=0.5, y=0.7, showarrow=False,
+                font=dict(size=20, color="red")
+            )
+            empty_fig.add_annotation(
+                text=f"Waveforms: {n_waveforms} vs Features: {n_features}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.55, showarrow=False,
+                font=dict(size=14, color="orange")
+            )
+            empty_fig.add_annotation(
+                text="The waveforms were reprocessed but features are stale.",
+                xref="paper", yref="paper",
+                x=0.5, y=0.4, showarrow=False,
+                font=dict(size=12)
+            )
+            empty_fig.add_annotation(
+                text="Please re-extract features using 'Cluster All' or the analysis pipeline.",
+                xref="paper", yref="paper",
+                x=0.5, y=0.3, showarrow=False,
+                font=dict(size=12)
+            )
+            empty_fig.update_layout(
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False)
+            )
+            stats_msg = f"Dataset: {prefix}\nStatus: Data mismatch\n\nWaveforms ({n_waveforms}) and features ({n_features}) have different counts.\nRe-extract features after reprocessing."
+            return empty_fig, empty_fig, empty_fig, stats_msg, prefix
+
         # Determine polarity method to use
         pm = polarity_method if polarity_method and polarity_method != 'stored' else None
         sample_interval = data.get('sample_interval', 4e-9)
