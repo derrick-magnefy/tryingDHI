@@ -369,7 +369,13 @@ FEATURE_GROUPS = {
                'cumulative_energy_area_ratio', 'energy_charge_ratio'],
     'Frequency': ['dominant_frequency', 'center_frequency', 'bandwidth_3db',
                   'spectral_power_low', 'spectral_power_high', 'spectral_flatness', 'spectral_entropy'],
-    'Shape': ['rise_fall_ratio', 'zero_crossing_count', 'oscillation_count']
+    'Shape': ['rise_fall_ratio', 'zero_crossing_count', 'oscillation_count'],
+    'Wavelet': ['wavelet_energy_approx', 'wavelet_energy_d1', 'wavelet_energy_d2', 'wavelet_energy_d3',
+                'wavelet_energy_d4', 'wavelet_energy_d5', 'wavelet_rel_energy_approx', 'wavelet_rel_energy_d1',
+                'wavelet_rel_energy_d2', 'wavelet_rel_energy_d3', 'wavelet_rel_energy_d4', 'wavelet_rel_energy_d5',
+                'wavelet_detail_approx_ratio', 'wavelet_dominant_level', 'wavelet_entropy',
+                'wavelet_approx_mean', 'wavelet_approx_std', 'wavelet_approx_max',
+                'wavelet_d1_mean', 'wavelet_d1_std', 'wavelet_d1_max']
 }
 
 # Default visible features (match default pulse features for consistency)
