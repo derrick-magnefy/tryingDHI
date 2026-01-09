@@ -9,6 +9,12 @@ from scipy import signal
 from scipy.fft import fft, fftfreq
 from typing import Dict, List, Optional, Any
 
+try:
+    import pywt
+    PYWT_AVAILABLE = True
+except ImportError:
+    PYWT_AVAILABLE = False
+
 from .polarity import calculate_polarity, DEFAULT_POLARITY_METHOD
 from .pulse_detection import detect_pulses
 from .definitions import FEATURE_NAMES, ADC_STEP_V
@@ -106,6 +112,11 @@ class PDFeatureExtractor:
         # === FREQUENCY-DOMAIN FEATURES ===
         spectral = self._extract_spectral_features(wfm)
         features.update(spectral)
+
+        # === WAVELET FEATURES ===
+        if PYWT_AVAILABLE:
+            wavelet = self._extract_wavelet_features(wfm)
+            features.update(wavelet)
 
         # === MULTI-PULSE DETECTION ===
         pulse_info = detect_pulses(wfm, self.sample_interval)
@@ -332,6 +343,140 @@ class PDFeatureExtractor:
             features['spectral_flatness'] = 0.0
             features['spectral_entropy'] = 0.0
 
+        return features
+
+    def _extract_wavelet_features(self, wfm: np.ndarray, wavelet: str = 'db4',
+                                   max_level: int = 5) -> Dict[str, float]:
+        """
+        Extract wavelet-based features using discrete wavelet transform.
+
+        Uses multi-level DWT decomposition to capture time-frequency characteristics
+        of PD pulses. Wavelet features are particularly useful for distinguishing
+        different PD source types.
+
+        Args:
+            wfm: Waveform data (baseline-removed)
+            wavelet: Wavelet family to use (default: 'db4' - Daubechies 4)
+                     Common choices for PD: 'db4', 'db8', 'sym5', 'coif3'
+            max_level: Maximum decomposition level (default: 5)
+
+        Returns:
+            Dict of wavelet features
+        """
+        features = {}
+
+        if not PYWT_AVAILABLE:
+            return features
+
+        # Determine maximum possible decomposition level
+        max_possible_level = pywt.dwt_max_level(len(wfm), wavelet)
+        n_levels = min(max_level, max_possible_level)
+
+        if n_levels < 1:
+            # Signal too short for wavelet decomposition
+            return self._get_empty_wavelet_features(max_level)
+
+        # Perform multi-level DWT decomposition
+        # Returns [cA_n, cD_n, cD_n-1, ..., cD_1]
+        coeffs = pywt.wavedec(wfm, wavelet, level=n_levels)
+
+        # Calculate energy at each level
+        # coeffs[0] = approximation coefficients (lowest frequencies)
+        # coeffs[1:] = detail coefficients (high to low frequencies)
+        energies = []
+        for c in coeffs:
+            energy = np.sum(c**2)
+            energies.append(energy)
+
+        total_energy = sum(energies)
+
+        # Approximation energy (lowest frequency content)
+        features['wavelet_energy_approx'] = float(energies[0])
+
+        # Detail energies at each level (d1 = highest freq, dn = lowest detail freq)
+        for i, energy in enumerate(energies[1:], 1):
+            # Reverse indexing so d1 is highest frequency
+            level_idx = n_levels - i + 1
+            features[f'wavelet_energy_d{level_idx}'] = float(energy)
+
+        # Pad missing levels with 0 if signal was too short
+        for i in range(n_levels + 1, max_level + 1):
+            features[f'wavelet_energy_d{i}'] = 0.0
+
+        # Relative (normalized) energies
+        if total_energy > 0:
+            features['wavelet_rel_energy_approx'] = float(energies[0] / total_energy)
+            for i, energy in enumerate(energies[1:], 1):
+                level_idx = n_levels - i + 1
+                features[f'wavelet_rel_energy_d{level_idx}'] = float(energy / total_energy)
+            for i in range(n_levels + 1, max_level + 1):
+                features[f'wavelet_rel_energy_d{i}'] = 0.0
+        else:
+            features['wavelet_rel_energy_approx'] = 0.0
+            for i in range(1, max_level + 1):
+                features[f'wavelet_rel_energy_d{i}'] = 0.0
+
+        # Energy ratio: detail / approximation
+        if energies[0] > 0:
+            detail_energy = sum(energies[1:])
+            features['wavelet_detail_approx_ratio'] = float(detail_energy / energies[0])
+        else:
+            features['wavelet_detail_approx_ratio'] = 0.0
+
+        # Dominant level (level with maximum detail energy)
+        if len(energies) > 1:
+            detail_energies = energies[1:]
+            max_detail_idx = np.argmax(detail_energies)
+            # Convert to level number (d1 = highest freq)
+            features['wavelet_dominant_level'] = float(n_levels - max_detail_idx)
+        else:
+            features['wavelet_dominant_level'] = 0.0
+
+        # Wavelet entropy (measure of energy distribution across levels)
+        if total_energy > 0:
+            rel_energies = np.array(energies) / total_energy
+            rel_energies = rel_energies[rel_energies > 0]  # Remove zeros for log
+            features['wavelet_entropy'] = float(-np.sum(rel_energies * np.log2(rel_energies)))
+        else:
+            features['wavelet_entropy'] = 0.0
+
+        # Statistics of approximation coefficients
+        approx_coeffs = coeffs[0]
+        features['wavelet_approx_mean'] = float(np.mean(approx_coeffs))
+        features['wavelet_approx_std'] = float(np.std(approx_coeffs))
+        features['wavelet_approx_max'] = float(np.max(np.abs(approx_coeffs)))
+
+        # Statistics of highest frequency detail coefficients (d1)
+        if len(coeffs) > 1:
+            d1_coeffs = coeffs[-1]  # Last element is d1 (highest freq)
+            features['wavelet_d1_mean'] = float(np.mean(np.abs(d1_coeffs)))
+            features['wavelet_d1_std'] = float(np.std(d1_coeffs))
+            features['wavelet_d1_max'] = float(np.max(np.abs(d1_coeffs)))
+        else:
+            features['wavelet_d1_mean'] = 0.0
+            features['wavelet_d1_std'] = 0.0
+            features['wavelet_d1_max'] = 0.0
+
+        return features
+
+    def _get_empty_wavelet_features(self, max_level: int = 5) -> Dict[str, float]:
+        """Return empty wavelet features when decomposition is not possible."""
+        features = {
+            'wavelet_energy_approx': 0.0,
+            'wavelet_rel_energy_approx': 0.0,
+            'wavelet_detail_approx_ratio': 0.0,
+            'wavelet_dominant_level': 0.0,
+            'wavelet_entropy': 0.0,
+            'wavelet_approx_mean': 0.0,
+            'wavelet_approx_std': 0.0,
+            'wavelet_approx_max': 0.0,
+            'wavelet_d1_mean': 0.0,
+            'wavelet_d1_std': 0.0,
+            'wavelet_d1_max': 0.0,
+        }
+        for i in range(1, max_level + 1):
+            features[f'wavelet_energy_d{i}'] = 0.0
+            features[f'wavelet_rel_energy_d{i}'] = 0.0
         return features
 
     def extract_all(self, waveforms: List[np.ndarray],
