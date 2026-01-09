@@ -2620,6 +2620,22 @@ def create_app(data_dir=DATA_DIR):
                                         style={'width': '80px', 'marginRight': '5px'}
                                     ),
                                     html.Span("Hz", style={'fontSize': '11px', 'color': '#666'}),
+                                ], style={'marginBottom': '10px'}),
+
+                                # Trigger refinement options
+                                html.Div([
+                                    html.Label("Trigger Position:", style={'fontWeight': 'bold', 'marginRight': '10px', 'width': '120px', 'display': 'inline-block'}),
+                                    dcc.RadioItems(
+                                        id='ieee-trigger-refinement',
+                                        options=[
+                                            {'label': ' Threshold crossing (default)', 'value': 'none'},
+                                            {'label': ' Refine to pulse onset (if pulse appears late in waveform)', 'value': 'onset'},
+                                            {'label': ' Refine to pulse peak', 'value': 'peak'},
+                                        ],
+                                        value='none',
+                                        style={'display': 'inline-block'},
+                                        labelStyle={'display': 'block', 'marginBottom': '3px', 'fontSize': '12px'}
+                                    ),
                                 ], style={'marginBottom': '15px'}),
 
                                 # Process button
@@ -6961,11 +6977,12 @@ def create_app(data_dir=DATA_DIR):
         State('ieee-k-sigma', 'value'),
         State('ieee-target-rate', 'value'),
         State('ieee-sensitivity', 'value'),
+        State('ieee-trigger-refinement', 'value'),
         prevent_initial_call=True
     )
     def process_ieee_data(n_clicks_single, n_clicks_all, filepath, all_files, channel,
                           trigger_method, pre_samples, post_samples, ac_frequency, input_dir,
-                          k_sigma, target_rate, sensitivity):
+                          k_sigma, target_rate, sensitivity, trigger_refinement):
         """Process IEEE data file(s)."""
         if not PRE_MIDDLEWARE_AVAILABLE:
             return html.Div("Pre-middleware not available. Cannot process IEEE data.",
@@ -6983,6 +7000,10 @@ def create_app(data_dir=DATA_DIR):
         post_samples = post_samples if post_samples is not None else 200
         ac_frequency = ac_frequency if ac_frequency is not None else 60.0
         trigger_method = trigger_method if trigger_method else 'histogram_knee'
+
+        # Parse trigger refinement option
+        refine_to_onset = trigger_refinement == 'onset'
+        refine_to_peak = trigger_refinement == 'peak'
 
         # Build method-specific kwargs
         trigger_kwargs = {}
@@ -7060,6 +7081,8 @@ def create_app(data_dir=DATA_DIR):
                     pre_samples=pre_samples,
                     post_samples=post_samples,
                     ac_frequency=ac_frequency,
+                    refine_to_onset=refine_to_onset,
+                    refine_to_peak=refine_to_peak,
                     signal_var=ch,
                     verbose=True,  # Show detailed progress in terminal
                     **trigger_kwargs

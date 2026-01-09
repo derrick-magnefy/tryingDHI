@@ -68,6 +68,8 @@ def process_raw_stream(
     ac_frequency: float = 60.0,
     polarity: str = 'both',
     min_separation: int = 100,
+    refine_to_onset: bool = False,
+    refine_to_peak: bool = False,
     signal_var: Optional[str] = None,
     sample_rate_var: Optional[str] = None,
     verbose: bool = True,
@@ -81,11 +83,13 @@ def process_raw_stream(
         output_dir: Output directory for Rugged format files
         output_prefix: Prefix for output files (default: input filename)
         trigger_method: Detection method ('stdev', 'pulse_rate', 'histogram_knee')
-        pre_samples: Samples before trigger (default: 500)
-        post_samples: Samples after trigger (default: 1500)
+        pre_samples: Samples before trigger (default: 50)
+        post_samples: Samples after trigger (default: 200)
         ac_frequency: AC power frequency in Hz (default: 60)
         polarity: Trigger polarity ('positive', 'negative', 'both')
         min_separation: Minimum samples between triggers
+        refine_to_onset: Adjust triggers backward to pulse onset (default: False)
+        refine_to_peak: Adjust triggers forward to pulse peak (default: False)
         signal_var: Variable name for signal in .mat file (auto-detect if None)
         sample_rate_var: Variable name for sample rate (auto-detect if None)
         verbose: Print progress messages
@@ -147,6 +151,8 @@ def process_raw_stream(
         method=trigger_method,
         polarity=polarity,
         min_separation=min_separation,
+        refine_to_onset=refine_to_onset,
+        refine_to_peak=refine_to_peak,
         **trigger_kwargs
     )
     trigger_result = detector.detect(signal, sample_rate, ac_frequency)
@@ -154,6 +160,8 @@ def process_raw_stream(
     if verbose:
         print(f"  Threshold: {trigger_result.threshold:.4e}")
         print(f"  Triggers found: {len(trigger_result.triggers):,}")
+        if 'refinement' in trigger_result.stats:
+            print(f"  Trigger refinement: {trigger_result.stats['refinement']}")
         if 'achieved_rate_per_cycle' in trigger_result.stats:
             print(f"  Rate per cycle: {trigger_result.stats['achieved_rate_per_cycle']:.1f}")
 
@@ -366,6 +374,18 @@ Examples:
         help='Knee detection sensitivity for histogram_knee (default: 1.0)'
     )
 
+    # Trigger refinement options
+    parser.add_argument(
+        '--refine-to-onset',
+        action='store_true',
+        help='Adjust triggers backward to pulse onset (helps when pulse starts before threshold crossing)'
+    )
+    parser.add_argument(
+        '--refine-to-peak',
+        action='store_true',
+        help='Adjust triggers forward to pulse peak (helps when trigger is early)'
+    )
+
     # Waveform extraction options
     parser.add_argument(
         '--pre', '--pre-samples',
@@ -487,6 +507,8 @@ Examples:
             ac_frequency=args.ac_frequency,
             polarity=args.polarity,
             min_separation=args.min_separation,
+            refine_to_onset=args.refine_to_onset,
+            refine_to_peak=args.refine_to_peak,
             signal_var=signal_var,
             sample_rate_var=args.sample_rate_var,
             verbose=not args.quiet,
