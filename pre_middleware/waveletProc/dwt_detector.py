@@ -208,8 +208,6 @@ class DetectionResult:
     num_levels: int                        # DWT decomposition levels
     thresholds: Dict[str, float]           # Threshold per band
     total_samples: int                     # Total samples processed
-    kurtosis: Optional[float] = None       # Signal kurtosis (if computed)
-    skipped_low_kurtosis: bool = False     # Whether detection was skipped
 
 
 @dataclass
@@ -504,8 +502,6 @@ class DWTDetector:
         bands: Which bands to analyze (default: ['D1', 'D2', 'D3'])
         threshold_percentile: Percentile for threshold (default: 99.5)
         min_separation: Minimum samples between events
-        kurtosis_check: Whether to perform kurtosis pre-check
-        kurtosis_threshold: Minimum kurtosis to proceed with detection
     """
 
     def __init__(
@@ -515,8 +511,6 @@ class DWTDetector:
         bands: Optional[List[str]] = None,
         threshold_percentile: float = 99.5,
         min_separation_us: float = 1.0,
-        kurtosis_check: bool = False,
-        kurtosis_threshold: float = 5.0,
     ):
         """
         Initialize DWT detector.
@@ -529,8 +523,6 @@ class DWTDetector:
             bands: Bands to analyze (default: ['D1', 'D2', 'D3'])
             threshold_percentile: Percentile for threshold (default: 99.5)
             min_separation_us: Minimum separation between events in microseconds
-            kurtosis_check: If True, skip detection if kurtosis is below threshold
-            kurtosis_threshold: Minimum excess kurtosis to proceed (default: 5.0)
         """
         if not PYWT_AVAILABLE:
             raise ImportError("pywt is required for wavelet detection. Install with: pip install PyWavelets")
@@ -540,8 +532,6 @@ class DWTDetector:
         self.bands = bands or ['D1', 'D2', 'D3']
         self.threshold_percentile = threshold_percentile
         self.min_separation = int(min_separation_us * sample_rate / 1e6)
-        self.kurtosis_check = kurtosis_check
-        self.kurtosis_threshold = kurtosis_threshold
 
         # Validate wavelet
         try:
@@ -561,7 +551,6 @@ class DWTDetector:
         signal: np.ndarray,
         phases: Optional[np.ndarray] = None,
         ac_frequency: float = 60.0,
-        skip_kurtosis_check: bool = False,
     ) -> DetectionResult:
         """
         Detect PD events using wavelet decomposition.
@@ -570,30 +559,11 @@ class DWTDetector:
             signal: Raw signal data
             phases: Optional pre-computed phase angles (0-360 degrees)
             ac_frequency: AC frequency for phase calculation if phases not provided
-            skip_kurtosis_check: Override kurtosis_check setting for this call
 
         Returns:
             DetectionResult with detected events and statistics
         """
         n_samples = len(signal)
-        signal_kurtosis = None
-
-        # Kurtosis pre-check (optional)
-        if self.kurtosis_check and not skip_kurtosis_check:
-            signal_kurtosis = compute_kurtosis(signal)
-            if signal_kurtosis < self.kurtosis_threshold:
-                # Skip detection - signal doesn't have impulsive content
-                return DetectionResult(
-                    events=[],
-                    band_stats={},
-                    sample_rate=self.sample_rate,
-                    wavelet=self.wavelet,
-                    num_levels=self._max_level,
-                    thresholds={},
-                    total_samples=n_samples,
-                    kurtosis=signal_kurtosis,
-                    skipped_low_kurtosis=True,
-                )
 
         # Compute phases if not provided
         if phases is None:
@@ -681,8 +651,6 @@ class DWTDetector:
             num_levels=self._max_level,
             thresholds=thresholds,
             total_samples=n_samples,
-            kurtosis=signal_kurtosis,
-            skipped_low_kurtosis=False,
         )
 
     def _merge_nearby_events(
