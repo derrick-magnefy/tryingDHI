@@ -345,6 +345,152 @@ def compute_kurtosis_per_cycle(
     return np.array(kurtosis_values), np.array(cycle_starts)
 
 
+@dataclass
+class QuadrantKurtosisResult:
+    """Result of per-quadrant kurtosis analysis."""
+    quadrant_kurtosis: Dict[str, float]   # Kurtosis per quadrant (Q1, Q2, Q3, Q4)
+    halfcycle_kurtosis: Dict[str, float]  # Kurtosis per half-cycle (positive, negative)
+    overall_kurtosis: float               # Overall signal kurtosis
+    max_quadrant: str                     # Quadrant with highest kurtosis
+    max_kurtosis: float                   # Highest quadrant kurtosis value
+    active_quadrants: List[str]           # Quadrants exceeding threshold
+    recommendation: str                   # 'process', 'skip', or 'uncertain'
+
+
+def compute_kurtosis_per_quadrant(
+    signal: np.ndarray,
+    phases: np.ndarray,
+    threshold: float = 5.0,
+    remove_dc: bool = True,
+) -> QuadrantKurtosisResult:
+    """
+    Compute kurtosis for each phase quadrant.
+
+    Useful for identifying phase regions with impulsive activity,
+    even when overall kurtosis is low due to dilution by quiet phases.
+
+    Quadrants:
+        Q1: 0-90° (positive half-cycle, rising)
+        Q2: 90-180° (positive half-cycle, falling)
+        Q3: 180-270° (negative half-cycle, rising)
+        Q4: 270-360° (negative half-cycle, falling)
+
+    Args:
+        signal: Input signal
+        phases: Phase angle for each sample (0-360 degrees)
+        threshold: Kurtosis threshold for "active" classification
+        remove_dc: Remove DC offset before computing
+
+    Returns:
+        QuadrantKurtosisResult with per-quadrant analysis
+    """
+    if len(signal) != len(phases):
+        raise ValueError("Signal and phases must have same length")
+
+    # Define quadrants
+    quadrants = {
+        'Q1': (0, 90),
+        'Q2': (90, 180),
+        'Q3': (180, 270),
+        'Q4': (270, 360),
+    }
+
+    # Define half-cycles
+    halfcycles = {
+        'positive': (0, 180),
+        'negative': (180, 360),
+    }
+
+    # Compute kurtosis for each quadrant
+    quadrant_kurtosis = {}
+    for name, (start, end) in quadrants.items():
+        mask = (phases >= start) & (phases < end)
+        if np.sum(mask) > 4:  # Need at least 4 samples
+            quadrant_kurtosis[name] = compute_kurtosis(signal[mask], remove_dc)
+        else:
+            quadrant_kurtosis[name] = 0.0
+
+    # Compute kurtosis for each half-cycle
+    halfcycle_kurtosis = {}
+    for name, (start, end) in halfcycles.items():
+        mask = (phases >= start) & (phases < end)
+        if np.sum(mask) > 4:
+            halfcycle_kurtosis[name] = compute_kurtosis(signal[mask], remove_dc)
+        else:
+            halfcycle_kurtosis[name] = 0.0
+
+    # Overall kurtosis
+    overall_kurtosis = compute_kurtosis(signal, remove_dc)
+
+    # Find max quadrant
+    max_quadrant = max(quadrant_kurtosis, key=quadrant_kurtosis.get)
+    max_kurtosis = quadrant_kurtosis[max_quadrant]
+
+    # Find active quadrants (above threshold)
+    active_quadrants = [q for q, k in quadrant_kurtosis.items() if k >= threshold]
+
+    # Recommendation based on max quadrant kurtosis
+    if max_kurtosis >= threshold * 2:
+        recommendation = 'process'
+    elif max_kurtosis >= threshold:
+        recommendation = 'uncertain'
+    else:
+        recommendation = 'skip'
+
+    return QuadrantKurtosisResult(
+        quadrant_kurtosis=quadrant_kurtosis,
+        halfcycle_kurtosis=halfcycle_kurtosis,
+        overall_kurtosis=overall_kurtosis,
+        max_quadrant=max_quadrant,
+        max_kurtosis=max_kurtosis,
+        active_quadrants=active_quadrants,
+        recommendation=recommendation,
+    )
+
+
+def check_kurtosis_per_quadrant(
+    signal: np.ndarray,
+    sample_rate: float,
+    ac_frequency: float = 60.0,
+    reference: Optional[np.ndarray] = None,
+    threshold: float = 5.0,
+) -> QuadrantKurtosisResult:
+    """
+    Convenience function to compute per-quadrant kurtosis.
+
+    If reference signal is provided, uses zero-crossings for accurate
+    phase alignment. Otherwise, assumes phase starts at sample 0.
+
+    Args:
+        signal: Input signal
+        sample_rate: Sample rate in Hz
+        ac_frequency: AC frequency in Hz
+        reference: Optional reference signal (50/60 Hz) for phase alignment
+        threshold: Kurtosis threshold
+
+    Returns:
+        QuadrantKurtosisResult
+    """
+    n_samples = len(signal)
+    samples_per_cycle = sample_rate / ac_frequency
+
+    if reference is not None:
+        # Find zero crossings for phase alignment
+        ref = reference - np.mean(reference)
+        sign = np.sign(ref)
+        sign[sign == 0] = 1
+        crossings = np.where((sign[:-1] < 0) & (sign[1:] > 0))[0]
+        phase_start = crossings[0] if len(crossings) > 0 else 0
+    else:
+        phase_start = 0
+
+    # Compute phase for each sample
+    sample_indices = np.arange(n_samples)
+    phases = ((sample_indices - phase_start) % samples_per_cycle) / samples_per_cycle * 360.0
+
+    return compute_kurtosis_per_quadrant(signal, phases, threshold)
+
+
 class DWTDetector:
     """
     Wavelet-based PD event detector.

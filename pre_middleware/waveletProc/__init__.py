@@ -43,9 +43,12 @@ from .dwt_detector import (
     get_wavelet_info,
     # Kurtosis pre-check
     KurtosisResult,
+    QuadrantKurtosisResult,
     compute_kurtosis,
     check_kurtosis,
     compute_kurtosis_per_cycle,
+    compute_kurtosis_per_quadrant,
+    check_kurtosis_per_quadrant,
 )
 from .waveform_extractor import (
     WaveletExtractor,
@@ -67,9 +70,12 @@ __all__ = [
     'get_wavelet_info',
     # Kurtosis pre-check
     'KurtosisResult',
+    'QuadrantKurtosisResult',
     'compute_kurtosis',
     'check_kurtosis',
     'compute_kurtosis_per_cycle',
+    'compute_kurtosis_per_quadrant',
+    'check_kurtosis_per_quadrant',
     # Extraction
     'WaveletExtractor',
     'WaveletWaveform',
