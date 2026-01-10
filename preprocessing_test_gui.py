@@ -540,32 +540,78 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             )
             wavelet_result = wavelet_detector.detect(signal, phases, ac_freq)
 
-            # Extract waveforms using trigger method
-            trigger_extractor = WaveformExtractor(
-                pre_samples=100,
-                post_samples=400,
-            )
-            trigger_waveforms = trigger_extractor.extract(signal, trigger_result.triggers, sample_rate)
+            # Common extraction parameters for fair comparison
+            pre_samples = 100
+            post_samples = 400
 
-            # Extract waveforms using wavelet method
-            wavelet_extractor = WaveletExtractor(sample_rate=sample_rate)
-            wavelet_waveforms = wavelet_extractor.extract(signal, wavelet_result)
+            # Helper function to find peak and extract waveform centered on it
+            def extract_peak_centered(detection_idx, pre=100, post=400, search_window=100):
+                """Find peak within search window and extract waveform centered on it."""
+                # Search for peak around detection point
+                search_start = max(0, detection_idx - search_window // 4)
+                search_end = min(len(signal), detection_idx + search_window)
+                search_region = signal[search_start:search_end]
 
-            # Compare detection locations
-            trigger_indices = set(trigger_result.triggers.tolist())
+                # Find peak (max absolute value)
+                abs_vals = np.abs(search_region)
+                peak_offset = np.argmax(abs_vals)
+                peak_idx = search_start + peak_offset
+
+                # Extract waveform centered on peak
+                start = max(0, peak_idx - pre)
+                end = min(len(signal), peak_idx + post)
+                waveform = signal[start:end]
+
+                # Pad if necessary to maintain consistent length
+                total_len = pre + post
+                if len(waveform) < total_len:
+                    padded = np.zeros(total_len)
+                    offset = pre - (peak_idx - start)
+                    padded[offset:offset+len(waveform)] = waveform
+                    waveform = padded
+
+                return waveform, peak_idx
+
+            # Extract waveforms using trigger method (with peak centering)
+            trigger_idx_list = list(trigger_result.triggers) if len(trigger_result.triggers) > 0 else []
+            trigger_waveform_list = []
+            trigger_peak_indices = []
+            for idx in trigger_idx_list:
+                wfm, peak_idx = extract_peak_centered(idx, pre_samples, post_samples)
+                trigger_waveform_list.append(wfm)
+                trigger_peak_indices.append(peak_idx)
+
+            # Extract waveforms using wavelet method (same window as trigger, peak centered)
+            wavelet_waveform_list = []
+            wavelet_peak_indices = []
+            for e in wavelet_result.events:
+                wfm, peak_idx = extract_peak_centered(e.sample_index, pre_samples, post_samples)
+                wavelet_waveform_list.append(wfm)
+                wavelet_peak_indices.append(peak_idx)
+
+            # Compare detection locations and categorize
+            trigger_indices = set(trigger_idx_list)
             wavelet_indices = set(e.sample_index for e in wavelet_result.events)
 
-            # Find matches (within 100 samples)
-            matches = 0
+            # Find matches (within tolerance) and categorize each detection
             tolerance = 100
-            for t_idx in trigger_indices:
-                for w_idx in wavelet_indices:
+            matched_trigger = set()  # Trigger indices that have a wavelet match
+            matched_wavelet = set()  # Wavelet indices that have a trigger match
+
+            for t_idx in trigger_idx_list:
+                for w_idx, e in zip([ev.sample_index for ev in wavelet_result.events], wavelet_result.events):
                     if abs(t_idx - w_idx) <= tolerance:
-                        matches += 1
+                        matched_trigger.add(t_idx)
+                        matched_wavelet.add(w_idx)
                         break
 
+            trigger_only = [idx for idx in trigger_idx_list if idx not in matched_trigger]
+            wavelet_only = [(e.sample_index, e) for e in wavelet_result.events if e.sample_index not in matched_wavelet]
+            matched_pairs = [(t_idx, t_peak) for t_idx, t_peak in zip(trigger_idx_list, trigger_peak_indices) if t_idx in matched_trigger]
+
             # Results - count per band
-            num_trigger_wfms = len(trigger_waveforms.waveforms) if trigger_waveforms.waveforms is not None else 0
+            num_trigger_wfms = len(trigger_waveform_list)
+            num_wavelet_wfms = len(wavelet_waveform_list)
             d1_count = sum(1 for e in wavelet_result.events if e.band == 'D1')
             d2_count = sum(1 for e in wavelet_result.events if e.band == 'D2')
             d3_count = sum(1 for e in wavelet_result.events if e.band == 'D3')
@@ -589,34 +635,43 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                         html.P([html.Strong("  D1 (fast): "), f"{d1_count} events"]),
                         html.P([html.Strong("  D2 (medium): "), f"{d2_count} events"]),
                         html.P([html.Strong("  D3 (slow): "), f"{d3_count} events"]),
-                        html.P([html.Strong("Waveforms Extracted: "), str(wavelet_waveforms.num_waveforms)]),
+                        html.P([html.Strong("Waveforms Extracted: "), str(num_wavelet_wfms)]),
                     ], style={'width': '45%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '5%'}),
                 ]),
                 html.Hr(),
                 html.H5("Comparison Metrics"),
-                html.P([html.Strong("Matching Detections: "), f"{matches} (within {tolerance} samples)"]),
-                html.P([html.Strong("Trigger-only: "), str(len(trigger_indices) - matches)]),
-                html.P([html.Strong("Wavelet-only: "), str(len(wavelet_indices) - matches)]),
+                html.P([html.Strong("Matched (▲ green): "), f"{len(matched_trigger)} detections"]),
+                html.P([html.Strong("Trigger-only (● red): "), f"{len(trigger_only)} detections"]),
+                html.P([html.Strong("Wavelet-only (✕ blue): "), f"{len(wavelet_only)} detections"]),
             ])
 
             # Detection comparison plot - Phase-resolved (sinusoidal format)
             comparison_fig = go.Figure()
 
-            # Add reference sine wave to show AC cycle
-            phase_axis = np.linspace(0, 360, 361)
-            # Scale sine wave to fit within the amplitude range of detections
+            # Helper function to get peak amplitude within window around detection
+            def get_peak_amplitude(idx, window=100):
+                start = max(0, idx - window // 4)
+                end = min(len(signal), idx + window)
+                window_data = signal[start:end]
+                abs_vals = np.abs(window_data)
+                peak_idx = np.argmax(abs_vals)
+                return window_data[peak_idx]
+
+            # Collect all amplitudes for sine wave scaling
             all_amps = []
-            if len(trigger_indices) > 0:
-                all_amps.extend(signal[list(trigger_indices)])
-            if len(wavelet_indices) > 0:
-                all_amps.extend(signal[[e.sample_index for e in wavelet_result.events]])
+            for idx in trigger_idx_list:
+                all_amps.append(get_peak_amplitude(idx))
+            for e in wavelet_result.events:
+                all_amps.append(get_peak_amplitude(e.sample_index))
 
             if all_amps:
                 amp_range = max(abs(min(all_amps)), abs(max(all_amps)))
-                sine_scale = amp_range * 0.3  # Scale sine to 30% of detection amplitude range
+                sine_scale = amp_range * 0.3
             else:
                 sine_scale = 1.0
 
+            # Add reference sine wave
+            phase_axis = np.linspace(0, 360, 361)
             sine_wave = sine_scale * np.sin(np.radians(phase_axis))
             comparison_fig.add_trace(go.Scatter(
                 x=phase_axis,
@@ -626,41 +681,39 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 line=dict(color='lightgray', width=2, dash='dash'),
             ))
 
-            # Helper function to get peak amplitude within window around detection
-            def get_peak_amplitude(idx, window=100):
-                start = max(0, idx - window // 4)  # Less before (onset is early)
-                end = min(len(signal), idx + window)  # More after
-                window_data = signal[start:end]
-                # Return the value with largest absolute magnitude
-                abs_vals = np.abs(window_data)
-                peak_idx = np.argmax(abs_vals)
-                return window_data[peak_idx]
-
-            # Trigger detections - plot at their phase positions with PEAK amplitude
-            if len(trigger_indices) > 0:
-                trigger_idx_list = list(trigger_indices)
-                trigger_phases = phases[trigger_idx_list]
-                # Use peak amplitude in window, not onset amplitude
-                trigger_amps = np.array([get_peak_amplitude(idx) for idx in trigger_idx_list])
+            # Plot MATCHED detections (green triangles) - these are the same event
+            if matched_pairs:
+                matched_phases = [phases[idx] for idx, _ in matched_pairs]
+                matched_amps = [get_peak_amplitude(idx) for idx, _ in matched_pairs]
                 comparison_fig.add_trace(go.Scatter(
-                    x=trigger_phases,
-                    y=trigger_amps,
+                    x=matched_phases,
+                    y=matched_amps,
                     mode='markers',
-                    name='Trigger',
+                    name='Matched (Both)',
+                    marker=dict(color='green', size=6, symbol='triangle-up'),
+                ))
+
+            # Plot TRIGGER-ONLY detections (red circles)
+            if trigger_only:
+                trigger_only_phases = [phases[idx] for idx in trigger_only]
+                trigger_only_amps = [get_peak_amplitude(idx) for idx in trigger_only]
+                comparison_fig.add_trace(go.Scatter(
+                    x=trigger_only_phases,
+                    y=trigger_only_amps,
+                    mode='markers',
+                    name='Trigger Only',
                     marker=dict(color='red', size=4, symbol='circle'),
                 ))
 
-            # Wavelet detections - plot at their phase positions with PEAK amplitude
-            if len(wavelet_indices) > 0:
-                wavelet_phases = [e.phase_degrees for e in wavelet_result.events]
-                wavelet_idx_list = [e.sample_index for e in wavelet_result.events]
-                # Use peak amplitude in window for consistency
-                wavelet_amps = np.array([get_peak_amplitude(idx) for idx in wavelet_idx_list])
+            # Plot WAVELET-ONLY detections (blue X)
+            if wavelet_only:
+                wavelet_only_phases = [phases[idx] for idx, _ in wavelet_only]
+                wavelet_only_amps = [get_peak_amplitude(idx) for idx, _ in wavelet_only]
                 comparison_fig.add_trace(go.Scatter(
-                    x=wavelet_phases,
-                    y=wavelet_amps,
+                    x=wavelet_only_phases,
+                    y=wavelet_only_amps,
                     mode='markers',
-                    name='Wavelet',
+                    name='Wavelet Only',
                     marker=dict(color='blue', size=4, symbol='x'),
                 ))
 
@@ -675,19 +728,19 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 xaxis=dict(range=[0, 360], dtick=45),
             )
 
-            # Waveform comparison plot - split wavelet by band
-            # Count waveforms per band
-            d1_wfms = [w for w in wavelet_waveforms.waveforms if w.band == 'D1']
-            d2_wfms = [w for w in wavelet_waveforms.waveforms if w.band == 'D2']
-            d3_wfms = [w for w in wavelet_waveforms.waveforms if w.band == 'D3']
+            # Waveform comparison plot - split by detection category
+            # Group wavelet waveforms by band for display
+            d1_indices = [i for i, e in enumerate(wavelet_result.events) if e.band == 'D1']
+            d2_indices = [i for i, e in enumerate(wavelet_result.events) if e.band == 'D2']
+            d3_indices = [i for i, e in enumerate(wavelet_result.events) if e.band == 'D3']
 
             waveform_fig = make_subplots(
                 rows=4, cols=1,
                 subplot_titles=[
-                    f'Trigger-Extracted ({num_trigger_wfms} waveforms)',
-                    f'Wavelet D1 ({len(d1_wfms)} waveforms) - 1µs window',
-                    f'Wavelet D2 ({len(d2_wfms)} waveforms) - 2µs window',
-                    f'Wavelet D3 ({len(d3_wfms)} waveforms) - 5µs window',
+                    f'Trigger-Extracted ({num_trigger_wfms} waveforms) - peak-centered',
+                    f'Wavelet D1 ({len(d1_indices)} waveforms) - peak-centered, same window',
+                    f'Wavelet D2 ({len(d2_indices)} waveforms) - peak-centered, same window',
+                    f'Wavelet D3 ({len(d3_indices)} waveforms) - peak-centered, same window',
                 ],
                 vertical_spacing=0.08,
             )
@@ -695,55 +748,60 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             # Show first N waveforms from each method
             max_waveforms = 20
 
-            # Trigger waveforms (numpy array)
-            if trigger_waveforms.waveforms is not None and len(trigger_waveforms.waveforms) > 0:
-                for i in range(min(max_waveforms, len(trigger_waveforms.waveforms))):
-                    waveform_fig.add_trace(
-                        go.Scatter(y=trigger_waveforms.waveforms[i], mode='lines', line=dict(width=0.5),
-                                  showlegend=False, opacity=0.5),
-                        row=1, col=1
-                    )
-
-            # Wavelet D1 waveforms
-            for wfm in d1_wfms[:max_waveforms]:
+            # Trigger waveforms (from our peak-centered extraction)
+            for i, wfm in enumerate(trigger_waveform_list[:max_waveforms]):
                 waveform_fig.add_trace(
-                    go.Scatter(y=wfm.waveform, mode='lines', line=dict(width=0.5, color='red'),
+                    go.Scatter(y=wfm, mode='lines', line=dict(width=0.5),
+                              showlegend=False, opacity=0.5),
+                    row=1, col=1
+                )
+
+            # Wavelet D1 waveforms (from peak-centered extraction)
+            for i in d1_indices[:max_waveforms]:
+                waveform_fig.add_trace(
+                    go.Scatter(y=wavelet_waveform_list[i], mode='lines', line=dict(width=0.5, color='red'),
                               showlegend=False, opacity=0.5),
                     row=2, col=1
                 )
 
             # Wavelet D2 waveforms
-            for wfm in d2_wfms[:max_waveforms]:
+            for i in d2_indices[:max_waveforms]:
                 waveform_fig.add_trace(
-                    go.Scatter(y=wfm.waveform, mode='lines', line=dict(width=0.5, color='blue'),
+                    go.Scatter(y=wavelet_waveform_list[i], mode='lines', line=dict(width=0.5, color='blue'),
                               showlegend=False, opacity=0.5),
                     row=3, col=1
                 )
 
             # Wavelet D3 waveforms
-            for wfm in d3_wfms[:max_waveforms]:
+            for i in d3_indices[:max_waveforms]:
                 waveform_fig.add_trace(
-                    go.Scatter(y=wfm.waveform, mode='lines', line=dict(width=0.5, color='green'),
+                    go.Scatter(y=wavelet_waveform_list[i], mode='lines', line=dict(width=0.5, color='green'),
                               showlegend=False, opacity=0.5),
                     row=4, col=1
                 )
 
-            waveform_fig.update_layout(height=900, title_text="Extracted Waveform Comparison by Band")
+            waveform_fig.update_layout(height=900, title_text="Extracted Waveform Comparison (All Peak-Centered, Same Window)")
 
             # Build detection store for click handling
-            # Store signal snippet and detection info for waveform lookup
+            # Store detection info categorized by matched/trigger-only/wavelet-only
+            # Curve order: 0=AC ref, 1=Matched, 2=Trigger-only, 3=Wavelet-only
             detection_store = {
                 'filepath': filepath,
                 'channel': channel,
                 'sample_rate': sample_rate,
-                'trigger_detections': [
-                    {'index': int(idx), 'phase': float(phases[idx]), 'type': 'trigger'}
-                    for idx in trigger_idx_list
-                ] if len(trigger_indices) > 0 else [],
-                'wavelet_detections': [
-                    {'index': int(e.sample_index), 'phase': float(e.phase_degrees),
-                     'band': e.band, 'type': 'wavelet'}
-                    for e in wavelet_result.events
+                'pre_samples': pre_samples,
+                'post_samples': post_samples,
+                'matched_detections': [
+                    {'index': int(idx), 'phase': float(phases[idx]), 'type': 'matched'}
+                    for idx, _ in matched_pairs
+                ],
+                'trigger_only_detections': [
+                    {'index': int(idx), 'phase': float(phases[idx]), 'type': 'trigger_only'}
+                    for idx in trigger_only
+                ],
+                'wavelet_only_detections': [
+                    {'index': int(idx), 'phase': float(phases[idx]), 'band': e.band, 'type': 'wavelet_only'}
+                    for idx, e in wavelet_only
                 ],
             }
 
@@ -779,25 +837,31 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
         try:
             # Get click info
             point = clickData['points'][0]
-            curve_name = point.get('curveNumber', 0)
+            curve_num = point.get('curveNumber', 0)
             point_index = point.get('pointIndex', 0)
             clicked_phase = point.get('x', 0)
             clicked_amp = point.get('y', 0)
 
-            # Determine if trigger or wavelet based on curve number
-            # Curve 0 = AC reference, Curve 1 = Trigger, Curve 2 = Wavelet
-            if curve_name == 0:
+            # Curve order: 0=AC ref, 1=Matched, 2=Trigger-only, 3=Wavelet-only
+            if curve_num == 0:
                 # Clicked on AC reference line, ignore
                 return no_update, no_update
 
-            is_trigger = (curve_name == 1)
-            detection_type = 'Trigger' if is_trigger else 'Wavelet'
-
-            # Get the detection list
-            if is_trigger:
-                detections = detection_store.get('trigger_detections', [])
+            # Map curve number to detection category
+            if curve_num == 1:
+                detections = detection_store.get('matched_detections', [])
+                detection_type = 'Matched (Both Methods)'
+                color = 'green'
+            elif curve_num == 2:
+                detections = detection_store.get('trigger_only_detections', [])
+                detection_type = 'Trigger Only'
+                color = 'red'
+            elif curve_num == 3:
+                detections = detection_store.get('wavelet_only_detections', [])
+                detection_type = 'Wavelet Only'
+                color = 'blue'
             else:
-                detections = detection_store.get('wavelet_detections', [])
+                return no_update, "Unknown curve"
 
             if point_index >= len(detections):
                 return no_update, f"Detection index {point_index} out of range"
@@ -807,26 +871,29 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             phase = detection['phase']
             band = detection.get('band', 'N/A')
 
-            # Load signal and extract waveform
+            # Load signal and extract waveform (peak-centered)
             filepath = detection_store['filepath']
-            channel = loaded_data.get('channels', ['Ch1'])[0]
-            # Use the channel from detection_store if available
-            if 'channel' in detection_store:
-                channel = detection_store['channel']
+            channel = detection_store.get('channel', 'Ch1')
 
             loader = MatLoader(filepath)
             data = loader.load_channel(channel)
             signal = data['signal']
             sample_rate = detection_store['sample_rate']
+            pre_samples = detection_store.get('pre_samples', 100)
+            post_samples = detection_store.get('post_samples', 400)
 
-            # Extract waveform window (500 samples centered on detection)
-            pre_samples = 150
-            post_samples = 350
-            start = max(0, sample_index - pre_samples)
-            end = min(len(signal), sample_index + post_samples)
+            # Find peak and extract centered waveform
+            search_start = max(0, sample_index - 25)
+            search_end = min(len(signal), sample_index + 100)
+            search_region = signal[search_start:search_end]
+            peak_offset = np.argmax(np.abs(search_region))
+            peak_idx = search_start + peak_offset
+
+            start = max(0, peak_idx - pre_samples)
+            end = min(len(signal), peak_idx + post_samples)
             waveform = signal[start:end]
 
-            # Create time axis in microseconds
+            # Create time axis in microseconds (centered on peak)
             time_us = (np.arange(len(waveform)) - pre_samples) / sample_rate * 1e6
 
             # Create waveform plot
@@ -836,35 +903,29 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 y=waveform,
                 mode='lines',
                 name='Waveform',
-                line=dict(color='red' if is_trigger else 'blue', width=1.5),
+                line=dict(color=color, width=1.5),
             ))
 
-            # Add vertical line at trigger point
+            # Add vertical line at peak point
             wfm_fig.add_vline(x=0, line_dash="dash", line_color="gray",
-                             annotation_text="Detection", annotation_position="top")
+                             annotation_text="Peak", annotation_position="top")
 
             wfm_fig.update_layout(
-                title=f'{detection_type} Detection - Phase: {phase:.1f}°',
+                title=f'{detection_type} - Phase: {phase:.1f}°',
                 xaxis_title='Time (µs)',
                 yaxis_title='Amplitude',
             )
 
             # Build info text
-            if is_trigger:
-                info_text = html.Div([
-                    html.Strong(f"{detection_type} Detection"),
-                    html.P(f"Sample Index: {sample_index:,}"),
-                    html.P(f"Phase: {phase:.1f}°"),
-                    html.P(f"Peak Amplitude: {clicked_amp:.4e}"),
-                ])
-            else:
-                info_text = html.Div([
-                    html.Strong(f"{detection_type} Detection ({band})"),
-                    html.P(f"Sample Index: {sample_index:,}"),
-                    html.P(f"Phase: {phase:.1f}°"),
-                    html.P(f"Band: {band}"),
-                    html.P(f"Peak Amplitude: {clicked_amp:.4e}"),
-                ])
+            info_items = [
+                html.Strong(f"{detection_type}"),
+                html.P(f"Sample Index: {sample_index:,}"),
+                html.P(f"Phase: {phase:.1f}°"),
+                html.P(f"Peak Amplitude: {clicked_amp:.4e}"),
+            ]
+            if band != 'N/A':
+                info_items.insert(2, html.P(f"Band: {band}"))
+            info_text = html.Div(info_items)
 
             return wfm_fig, info_text
 
