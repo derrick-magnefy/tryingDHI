@@ -642,7 +642,10 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.H5("Comparison Metrics"),
                 html.P([html.Strong("Matched (▲ green): "), f"{len(matched_trigger)} detections"]),
                 html.P([html.Strong("Trigger-only (● red): "), f"{len(trigger_only)} detections"]),
-                html.P([html.Strong("Wavelet-only (✕ blue): "), f"{len(wavelet_only)} detections"]),
+                html.P([html.Strong("Wavelet-only: "), f"{len(wavelet_only)} total"]),
+                html.P([html.Strong("  ◆ D1 (cyan): "), f"{sum(1 for _, e in wavelet_only if e.band == 'D1')}"]),
+                html.P([html.Strong("  ✕ D2 (blue): "), f"{sum(1 for _, e in wavelet_only if e.band == 'D2')}"]),
+                html.P([html.Strong("  ■ D3 (purple): "), f"{sum(1 for _, e in wavelet_only if e.band == 'D3')}"]),
             ])
 
             # Detection comparison plot - Phase-resolved (sinusoidal format)
@@ -705,16 +708,45 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     marker=dict(color='red', size=4, symbol='circle'),
                 ))
 
-            # Plot WAVELET-ONLY detections (blue X)
-            if wavelet_only:
-                wavelet_only_phases = [phases[idx] for idx, _ in wavelet_only]
-                wavelet_only_amps = [get_peak_amplitude(idx) for idx, _ in wavelet_only]
+            # Split wavelet-only by band
+            wavelet_only_d1 = [(idx, e) for idx, e in wavelet_only if e.band == 'D1']
+            wavelet_only_d2 = [(idx, e) for idx, e in wavelet_only if e.band == 'D2']
+            wavelet_only_d3 = [(idx, e) for idx, e in wavelet_only if e.band == 'D3']
+
+            # Plot WAVELET-ONLY D1 detections (cyan diamond)
+            if wavelet_only_d1:
+                d1_phases = [phases[idx] for idx, _ in wavelet_only_d1]
+                d1_amps = [get_peak_amplitude(idx) for idx, _ in wavelet_only_d1]
                 comparison_fig.add_trace(go.Scatter(
-                    x=wavelet_only_phases,
-                    y=wavelet_only_amps,
+                    x=d1_phases,
+                    y=d1_amps,
                     mode='markers',
-                    name='Wavelet Only',
-                    marker=dict(color='blue', size=4, symbol='x'),
+                    name='Wavelet D1 Only',
+                    marker=dict(color='cyan', size=5, symbol='diamond'),
+                ))
+
+            # Plot WAVELET-ONLY D2 detections (blue X)
+            if wavelet_only_d2:
+                d2_phases = [phases[idx] for idx, _ in wavelet_only_d2]
+                d2_amps = [get_peak_amplitude(idx) for idx, _ in wavelet_only_d2]
+                comparison_fig.add_trace(go.Scatter(
+                    x=d2_phases,
+                    y=d2_amps,
+                    mode='markers',
+                    name='Wavelet D2 Only',
+                    marker=dict(color='blue', size=5, symbol='x'),
+                ))
+
+            # Plot WAVELET-ONLY D3 detections (purple square)
+            if wavelet_only_d3:
+                d3_phases = [phases[idx] for idx, _ in wavelet_only_d3]
+                d3_amps = [get_peak_amplitude(idx) for idx, _ in wavelet_only_d3]
+                comparison_fig.add_trace(go.Scatter(
+                    x=d3_phases,
+                    y=d3_amps,
+                    mode='markers',
+                    name='Wavelet D3 Only',
+                    marker=dict(color='purple', size=5, symbol='square'),
                 ))
 
             # Add vertical lines at quadrant boundaries
@@ -783,8 +815,8 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             waveform_fig.update_layout(height=900, title_text="Extracted Waveform Comparison (All Peak-Centered, Same Window)")
 
             # Build detection store for click handling
-            # Store detection info categorized by matched/trigger-only/wavelet-only
-            # Curve order: 0=AC ref, 1=Matched, 2=Trigger-only, 3=Wavelet-only
+            # Store detection info categorized by matched/trigger-only/wavelet-only (split by band)
+            # Curve order: 0=AC ref, 1=Matched, 2=Trigger-only, 3=D1-only, 4=D2-only, 5=D3-only
             detection_store = {
                 'filepath': filepath,
                 'channel': channel,
@@ -799,9 +831,17 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     {'index': int(idx), 'phase': float(phases[idx]), 'type': 'trigger_only'}
                     for idx in trigger_only
                 ],
-                'wavelet_only_detections': [
-                    {'index': int(idx), 'phase': float(phases[idx]), 'band': e.band, 'type': 'wavelet_only'}
-                    for idx, e in wavelet_only
+                'wavelet_d1_detections': [
+                    {'index': int(idx), 'phase': float(phases[idx]), 'band': 'D1', 'type': 'wavelet_d1'}
+                    for idx, e in wavelet_only_d1
+                ],
+                'wavelet_d2_detections': [
+                    {'index': int(idx), 'phase': float(phases[idx]), 'band': 'D2', 'type': 'wavelet_d2'}
+                    for idx, e in wavelet_only_d2
+                ],
+                'wavelet_d3_detections': [
+                    {'index': int(idx), 'phase': float(phases[idx]), 'band': 'D3', 'type': 'wavelet_d3'}
+                    for idx, e in wavelet_only_d3
                 ],
             }
 
@@ -842,7 +882,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             clicked_phase = point.get('x', 0)
             clicked_amp = point.get('y', 0)
 
-            # Curve order: 0=AC ref, 1=Matched, 2=Trigger-only, 3=Wavelet-only
+            # Curve order: 0=AC ref, 1=Matched, 2=Trigger-only, 3=D1-only, 4=D2-only, 5=D3-only
             if curve_num == 0:
                 # Clicked on AC reference line, ignore
                 return no_update, no_update
@@ -857,9 +897,17 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 detection_type = 'Trigger Only'
                 color = 'red'
             elif curve_num == 3:
-                detections = detection_store.get('wavelet_only_detections', [])
-                detection_type = 'Wavelet Only'
+                detections = detection_store.get('wavelet_d1_detections', [])
+                detection_type = 'Wavelet D1 Only'
+                color = 'cyan'
+            elif curve_num == 4:
+                detections = detection_store.get('wavelet_d2_detections', [])
+                detection_type = 'Wavelet D2 Only'
                 color = 'blue'
+            elif curve_num == 5:
+                detections = detection_store.get('wavelet_d3_detections', [])
+                detection_type = 'Wavelet D3 Only'
+                color = 'purple'
             else:
                 return no_update, "Unknown curve"
 
