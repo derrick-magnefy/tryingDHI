@@ -598,50 +598,67 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.P([html.Strong("Wavelet-only: "), str(len(wavelet_indices) - matches)]),
             ])
 
-            # Detection comparison plot
+            # Detection comparison plot - Phase-resolved (sinusoidal format)
             comparison_fig = go.Figure()
 
-            # Signal
-            subsample = max(1, len(signal) // 5000)
-            time_axis = np.arange(len(signal))[::subsample] / sample_rate * 1000  # ms
+            # Add reference sine wave to show AC cycle
+            phase_axis = np.linspace(0, 360, 361)
+            # Scale sine wave to fit within the amplitude range of detections
+            all_amps = []
+            if len(trigger_indices) > 0:
+                all_amps.extend(signal[list(trigger_indices)])
+            if len(wavelet_indices) > 0:
+                all_amps.extend(signal[[e.sample_index for e in wavelet_result.events]])
+
+            if all_amps:
+                amp_range = max(abs(min(all_amps)), abs(max(all_amps)))
+                sine_scale = amp_range * 0.3  # Scale sine to 30% of detection amplitude range
+            else:
+                sine_scale = 1.0
+
+            sine_wave = sine_scale * np.sin(np.radians(phase_axis))
             comparison_fig.add_trace(go.Scatter(
-                x=time_axis,
-                y=signal[::subsample],
+                x=phase_axis,
+                y=sine_wave,
                 mode='lines',
-                name='Signal',
-                line=dict(color='lightgray', width=0.5),
+                name='AC Reference',
+                line=dict(color='lightgray', width=2, dash='dash'),
             ))
 
-            # Trigger detections
+            # Trigger detections - plot at their phase positions
             if len(trigger_indices) > 0:
                 trigger_idx_list = list(trigger_indices)
-                trigger_times = np.array(trigger_idx_list) / sample_rate * 1000
+                trigger_phases = phases[trigger_idx_list]
                 trigger_amps = signal[trigger_idx_list]
                 comparison_fig.add_trace(go.Scatter(
-                    x=trigger_times,
+                    x=trigger_phases,
                     y=trigger_amps,
                     mode='markers',
                     name='Trigger',
                     marker=dict(color='red', size=8, symbol='circle'),
                 ))
 
-            # Wavelet detections
+            # Wavelet detections - plot at their phase positions
             if len(wavelet_indices) > 0:
-                wavelet_idx_list = [e.sample_index for e in wavelet_result.events]
-                wavelet_times = np.array(wavelet_idx_list) / sample_rate * 1000
-                wavelet_amps = signal[wavelet_idx_list]
+                wavelet_phases = [e.phase_degrees for e in wavelet_result.events]
+                wavelet_amps = signal[[e.sample_index for e in wavelet_result.events]]
                 comparison_fig.add_trace(go.Scatter(
-                    x=wavelet_times,
+                    x=wavelet_phases,
                     y=wavelet_amps,
                     mode='markers',
                     name='Wavelet',
                     marker=dict(color='blue', size=8, symbol='x'),
                 ))
 
+            # Add vertical lines at quadrant boundaries
+            for phase in [90, 180, 270]:
+                comparison_fig.add_vline(x=phase, line_dash="dot", line_color="lightgray", opacity=0.5)
+
             comparison_fig.update_layout(
-                title='Detection Comparison (Trigger vs Wavelet)',
-                xaxis_title='Time (ms)',
+                title='Phase-Resolved Detection Comparison (Trigger vs Wavelet)',
+                xaxis_title='Phase (degrees)',
                 yaxis_title='Amplitude',
+                xaxis=dict(range=[0, 360], dtick=45),
             )
 
             # Waveform comparison plot - split wavelet by band
