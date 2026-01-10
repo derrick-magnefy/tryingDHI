@@ -494,7 +494,8 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
     @app.callback(
         [Output('comparison-results', 'children'),
          Output('comparison-plot', 'figure'),
-         Output('waveform-comparison-plot', 'figure')],
+         Output('waveform-comparison-plot', 'figure'),
+         Output('comparison-detections-store', 'data')],
         [Input('run-comparison-btn', 'n_clicks')],
         [State('loaded-data-store', 'data'),
          State('comparison-channel', 'value'),
@@ -729,7 +730,24 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
 
             waveform_fig.update_layout(height=900, title_text="Extracted Waveform Comparison by Band")
 
-            return results_div, comparison_fig, waveform_fig
+            # Build detection store for click handling
+            # Store signal snippet and detection info for waveform lookup
+            detection_store = {
+                'filepath': filepath,
+                'channel': channel,
+                'sample_rate': sample_rate,
+                'trigger_detections': [
+                    {'index': int(idx), 'phase': float(phases[idx]), 'type': 'trigger'}
+                    for idx in trigger_idx_list
+                ] if len(trigger_indices) > 0 else [],
+                'wavelet_detections': [
+                    {'index': int(e.sample_index), 'phase': float(e.phase_degrees),
+                     'band': e.band, 'type': 'wavelet'}
+                    for e in wavelet_result.events
+                ],
+            }
+
+            return results_div, comparison_fig, waveform_fig, detection_store
 
         except Exception as e:
             import traceback
@@ -738,7 +756,124 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.Pre(traceback.format_exc(), style={'fontSize': '10px'}),
             ])
             empty_fig = go.Figure()
-            return error_div, empty_fig, empty_fig
+            return error_div, empty_fig, empty_fig, None
+
+    # Callback for clicking on detection points
+    @app.callback(
+        [Output('clicked-waveform-plot', 'figure'),
+         Output('clicked-waveform-info', 'children')],
+        [Input('comparison-plot', 'clickData')],
+        [State('comparison-detections-store', 'data'),
+         State('loaded-data-store', 'data')]
+    )
+    def display_clicked_waveform(clickData, detection_store, loaded_data):
+        if not clickData or not detection_store or not loaded_data:
+            empty_fig = go.Figure()
+            empty_fig.update_layout(
+                title="Click a detection point to view waveform",
+                xaxis_title="Sample",
+                yaxis_title="Amplitude"
+            )
+            return empty_fig, "Click a detection point in the plot above to view its waveform."
+
+        try:
+            # Get click info
+            point = clickData['points'][0]
+            curve_name = point.get('curveNumber', 0)
+            point_index = point.get('pointIndex', 0)
+            clicked_phase = point.get('x', 0)
+            clicked_amp = point.get('y', 0)
+
+            # Determine if trigger or wavelet based on curve number
+            # Curve 0 = AC reference, Curve 1 = Trigger, Curve 2 = Wavelet
+            if curve_name == 0:
+                # Clicked on AC reference line, ignore
+                return no_update, no_update
+
+            is_trigger = (curve_name == 1)
+            detection_type = 'Trigger' if is_trigger else 'Wavelet'
+
+            # Get the detection list
+            if is_trigger:
+                detections = detection_store.get('trigger_detections', [])
+            else:
+                detections = detection_store.get('wavelet_detections', [])
+
+            if point_index >= len(detections):
+                return no_update, f"Detection index {point_index} out of range"
+
+            detection = detections[point_index]
+            sample_index = detection['index']
+            phase = detection['phase']
+            band = detection.get('band', 'N/A')
+
+            # Load signal and extract waveform
+            filepath = detection_store['filepath']
+            channel = loaded_data.get('channels', ['Ch1'])[0]
+            # Use the channel from detection_store if available
+            if 'channel' in detection_store:
+                channel = detection_store['channel']
+
+            loader = MatLoader(filepath)
+            data = loader.load_channel(channel)
+            signal = data['signal']
+            sample_rate = detection_store['sample_rate']
+
+            # Extract waveform window (500 samples centered on detection)
+            pre_samples = 150
+            post_samples = 350
+            start = max(0, sample_index - pre_samples)
+            end = min(len(signal), sample_index + post_samples)
+            waveform = signal[start:end]
+
+            # Create time axis in microseconds
+            time_us = (np.arange(len(waveform)) - pre_samples) / sample_rate * 1e6
+
+            # Create waveform plot
+            wfm_fig = go.Figure()
+            wfm_fig.add_trace(go.Scatter(
+                x=time_us,
+                y=waveform,
+                mode='lines',
+                name='Waveform',
+                line=dict(color='red' if is_trigger else 'blue', width=1.5),
+            ))
+
+            # Add vertical line at trigger point
+            wfm_fig.add_vline(x=0, line_dash="dash", line_color="gray",
+                             annotation_text="Detection", annotation_position="top")
+
+            wfm_fig.update_layout(
+                title=f'{detection_type} Detection - Phase: {phase:.1f}°',
+                xaxis_title='Time (µs)',
+                yaxis_title='Amplitude',
+            )
+
+            # Build info text
+            if is_trigger:
+                info_text = html.Div([
+                    html.Strong(f"{detection_type} Detection"),
+                    html.P(f"Sample Index: {sample_index:,}"),
+                    html.P(f"Phase: {phase:.1f}°"),
+                    html.P(f"Peak Amplitude: {clicked_amp:.4e}"),
+                ])
+            else:
+                info_text = html.Div([
+                    html.Strong(f"{detection_type} Detection ({band})"),
+                    html.P(f"Sample Index: {sample_index:,}"),
+                    html.P(f"Phase: {phase:.1f}°"),
+                    html.P(f"Band: {band}"),
+                    html.P(f"Peak Amplitude: {clicked_amp:.4e}"),
+                ])
+
+            return wfm_fig, info_text
+
+        except Exception as e:
+            import traceback
+            error_fig = go.Figure()
+            error_fig.add_annotation(text=f"Error: {str(e)}", x=0.5, y=0.5,
+                                    xref="paper", yref="paper", showarrow=False)
+            return error_fig, f"Error loading waveform: {str(e)}"
 
     return app
 
@@ -952,9 +1087,19 @@ def create_comparison_tab(loaded_data):
 
         # Plots
         html.Div([
-            html.H4("Detection Locations"),
+            html.H4("Detection Locations (click a point to view waveform)"),
             dcc.Graph(id='comparison-plot', figure=go.Figure()),
         ]),
+
+        # Clicked waveform display
+        html.Div([
+            html.H4("Selected Waveform"),
+            html.Div(id='clicked-waveform-info', style={'marginBottom': '10px'}),
+            dcc.Graph(id='clicked-waveform-plot', figure=go.Figure()),
+        ], style={'backgroundColor': '#f0f8ff', 'padding': '10px', 'marginBottom': '20px'}),
+
+        # Store for detection data (to look up waveforms on click)
+        dcc.Store(id='comparison-detections-store'),
 
         html.Div([
             html.H4("Waveform Comparison"),
