@@ -23,6 +23,14 @@ At 125 MSPS (Nyquist = 62.5 MHz):
     D1: 15.63 - 31.25 MHz
     D2: 7.81 - 15.63 MHz
     D3: 3.91 - 7.81 MHz
+
+Wavelet Selection:
+    Different wavelets have different characteristics for PD detection:
+    - db4, db6, db8: Daubechies - good general purpose, asymmetric
+    - sym4, sym6, sym8: Symlets - more symmetric than Daubechies
+    - coif2, coif4: Coiflets - more vanishing moments, smoother
+    - bior1.5, bior2.4: Biorthogonal - linear phase, good for localization
+    - haar: Simplest, good for sharp transients
 """
 
 import numpy as np
@@ -34,6 +42,98 @@ try:
     PYWT_AVAILABLE = True
 except ImportError:
     PYWT_AVAILABLE = False
+
+
+# Recommended wavelets for PD detection with characteristics
+WAVELETS = {
+    # Daubechies family - asymmetric, good general purpose
+    'db4': {
+        'description': 'Daubechies 4 - Good balance of smoothness and localization',
+        'best_for': ['general', 'fast_transients'],
+        'filter_length': 8,
+    },
+    'db6': {
+        'description': 'Daubechies 6 - Smoother than db4, slightly less localized',
+        'best_for': ['general', 'medium_transients'],
+        'filter_length': 12,
+    },
+    'db8': {
+        'description': 'Daubechies 8 - Very smooth, good for slower events',
+        'best_for': ['slow_transients', 'surface_pd'],
+        'filter_length': 16,
+    },
+    # Symlets - more symmetric than Daubechies
+    'sym4': {
+        'description': 'Symlet 4 - Nearly symmetric version of db4',
+        'best_for': ['general', 'symmetric_pulses'],
+        'filter_length': 8,
+    },
+    'sym6': {
+        'description': 'Symlet 6 - Good symmetry and smoothness',
+        'best_for': ['general', 'symmetric_pulses'],
+        'filter_length': 12,
+    },
+    'sym8': {
+        'description': 'Symlet 8 - Very symmetric, good for clean signals',
+        'best_for': ['slow_transients', 'clean_signals'],
+        'filter_length': 16,
+    },
+    # Coiflets - more vanishing moments
+    'coif2': {
+        'description': 'Coiflet 2 - Good for signals with polynomial trends',
+        'best_for': ['noisy_signals', 'trending_baseline'],
+        'filter_length': 12,
+    },
+    'coif4': {
+        'description': 'Coiflet 4 - Higher order, very smooth',
+        'best_for': ['noisy_signals', 'slow_transients'],
+        'filter_length': 24,
+    },
+    # Biorthogonal - linear phase
+    'bior1.5': {
+        'description': 'Biorthogonal 1.5 - Linear phase, good localization',
+        'best_for': ['timing_critical', 'fast_transients'],
+        'filter_length': 10,
+    },
+    'bior2.4': {
+        'description': 'Biorthogonal 2.4 - Smooth with linear phase',
+        'best_for': ['timing_critical', 'general'],
+        'filter_length': 10,
+    },
+    # Haar - simplest
+    'haar': {
+        'description': 'Haar - Simplest wavelet, excellent for sharp edges',
+        'best_for': ['sharp_transients', 'step_changes'],
+        'filter_length': 2,
+    },
+}
+
+# Default wavelet
+DEFAULT_WAVELET = 'db4'
+
+
+def list_wavelets() -> Dict[str, Dict[str, Any]]:
+    """Return dictionary of recommended wavelets with descriptions."""
+    return WAVELETS.copy()
+
+
+def get_wavelet_info(wavelet: str) -> Dict[str, Any]:
+    """Get information about a specific wavelet."""
+    if wavelet in WAVELETS:
+        return WAVELETS[wavelet]
+    else:
+        # Try to get info from pywt for custom wavelets
+        if PYWT_AVAILABLE:
+            try:
+                w = pywt.Wavelet(wavelet)
+                return {
+                    'description': f'{wavelet} - Custom wavelet',
+                    'best_for': ['custom'],
+                    'filter_length': w.dec_len,
+                }
+            except Exception:
+                pass
+        return {'description': f'{wavelet} - Unknown wavelet', 'best_for': [], 'filter_length': 0}
 
 
 # Band-specific window sizes (samples at 250 MSPS)
@@ -108,6 +208,141 @@ class DetectionResult:
     num_levels: int                        # DWT decomposition levels
     thresholds: Dict[str, float]           # Threshold per band
     total_samples: int                     # Total samples processed
+    kurtosis: Optional[float] = None       # Signal kurtosis (if computed)
+    skipped_low_kurtosis: bool = False     # Whether detection was skipped
+
+
+@dataclass
+class KurtosisResult:
+    """Result of kurtosis pre-check."""
+    kurtosis: float              # Excess kurtosis of signal (0 = Gaussian)
+    has_impulsive_content: bool  # Whether kurtosis exceeds threshold
+    threshold_used: float        # Threshold that was used
+    recommendation: str          # 'process', 'skip', or 'uncertain'
+
+
+def compute_kurtosis(
+    signal: np.ndarray,
+    remove_dc: bool = True,
+) -> float:
+    """
+    Compute excess kurtosis of signal.
+
+    Excess kurtosis:
+    - 0 = Gaussian (normal distribution)
+    - > 0 = Heavy tails (leptokurtic) - indicates impulsive events
+    - < 0 = Light tails (platykurtic)
+
+    PD signals typically have high kurtosis (>> 3) due to impulsive spikes.
+
+    Args:
+        signal: Input signal
+        remove_dc: Remove DC offset before computing
+
+    Returns:
+        Excess kurtosis value
+    """
+    if remove_dc:
+        sig = signal - np.mean(signal)
+    else:
+        sig = signal
+
+    n = len(sig)
+    if n < 4:
+        return 0.0
+
+    # Compute moments
+    mean = np.mean(sig)
+    m2 = np.mean((sig - mean) ** 2)
+    m4 = np.mean((sig - mean) ** 4)
+
+    if m2 < 1e-20:
+        return 0.0
+
+    # Kurtosis = m4 / m2^2, excess kurtosis = kurtosis - 3
+    kurtosis = m4 / (m2 ** 2) - 3.0
+
+    return float(kurtosis)
+
+
+def check_kurtosis(
+    signal: np.ndarray,
+    threshold: float = 5.0,
+    remove_dc: bool = True,
+) -> KurtosisResult:
+    """
+    Quick kurtosis check to determine if signal has impulsive content.
+
+    Use this before running expensive wavelet decomposition to skip
+    blocks that are unlikely to contain PD events.
+
+    Typical kurtosis values:
+    - Gaussian noise: ~0 (excess kurtosis)
+    - Signal with rare spikes: > 10
+    - Active PD signal: > 20-50
+    - Very impulsive PD: > 100
+
+    Args:
+        signal: Input signal
+        threshold: Excess kurtosis threshold (default: 5.0)
+        remove_dc: Remove DC offset before computing
+
+    Returns:
+        KurtosisResult with recommendation
+    """
+    kurt = compute_kurtosis(signal, remove_dc)
+
+    if kurt >= threshold * 2:
+        recommendation = 'process'  # Definitely has impulsive content
+    elif kurt >= threshold:
+        recommendation = 'uncertain'  # Borderline, might have weak events
+    else:
+        recommendation = 'skip'  # Likely just noise
+
+    return KurtosisResult(
+        kurtosis=kurt,
+        has_impulsive_content=kurt >= threshold,
+        threshold_used=threshold,
+        recommendation=recommendation,
+    )
+
+
+def compute_kurtosis_per_cycle(
+    signal: np.ndarray,
+    sample_rate: float,
+    ac_frequency: float = 60.0,
+    remove_dc: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute kurtosis for each AC cycle.
+
+    Useful for identifying which cycles have impulsive activity.
+
+    Args:
+        signal: Input signal
+        sample_rate: Sample rate in Hz
+        ac_frequency: AC frequency in Hz
+        remove_dc: Remove DC offset before computing
+
+    Returns:
+        (kurtosis_values, cycle_start_indices)
+    """
+    samples_per_cycle = int(sample_rate / ac_frequency)
+    n_cycles = len(signal) // samples_per_cycle
+
+    kurtosis_values = []
+    cycle_starts = []
+
+    for i in range(n_cycles):
+        start = i * samples_per_cycle
+        end = start + samples_per_cycle
+        cycle = signal[start:end]
+
+        kurt = compute_kurtosis(cycle, remove_dc)
+        kurtosis_values.append(kurt)
+        cycle_starts.append(start)
+
+    return np.array(kurtosis_values), np.array(cycle_starts)
 
 
 class DWTDetector:
@@ -119,19 +354,23 @@ class DWTDetector:
 
     Attributes:
         sample_rate: Sample rate in Hz
-        wavelet: Wavelet to use (default: 'db4')
+        wavelet: Wavelet to use (default: 'db4', see WAVELETS for options)
         bands: Which bands to analyze (default: ['D1', 'D2', 'D3'])
         threshold_percentile: Percentile for threshold (default: 99.5)
         min_separation: Minimum samples between events
+        kurtosis_check: Whether to perform kurtosis pre-check
+        kurtosis_threshold: Minimum kurtosis to proceed with detection
     """
 
     def __init__(
         self,
         sample_rate: float = 250e6,
-        wavelet: str = 'db4',
+        wavelet: str = DEFAULT_WAVELET,
         bands: Optional[List[str]] = None,
         threshold_percentile: float = 99.5,
         min_separation_us: float = 1.0,
+        kurtosis_check: bool = False,
+        kurtosis_threshold: float = 5.0,
     ):
         """
         Initialize DWT detector.
@@ -139,9 +378,13 @@ class DWTDetector:
         Args:
             sample_rate: Sample rate in Hz (default: 250 MHz)
             wavelet: PyWavelets wavelet name (default: 'db4')
+                    Options: db4, db6, db8, sym4, sym6, sym8, coif2, coif4,
+                            bior1.5, bior2.4, haar (see WAVELETS dict)
             bands: Bands to analyze (default: ['D1', 'D2', 'D3'])
             threshold_percentile: Percentile for threshold (default: 99.5)
             min_separation_us: Minimum separation between events in microseconds
+            kurtosis_check: If True, skip detection if kurtosis is below threshold
+            kurtosis_threshold: Minimum excess kurtosis to proceed (default: 5.0)
         """
         if not PYWT_AVAILABLE:
             raise ImportError("pywt is required for wavelet detection. Install with: pip install PyWavelets")
@@ -151,6 +394,14 @@ class DWTDetector:
         self.bands = bands or ['D1', 'D2', 'D3']
         self.threshold_percentile = threshold_percentile
         self.min_separation = int(min_separation_us * sample_rate / 1e6)
+        self.kurtosis_check = kurtosis_check
+        self.kurtosis_threshold = kurtosis_threshold
+
+        # Validate wavelet
+        try:
+            pywt.Wavelet(wavelet)
+        except Exception as e:
+            raise ValueError(f"Invalid wavelet '{wavelet}': {e}. See WAVELETS for options.")
 
         # Map band names to DWT levels
         self._band_to_level = {'D1': 1, 'D2': 2, 'D3': 3, 'D4': 4, 'D5': 5}
@@ -164,6 +415,7 @@ class DWTDetector:
         signal: np.ndarray,
         phases: Optional[np.ndarray] = None,
         ac_frequency: float = 60.0,
+        skip_kurtosis_check: bool = False,
     ) -> DetectionResult:
         """
         Detect PD events using wavelet decomposition.
@@ -172,11 +424,30 @@ class DWTDetector:
             signal: Raw signal data
             phases: Optional pre-computed phase angles (0-360 degrees)
             ac_frequency: AC frequency for phase calculation if phases not provided
+            skip_kurtosis_check: Override kurtosis_check setting for this call
 
         Returns:
             DetectionResult with detected events and statistics
         """
         n_samples = len(signal)
+        signal_kurtosis = None
+
+        # Kurtosis pre-check (optional)
+        if self.kurtosis_check and not skip_kurtosis_check:
+            signal_kurtosis = compute_kurtosis(signal)
+            if signal_kurtosis < self.kurtosis_threshold:
+                # Skip detection - signal doesn't have impulsive content
+                return DetectionResult(
+                    events=[],
+                    band_stats={},
+                    sample_rate=self.sample_rate,
+                    wavelet=self.wavelet,
+                    num_levels=self._max_level,
+                    thresholds={},
+                    total_samples=n_samples,
+                    kurtosis=signal_kurtosis,
+                    skipped_low_kurtosis=True,
+                )
 
         # Compute phases if not provided
         if phases is None:
@@ -264,6 +535,8 @@ class DWTDetector:
             num_levels=self._max_level,
             thresholds=thresholds,
             total_samples=n_samples,
+            kurtosis=signal_kurtosis,
+            skipped_low_kurtosis=False,
         )
 
     def _merge_nearby_events(

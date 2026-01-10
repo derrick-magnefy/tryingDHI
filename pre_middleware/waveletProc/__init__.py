@@ -36,6 +36,16 @@ from .dwt_detector import (
     DetectionResult,
     BAND_WINDOWS,
     BAND_CHARACTERISTICS,
+    # Wavelet options
+    WAVELETS,
+    DEFAULT_WAVELET,
+    list_wavelets,
+    get_wavelet_info,
+    # Kurtosis pre-check
+    KurtosisResult,
+    compute_kurtosis,
+    check_kurtosis,
+    compute_kurtosis_per_cycle,
 )
 from .waveform_extractor import (
     WaveletExtractor,
@@ -50,6 +60,16 @@ __all__ = [
     'DetectionResult',
     'BAND_WINDOWS',
     'BAND_CHARACTERISTICS',
+    # Wavelet options
+    'WAVELETS',
+    'DEFAULT_WAVELET',
+    'list_wavelets',
+    'get_wavelet_info',
+    # Kurtosis pre-check
+    'KurtosisResult',
+    'compute_kurtosis',
+    'check_kurtosis',
+    'compute_kurtosis_per_cycle',
     # Extraction
     'WaveletExtractor',
     'WaveletWaveform',
