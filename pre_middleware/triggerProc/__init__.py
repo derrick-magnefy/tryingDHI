@@ -1,16 +1,17 @@
 """
-pre_middleware - Raw Data Stream Processing
+triggerProc - Trigger-based Raw Data Processing
 
 Converts continuous raw data streams (without triggers) into triggered
-waveform format compatible with the PD analysis pipeline.
+waveform format using threshold-based trigger detection.
 
 This module handles data that comes as a continuous acquisition stream
-(e.g., IEEE .mat files) and needs processing to extract individual
+(e.g., IEEE .mat files) and needs trigger detection to extract individual
 PD pulse waveforms.
 
-Submodules:
-- triggerProc: Trigger-based detection and waveform extraction
-- loaders: Data file loaders (MatLoader, etc.)
+Key Features:
+- Multiple trigger detection methods (stdev, pulse_rate, histogram_knee)
+- Configurable pre/post trigger sample windows
+- Outputs Rugged-compatible format for downstream processing
 
 Usage:
     from pre_middleware.triggerProc import TriggerDetector, WaveformExtractor
@@ -36,18 +37,19 @@ CLI Usage:
     python -m pre_middleware.triggerProc.process_raw_stream data.mat --compare-methods
 """
 
-# Re-export from triggerProc for backward compatibility
-from .triggerProc import (
+from .trigger_detection import (
     TriggerDetector,
     TriggerResult,
     TRIGGER_METHODS,
     DEFAULT_TRIGGER_METHOD,
     compare_methods,
+)
+from .waveform_extraction import (
     WaveformExtractor,
     ExtractionResult,
     extract_waveforms,
-    process_raw_stream,
 )
+from .process_raw_stream import process_raw_stream
 
 __all__ = [
     # Trigger detection

@@ -21,7 +21,7 @@ Usage:
     python -m pre_middleware.examples.process_ieee_data
 
     # Or from command line with custom settings:
-    python -m pre_middleware.process_raw_stream "IEEE Data/dataset.mat" \\
+    python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/dataset.mat" \\
         --channel Ch1 \\
         --method histogram_knee \\
         --output-dir output/
@@ -226,25 +226,25 @@ def main():
     print(f"{'='*60}")
     print("""
 # List available channels
-python -m pre_middleware.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" --list-channels
+python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" --list-channels
 
 # Process Ch1 with histogram_knee method (default)
-python -m pre_middleware.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" \\
+python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" \\
     -c Ch1 -o output/ -m histogram_knee
 
 # Process with pulse rate targeting (max 50 pulses per AC cycle)
-python -m pre_middleware.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" \\
+python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" \\
     -c Ch1 -o output/ -m pulse_rate --target-rate 50
 
 # Process with standard deviation method (5 sigma threshold)
-python -m pre_middleware.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" \\
+python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" \\
     -c Ch1 -o output/ -m stdev -k 5
 
 # Compare all methods
-python -m pre_middleware.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" --compare-methods
+python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" --compare-methods
 
 # Adjust trigger window
-python -m pre_middleware.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" \\
+python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/Euller_Aq03_1.mat" \\
     -c Ch1 -o output/ --pre 500 --post 1500
 """)
 

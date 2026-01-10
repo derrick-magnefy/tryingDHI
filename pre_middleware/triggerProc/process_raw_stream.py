@@ -18,26 +18,26 @@ Trigger Detection Methods:
 
 Usage:
     # Basic usage with defaults
-    python -m pre_middleware.process_raw_stream input.mat --output-dir output/
+    python -m pre_middleware.triggerProc.process_raw_stream input.mat --output-dir output/
 
     # Specify trigger method
-    python -m pre_middleware.process_raw_stream input.mat --method histogram_knee
+    python -m pre_middleware.triggerProc.process_raw_stream input.mat --method histogram_knee
 
     # Adjust trigger windows
-    python -m pre_middleware.process_raw_stream input.mat --pre-samples 500 --post-samples 1500
+    python -m pre_middleware.triggerProc.process_raw_stream input.mat --pre-samples 500 --post-samples 1500
 
     # Pulse rate targeting
-    python -m pre_middleware.process_raw_stream input.mat --method pulse_rate --target-rate 50
+    python -m pre_middleware.triggerProc.process_raw_stream input.mat --method pulse_rate --target-rate 50
 
 Examples:
     # Process IEEE .mat file
-    python -m pre_middleware.process_raw_stream "IEEE Data/dataset.mat" \\
+    python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/dataset.mat" \\
         --output-dir "Rugged Data Files" \\
         --method histogram_knee \\
         --ac-frequency 60
 
     # Compare all methods
-    python -m pre_middleware.process_raw_stream "IEEE Data/dataset.mat" --compare-methods
+    python -m pre_middleware.triggerProc.process_raw_stream "IEEE Data/dataset.mat" --compare-methods
 """
 
 import argparse
@@ -55,7 +55,7 @@ from .trigger_detection import (
     compare_methods as compare_trigger_methods,
 )
 from .waveform_extraction import WaveformExtractor, ExtractionResult
-from .loaders import MatLoader
+from ..loaders import MatLoader
 
 
 def process_raw_stream(
@@ -326,16 +326,16 @@ def main():
         epilog="""
 Examples:
   # Process with default settings (histogram_knee method)
-  python -m pre_middleware.process_raw_stream data.mat -o output/
+  python -m pre_middleware.triggerProc.process_raw_stream data.mat -o output/
 
   # Use pulse rate targeting method
-  python -m pre_middleware.process_raw_stream data.mat -o output/ -m pulse_rate --target-rate 50
+  python -m pre_middleware.triggerProc.process_raw_stream data.mat -o output/ -m pulse_rate --target-rate 50
 
   # Adjust trigger window
-  python -m pre_middleware.process_raw_stream data.mat -o output/ --pre 500 --post 1500
+  python -m pre_middleware.triggerProc.process_raw_stream data.mat -o output/ --pre 500 --post 1500
 
   # Compare all methods without processing
-  python -m pre_middleware.process_raw_stream data.mat --compare-methods
+  python -m pre_middleware.triggerProc.process_raw_stream data.mat --compare-methods
         """
     )
 
