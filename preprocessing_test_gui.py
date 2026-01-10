@@ -625,29 +625,42 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 line=dict(color='lightgray', width=2, dash='dash'),
             ))
 
-            # Trigger detections - plot at their phase positions
+            # Helper function to get peak amplitude within window around detection
+            def get_peak_amplitude(idx, window=100):
+                start = max(0, idx - window // 4)  # Less before (onset is early)
+                end = min(len(signal), idx + window)  # More after
+                window_data = signal[start:end]
+                # Return the value with largest absolute magnitude
+                abs_vals = np.abs(window_data)
+                peak_idx = np.argmax(abs_vals)
+                return window_data[peak_idx]
+
+            # Trigger detections - plot at their phase positions with PEAK amplitude
             if len(trigger_indices) > 0:
                 trigger_idx_list = list(trigger_indices)
                 trigger_phases = phases[trigger_idx_list]
-                trigger_amps = signal[trigger_idx_list]
+                # Use peak amplitude in window, not onset amplitude
+                trigger_amps = np.array([get_peak_amplitude(idx) for idx in trigger_idx_list])
                 comparison_fig.add_trace(go.Scatter(
                     x=trigger_phases,
                     y=trigger_amps,
                     mode='markers',
                     name='Trigger',
-                    marker=dict(color='red', size=8, symbol='circle'),
+                    marker=dict(color='red', size=4, symbol='circle'),
                 ))
 
-            # Wavelet detections - plot at their phase positions
+            # Wavelet detections - plot at their phase positions with PEAK amplitude
             if len(wavelet_indices) > 0:
                 wavelet_phases = [e.phase_degrees for e in wavelet_result.events]
-                wavelet_amps = signal[[e.sample_index for e in wavelet_result.events]]
+                wavelet_idx_list = [e.sample_index for e in wavelet_result.events]
+                # Use peak amplitude in window for consistency
+                wavelet_amps = np.array([get_peak_amplitude(idx) for idx in wavelet_idx_list])
                 comparison_fig.add_trace(go.Scatter(
                     x=wavelet_phases,
                     y=wavelet_amps,
                     mode='markers',
                     name='Wavelet',
-                    marker=dict(color='blue', size=8, symbol='x'),
+                    marker=dict(color='blue', size=4, symbol='x'),
                 ))
 
             # Add vertical lines at quadrant boundaries
