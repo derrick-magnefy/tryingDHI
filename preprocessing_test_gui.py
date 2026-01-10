@@ -563,8 +563,12 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                         matches += 1
                         break
 
-            # Results
+            # Results - count per band
             num_trigger_wfms = len(trigger_waveforms.waveforms) if trigger_waveforms.waveforms is not None else 0
+            d1_count = sum(1 for e in wavelet_result.events if e.band == 'D1')
+            d2_count = sum(1 for e in wavelet_result.events if e.band == 'D2')
+            d3_count = sum(1 for e in wavelet_result.events if e.band == 'D3')
+
             results_div = html.Div([
                 html.H4("Detection Comparison"),
                 html.Hr(),
@@ -580,7 +584,10 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     html.Div([
                         html.H5("Wavelet Detection"),
                         html.P([html.Strong("Wavelet: "), wavelet_type]),
-                        html.P([html.Strong("Events Detected: "), str(len(wavelet_indices))]),
+                        html.P([html.Strong("Total Events: "), str(len(wavelet_indices))]),
+                        html.P([html.Strong("  D1 (fast): "), f"{d1_count} events"]),
+                        html.P([html.Strong("  D2 (medium): "), f"{d2_count} events"]),
+                        html.P([html.Strong("  D3 (slow): "), f"{d3_count} events"]),
                         html.P([html.Strong("Waveforms Extracted: "), str(wavelet_waveforms.num_waveforms)]),
                     ], style={'width': '45%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '5%'}),
                 ]),
@@ -637,11 +644,21 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 yaxis_title='Amplitude',
             )
 
-            # Waveform comparison plot
+            # Waveform comparison plot - split wavelet by band
+            # Count waveforms per band
+            d1_wfms = [w for w in wavelet_waveforms.waveforms if w.band == 'D1']
+            d2_wfms = [w for w in wavelet_waveforms.waveforms if w.band == 'D2']
+            d3_wfms = [w for w in wavelet_waveforms.waveforms if w.band == 'D3']
+
             waveform_fig = make_subplots(
-                rows=2, cols=1,
-                subplot_titles=['Trigger-Extracted Waveforms', 'Wavelet-Extracted Waveforms'],
-                vertical_spacing=0.15,
+                rows=4, cols=1,
+                subplot_titles=[
+                    f'Trigger-Extracted ({num_trigger_wfms} waveforms)',
+                    f'Wavelet D1 ({len(d1_wfms)} waveforms) - 1µs window',
+                    f'Wavelet D2 ({len(d2_wfms)} waveforms) - 2µs window',
+                    f'Wavelet D3 ({len(d3_wfms)} waveforms) - 5µs window',
+                ],
+                vertical_spacing=0.08,
             )
 
             # Show first N waveforms from each method
@@ -656,15 +673,31 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                         row=1, col=1
                     )
 
-            # Wavelet waveforms (list of WaveletWaveform objects)
-            for i, wfm in enumerate(wavelet_waveforms.waveforms[:max_waveforms]):
+            # Wavelet D1 waveforms
+            for wfm in d1_wfms[:max_waveforms]:
                 waveform_fig.add_trace(
-                    go.Scatter(y=wfm.waveform, mode='lines', line=dict(width=0.5),
+                    go.Scatter(y=wfm.waveform, mode='lines', line=dict(width=0.5, color='red'),
                               showlegend=False, opacity=0.5),
                     row=2, col=1
                 )
 
-            waveform_fig.update_layout(height=600, title_text="Extracted Waveform Comparison")
+            # Wavelet D2 waveforms
+            for wfm in d2_wfms[:max_waveforms]:
+                waveform_fig.add_trace(
+                    go.Scatter(y=wfm.waveform, mode='lines', line=dict(width=0.5, color='blue'),
+                              showlegend=False, opacity=0.5),
+                    row=3, col=1
+                )
+
+            # Wavelet D3 waveforms
+            for wfm in d3_wfms[:max_waveforms]:
+                waveform_fig.add_trace(
+                    go.Scatter(y=wfm.waveform, mode='lines', line=dict(width=0.5, color='green'),
+                              showlegend=False, opacity=0.5),
+                    row=4, col=1
+                )
+
+            waveform_fig.update_layout(height=900, title_text="Extracted Waveform Comparison by Band")
 
             return results_div, comparison_fig, waveform_fig
 
