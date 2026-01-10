@@ -521,11 +521,13 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
 
             # Run trigger-based detection using stdev method with k_sigma based on threshold
             # Lower k_sigma = more sensitive (more detections)
+            # refine_to_onset moves trigger back to where pulse actually starts
             trigger_detector = TriggerDetector(
                 method='stdev',
                 polarity='both',
                 min_separation=100,
                 k_sigma=trigger_threshold,  # Use threshold as k_sigma multiplier
+                refine_to_onset=True,  # Adjust trigger backward to pulse onset
             )
             trigger_result = trigger_detector.detect(signal, sample_rate, ac_freq)
 
