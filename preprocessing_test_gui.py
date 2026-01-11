@@ -939,13 +939,17 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 else:
                     fwhm_us = 0
 
-                # Rise time (robust version)
+                # Rise time (robust version - adaptive to window size)
                 peak_idx_local = np.argmax(abs_wfm)
-                pre_pulse_end = max(0, peak_idx_local - 20)
-                if pre_pulse_end > 10:
-                    noise_floor = np.percentile(abs_wfm[:pre_pulse_end], 90)
+
+                # Adaptive noise estimation - use first 1/4 of waveform or at least 5 samples
+                # For short D1 windows, use fewer samples but still get a baseline
+                noise_region_end = max(5, min(peak_idx_local // 2, len(waveform) // 4))
+                if noise_region_end >= 3:
+                    noise_floor = np.percentile(abs_wfm[:noise_region_end], 90)
                 else:
-                    noise_floor = 0
+                    noise_floor = np.min(abs_wfm[:peak_idx_local]) if peak_idx_local > 0 else 0
+
                 signal_range = peak_amp - noise_floor
                 thresh_10 = noise_floor + signal_range * 0.1
                 thresh_90 = noise_floor + signal_range * 0.9
@@ -955,12 +959,15 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     if abs_wfm[i] <= thresh_90:
                         rise_end = i + 1
                         break
+
+                # Adaptive search limit based on window size (max 1/3 of pre-peak samples)
+                max_search = max(10, peak_idx_local // 2)
                 rise_start = 0
                 for i in range(rise_end, -1, -1):
                     if abs_wfm[i] <= thresh_10:
                         rise_start = i
                         break
-                    if rise_end - i > 50:
+                    if rise_end - i > max_search:
                         rise_start = i
                         break
                 rise_time_ns = (rise_end - rise_start) / sample_rate * 1e9
