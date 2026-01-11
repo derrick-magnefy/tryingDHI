@@ -658,10 +658,12 @@ class DWTDetector:
         events: List[DetectionEvent],
     ) -> List[DetectionEvent]:
         """
-        Merge nearby detections, keeping the most significant one.
+        Merge nearby detections, keeping the one with highest absolute coefficient.
 
         When multiple bands detect the same event, keep the detection
-        from the band with highest significance.
+        from the band with the strongest wavelet response (highest amplitude).
+        This ensures band classification reflects actual frequency content,
+        not just which band's threshold was easiest to exceed.
         """
         if len(events) <= 1:
             return events
@@ -674,14 +676,14 @@ class DWTDetector:
             if event.sample_index - current_group[-1].sample_index <= self.min_separation:
                 current_group.append(event)
             else:
-                # Process current group - keep most significant
-                best = max(current_group, key=lambda e: e.significance)
+                # Process current group - keep highest absolute coefficient
+                best = max(current_group, key=lambda e: e.amplitude)
                 merged.append(best)
                 current_group = [event]
 
         # Don't forget the last group
         if current_group:
-            best = max(current_group, key=lambda e: e.significance)
+            best = max(current_group, key=lambda e: e.amplitude)
             merged.append(best)
 
         return merged
