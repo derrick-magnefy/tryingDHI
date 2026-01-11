@@ -944,6 +944,9 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             # ========== FEATURE EXTRACTION ==========
             # These features help understand why wavelet might miss a trigger detection
 
+            # Calculate window duration for display
+            window_duration_us = len(waveform) / sample_rate * 1e6
+
             # 1. Basic amplitude metrics
             peak_amp = np.max(np.abs(waveform))
             rms_amp = np.sqrt(np.mean(waveform**2))
@@ -981,11 +984,19 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             rise_time_samples = rise_end - rise_start
             rise_time_ns = rise_time_samples / sample_rate * 1e9
 
-            # 4. Dominant frequency (FFT-based)
+            # For frequency analysis, extract a TIGHT window around the pulse (~2 µs centered on peak)
+            # This avoids diluting the pulse frequency content with surrounding noise
+            pulse_analysis_samples = int(2e-6 * sample_rate)  # 2 µs window
+            pulse_half = pulse_analysis_samples // 2
+            pulse_start = max(0, peak_idx_local - pulse_half)
+            pulse_end = min(len(waveform), peak_idx_local + pulse_half)
+            pulse_region = waveform[pulse_start:pulse_end]
+
+            # 4. Dominant frequency (FFT-based) - using pulse region only
             try:
-                # Use FFT to find dominant frequency
-                n_fft = len(waveform)
-                fft_result = np.fft.rfft(waveform)
+                # Use FFT on pulse region to find dominant frequency
+                n_fft = len(pulse_region)
+                fft_result = np.fft.rfft(pulse_region)
                 fft_freqs = np.fft.rfftfreq(n_fft, 1/sample_rate)
                 fft_magnitude = np.abs(fft_result)
                 # Ignore DC component
@@ -995,13 +1006,13 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             except:
                 dominant_freq_mhz = 0
 
-            # 5. Band energy distribution (what % of energy in D1, D2, D3 frequency ranges)
+            # 5. Band energy distribution - using pulse region only
             # D1: highest freq (fs/4 to fs/2), D2: (fs/8 to fs/4), D3: (fs/16 to fs/8)
             try:
                 total_energy = np.sum(fft_magnitude**2)
                 if total_energy > 0:
-                    # Define frequency bands (approximate for 125 MSPS)
-                    # D1: 31.25-62.5 MHz, D2: 15.625-31.25 MHz, D3: 7.8125-15.625 MHz
+                    # Define frequency bands based on actual sample rate
+                    # At 125 MSPS: D1: 31.25-62.5 MHz, D2: 15.625-31.25 MHz, D3: 7.8125-15.625 MHz
                     d1_mask = (fft_freqs >= sample_rate/4) & (fft_freqs < sample_rate/2)
                     d2_mask = (fft_freqs >= sample_rate/8) & (fft_freqs < sample_rate/4)
                     d3_mask = (fft_freqs >= sample_rate/16) & (fft_freqs < sample_rate/8)
@@ -1016,11 +1027,11 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             except:
                 d1_energy_pct = d2_energy_pct = d3_energy_pct = low_energy_pct = 0
 
-            # 6. Actual wavelet coefficients at this location
+            # 6. Actual wavelet coefficients - using pulse region for better accuracy
             try:
                 import pywt
-                # Compute DWT of waveform
-                coeffs = pywt.wavedec(waveform, 'db4', level=3)
+                # Compute DWT of pulse region (not full waveform)
+                coeffs = pywt.wavedec(pulse_region, 'db4', level=3)
                 # Get max coefficient in each band
                 d1_coeff_max = np.max(np.abs(coeffs[-1])) if len(coeffs) > 1 else 0
                 d2_coeff_max = np.max(np.abs(coeffs[-2])) if len(coeffs) > 2 else 0
@@ -1028,7 +1039,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             except:
                 d1_coeff_max = d2_coeff_max = d3_coeff_max = 0
 
-            # 7. Kurtosis (measure of impulsiveness)
+            # 7. Kurtosis (measure of impulsiveness) - full waveform is actually correct here
             try:
                 from scipy.stats import kurtosis as scipy_kurtosis
                 wfm_kurtosis = scipy_kurtosis(waveform, fisher=True)
@@ -1041,11 +1052,12 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 else:
                     wfm_kurtosis = 0
 
-            # 8. SNR estimate (peak vs noise floor)
+            # 8. SNR estimate (peak vs noise floor) - use pre-pulse region
             try:
-                # Estimate noise from edges of waveform (before pulse)
-                noise_region = waveform[:pre_samples//2]
-                noise_std = np.std(noise_region) if len(noise_region) > 10 else np.std(waveform)
+                # Estimate noise from beginning of waveform (before pulse arrives)
+                noise_samples = min(50, pre_samples // 2)  # Use first 50 samples or less
+                noise_region = waveform[:noise_samples]
+                noise_std = np.std(noise_region) if len(noise_region) > 5 else np.std(waveform)
                 snr_db = 20 * np.log10(peak_amp / noise_std) if noise_std > 0 else 0
             except:
                 snr_db = 0
