@@ -540,12 +540,18 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             )
             wavelet_result = wavelet_detector.detect(signal, phases, ac_freq)
 
-            # Common extraction parameters for fair comparison
-            pre_samples = 100
-            post_samples = 400
+            # Band-specific extraction windows (at 125 MSPS)
+            # D1 (fast pulses): 0.5 µs total
+            # D2 (medium pulses): 1.0 µs total
+            # D3 (slow pulses): 1.5 µs total
+            band_windows = {
+                'D1': {'pre': int(0.5e-6 * sample_rate * 0.3), 'post': int(0.5e-6 * sample_rate * 0.7)},
+                'D2': {'pre': int(1.0e-6 * sample_rate * 0.3), 'post': int(1.0e-6 * sample_rate * 0.7)},
+                'D3': {'pre': int(1.5e-6 * sample_rate * 0.3), 'post': int(1.5e-6 * sample_rate * 0.7)},
+            }
 
             # Helper function to find peak and extract waveform centered on it
-            def extract_peak_centered(detection_idx, pre=100, post=400, search_window=100):
+            def extract_peak_centered(detection_idx, pre, post, search_window=100):
                 """Find peak within search window and extract waveform centered on it."""
                 # Search for peak around detection point
                 search_start = max(0, detection_idx - search_window // 4)
@@ -572,20 +578,59 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
 
                 return waveform, peak_idx
 
-            # Extract waveforms using trigger method (with peak centering)
+            def estimate_pulse_width(waveform, sample_rate):
+                """Estimate pulse width using FWHM and return corresponding band."""
+                abs_wfm = np.abs(waveform)
+                peak_amp = np.max(abs_wfm)
+                half_max = peak_amp / 2
+
+                above_half = abs_wfm >= half_max
+                if np.any(above_half):
+                    first_above = np.argmax(above_half)
+                    last_above = len(above_half) - 1 - np.argmax(above_half[::-1])
+                    fwhm_samples = last_above - first_above
+                    fwhm_us = fwhm_samples / sample_rate * 1e6
+                else:
+                    fwhm_us = 0
+
+                # Classify into band based on pulse width
+                if fwhm_us <= 0.3:  # Very fast pulse -> D1
+                    return 'D1', fwhm_us
+                elif fwhm_us <= 0.7:  # Medium pulse -> D2
+                    return 'D2', fwhm_us
+                else:  # Slower pulse -> D3
+                    return 'D3', fwhm_us
+
+            # Extract trigger waveforms with adaptive window based on pulse width
+            # First pass: extract with large window to measure pulse width
             trigger_idx_list = list(trigger_result.triggers) if len(trigger_result.triggers) > 0 else []
             trigger_waveform_list = []
             trigger_peak_indices = []
+            trigger_bands = []  # Estimated band based on pulse width
+            trigger_pulse_widths = []
+
             for idx in trigger_idx_list:
-                wfm, peak_idx = extract_peak_centered(idx, pre_samples, post_samples)
+                # First extract with large window to measure pulse width
+                wfm_wide, peak_idx = extract_peak_centered(idx, pre=100, post=400, search_window=100)
+                estimated_band, pulse_width_us = estimate_pulse_width(wfm_wide, sample_rate)
+
+                # Re-extract with band-appropriate window
+                band_pre = band_windows[estimated_band]['pre']
+                band_post = band_windows[estimated_band]['post']
+                wfm, peak_idx = extract_peak_centered(idx, pre=band_pre, post=band_post, search_window=100)
+
                 trigger_waveform_list.append(wfm)
                 trigger_peak_indices.append(peak_idx)
+                trigger_bands.append(estimated_band)
+                trigger_pulse_widths.append(pulse_width_us)
 
-            # Extract waveforms using wavelet method (same window as trigger, peak centered)
+            # Extract wavelet waveforms with band-specific windows
             wavelet_waveform_list = []
             wavelet_peak_indices = []
             for e in wavelet_result.events:
-                wfm, peak_idx = extract_peak_centered(e.sample_index, pre_samples, post_samples)
+                band_pre = band_windows[e.band]['pre']
+                band_post = band_windows[e.band]['post']
+                wfm, peak_idx = extract_peak_centered(e.sample_index, pre=band_pre, post=band_post, search_window=100)
                 wavelet_waveform_list.append(wfm)
                 wavelet_peak_indices.append(peak_idx)
 
@@ -593,28 +638,63 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             trigger_indices = set(trigger_idx_list)
             wavelet_indices = set(e.sample_index for e in wavelet_result.events)
 
-            # Find matches (within tolerance) and categorize each detection
+            # Find matches (within tolerance) with band compatibility check
             tolerance = 100
             matched_trigger = set()  # Trigger indices that have a wavelet match
             matched_wavelet = set()  # Wavelet indices that have a trigger match
+            matched_info = []  # Store (t_idx, t_peak, t_band, w_band, band_match) for matched pairs
 
-            for t_idx in trigger_idx_list:
+            for i, t_idx in enumerate(trigger_idx_list):
+                t_band = trigger_bands[i]
+                t_peak = trigger_peak_indices[i]
+                t_pw = trigger_pulse_widths[i]
+
                 for w_idx, e in zip([ev.sample_index for ev in wavelet_result.events], wavelet_result.events):
                     if abs(t_idx - w_idx) <= tolerance:
+                        # Found a temporal match
                         matched_trigger.add(t_idx)
                         matched_wavelet.add(w_idx)
+                        band_match = (t_band == e.band)
+                        matched_info.append({
+                            't_idx': t_idx,
+                            't_peak': t_peak,
+                            't_band': t_band,
+                            't_pw': t_pw,
+                            'w_band': e.band,
+                            'band_match': band_match,
+                        })
                         break
 
-            trigger_only = [idx for idx in trigger_idx_list if idx not in matched_trigger]
+            # Categorize unmatched detections
+            trigger_only = []
+            for i, idx in enumerate(trigger_idx_list):
+                if idx not in matched_trigger:
+                    trigger_only.append({
+                        'idx': idx,
+                        'peak': trigger_peak_indices[i],
+                        'band': trigger_bands[i],
+                        'pw': trigger_pulse_widths[i],
+                    })
+
             wavelet_only = [(e.sample_index, e) for e in wavelet_result.events if e.sample_index not in matched_wavelet]
-            matched_pairs = [(t_idx, t_peak) for t_idx, t_peak in zip(trigger_idx_list, trigger_peak_indices) if t_idx in matched_trigger]
 
             # Results - count per band
             num_trigger_wfms = len(trigger_waveform_list)
             num_wavelet_wfms = len(wavelet_waveform_list)
-            d1_count = sum(1 for e in wavelet_result.events if e.band == 'D1')
-            d2_count = sum(1 for e in wavelet_result.events if e.band == 'D2')
-            d3_count = sum(1 for e in wavelet_result.events if e.band == 'D3')
+
+            # Wavelet band counts
+            w_d1_count = sum(1 for e in wavelet_result.events if e.band == 'D1')
+            w_d2_count = sum(1 for e in wavelet_result.events if e.band == 'D2')
+            w_d3_count = sum(1 for e in wavelet_result.events if e.band == 'D3')
+
+            # Trigger band counts (estimated from pulse width)
+            t_d1_count = sum(1 for b in trigger_bands if b == 'D1')
+            t_d2_count = sum(1 for b in trigger_bands if b == 'D2')
+            t_d3_count = sum(1 for b in trigger_bands if b == 'D3')
+
+            # Band match statistics
+            band_matches = sum(1 for m in matched_info if m['band_match'])
+            band_mismatches = len(matched_info) - band_matches
 
             results_div = html.Div([
                 html.H4("Detection Comparison"),
@@ -626,22 +706,30 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                         html.P([html.Strong("K-Sigma: "), f"{trigger_threshold}"]),
                         html.P([html.Strong("Threshold Used: "), f"{trigger_result.threshold:.2e}"]),
                         html.P([html.Strong("Events Detected: "), str(len(trigger_indices))]),
-                        html.P([html.Strong("Waveforms Extracted: "), str(num_trigger_wfms)]),
+                        html.P([html.Strong("By Pulse Width:")]),
+                        html.P([html.Strong("  D1 (fast): "), f"{t_d1_count} events"]),
+                        html.P([html.Strong("  D2 (medium): "), f"{t_d2_count} events"]),
+                        html.P([html.Strong("  D3 (slow): "), f"{t_d3_count} events"]),
                     ], style={'width': '45%', 'display': 'inline-block', 'verticalAlign': 'top'}),
                     html.Div([
                         html.H5("Wavelet Detection"),
                         html.P([html.Strong("Wavelet: "), wavelet_type]),
                         html.P([html.Strong("Total Events: "), str(len(wavelet_indices))]),
-                        html.P([html.Strong("  D1 (fast): "), f"{d1_count} events"]),
-                        html.P([html.Strong("  D2 (medium): "), f"{d2_count} events"]),
-                        html.P([html.Strong("  D3 (slow): "), f"{d3_count} events"]),
-                        html.P([html.Strong("Waveforms Extracted: "), str(num_wavelet_wfms)]),
+                        html.P([html.Strong("By Band:")]),
+                        html.P([html.Strong("  D1 (fast): "), f"{w_d1_count} events"]),
+                        html.P([html.Strong("  D2 (medium): "), f"{w_d2_count} events"]),
+                        html.P([html.Strong("  D3 (slow): "), f"{w_d3_count} events"]),
                     ], style={'width': '45%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '5%'}),
                 ]),
                 html.Hr(),
                 html.H5("Comparison Metrics"),
-                html.P([html.Strong("Matched (▲ green): "), f"{len(matched_trigger)} detections"]),
+                html.P([html.Strong("Matched (▲ green): "), f"{len(matched_info)} detections"]),
+                html.P([html.Strong("  Band agreement: "), f"{band_matches} ({100*band_matches/len(matched_info):.0f}%)" if matched_info else "N/A"]),
+                html.P([html.Strong("  Band mismatch: "), f"{band_mismatches}"]),
                 html.P([html.Strong("Trigger-only (● red): "), f"{len(trigger_only)} detections"]),
+                html.P([html.Strong("  D1: "), f"{sum(1 for t in trigger_only if t['band'] == 'D1')}"]),
+                html.P([html.Strong("  D2: "), f"{sum(1 for t in trigger_only if t['band'] == 'D2')}"]),
+                html.P([html.Strong("  D3: "), f"{sum(1 for t in trigger_only if t['band'] == 'D3')}"]),
                 html.P([html.Strong("Wavelet-only: "), f"{len(wavelet_only)} total"]),
                 html.P([html.Strong("  ◆ D1 (cyan): "), f"{sum(1 for _, e in wavelet_only if e.band == 'D1')}"]),
                 html.P([html.Strong("  ✕ D2 (blue): "), f"{sum(1 for _, e in wavelet_only if e.band == 'D2')}"]),
@@ -685,27 +773,34 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             ))
 
             # Plot MATCHED detections (green triangles) - these are the same event
-            if matched_pairs:
-                matched_phases = [phases[idx] for idx, _ in matched_pairs]
-                matched_amps = [get_peak_amplitude(idx) for idx, _ in matched_pairs]
+            if matched_info:
+                matched_phases = [phases[m['t_idx']] for m in matched_info]
+                matched_amps = [get_peak_amplitude(m['t_idx']) for m in matched_info]
+                # Create hover text with band info
+                matched_hover = [f"Trigger band: {m['t_band']}<br>Wavelet band: {m['w_band']}<br>PW: {m['t_pw']:.2f}µs" for m in matched_info]
                 comparison_fig.add_trace(go.Scatter(
                     x=matched_phases,
                     y=matched_amps,
                     mode='markers',
                     name='Matched (Both)',
                     marker=dict(color='green', size=6, symbol='triangle-up'),
+                    hovertext=matched_hover,
+                    hoverinfo='text+x+y',
                 ))
 
-            # Plot TRIGGER-ONLY detections (red circles)
+            # Plot TRIGGER-ONLY detections (red circles) with hover info
             if trigger_only:
-                trigger_only_phases = [phases[idx] for idx in trigger_only]
-                trigger_only_amps = [get_peak_amplitude(idx) for idx in trigger_only]
+                trigger_only_phases = [phases[t['idx']] for t in trigger_only]
+                trigger_only_amps = [get_peak_amplitude(t['idx']) for t in trigger_only]
+                trigger_only_hover = [f"Band (by PW): {t['band']}<br>PW: {t['pw']:.2f}µs" for t in trigger_only]
                 comparison_fig.add_trace(go.Scatter(
                     x=trigger_only_phases,
                     y=trigger_only_amps,
                     mode='markers',
                     name='Trigger Only',
                     marker=dict(color='red', size=4, symbol='circle'),
+                    hovertext=trigger_only_hover,
+                    hoverinfo='text+x+y',
                 ))
 
             # Split wavelet-only by band
@@ -812,7 +907,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     row=4, col=1
                 )
 
-            waveform_fig.update_layout(height=900, title_text="Extracted Waveform Comparison (All Peak-Centered, Same Window)")
+            waveform_fig.update_layout(height=900, title_text="Extracted Waveform Comparison (Band-Specific Windows)")
 
             # Build detection store for click handling
             # Store detection info categorized by matched/trigger-only/wavelet-only (split by band)
@@ -821,15 +916,27 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 'filepath': filepath,
                 'channel': channel,
                 'sample_rate': sample_rate,
-                'pre_samples': pre_samples,
-                'post_samples': post_samples,
+                'band_windows': band_windows,  # Store band-specific windows
                 'matched_detections': [
-                    {'index': int(idx), 'phase': float(phases[idx]), 'type': 'matched'}
-                    for idx, _ in matched_pairs
+                    {
+                        'index': int(m['t_idx']),
+                        'phase': float(phases[m['t_idx']]),
+                        'type': 'matched',
+                        't_band': m['t_band'],
+                        'w_band': m['w_band'],
+                        'pw': m['t_pw'],
+                    }
+                    for m in matched_info
                 ],
                 'trigger_only_detections': [
-                    {'index': int(idx), 'phase': float(phases[idx]), 'type': 'trigger_only'}
-                    for idx in trigger_only
+                    {
+                        'index': int(t['idx']),
+                        'phase': float(phases[t['idx']]),
+                        'type': 'trigger_only',
+                        'band': t['band'],
+                        'pw': t['pw'],
+                    }
+                    for t in trigger_only
                 ],
                 'wavelet_d1_detections': [
                     {'index': int(idx), 'phase': float(phases[idx]), 'band': 'D1', 'type': 'wavelet_d1'}
@@ -917,7 +1024,20 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             detection = detections[point_index]
             sample_index = detection['index']
             phase = detection['phase']
-            band = detection.get('band', 'N/A')
+
+            # Get band info - different sources for different detection types
+            if detection_type == 'Matched (Both Methods)':
+                band = detection.get('t_band', 'N/A')  # Use trigger's estimated band
+                wavelet_band = detection.get('w_band', 'N/A')
+                pulse_width = detection.get('pw', 0)
+            elif detection_type == 'Trigger Only':
+                band = detection.get('band', 'N/A')
+                wavelet_band = 'N/A'
+                pulse_width = detection.get('pw', 0)
+            else:
+                band = detection.get('band', 'N/A')
+                wavelet_band = band
+                pulse_width = 0
 
             # Load signal and extract waveform (peak-centered)
             filepath = detection_store['filepath']
@@ -927,8 +1047,16 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             data = loader.load_channel(channel)
             signal = data['signal']
             sample_rate = detection_store['sample_rate']
-            pre_samples = detection_store.get('pre_samples', 100)
-            post_samples = detection_store.get('post_samples', 400)
+
+            # Use band-specific window sizes
+            band_windows = detection_store.get('band_windows', {})
+            if band in band_windows:
+                pre_samples = band_windows[band]['pre']
+                post_samples = band_windows[band]['post']
+            else:
+                # Fallback to D2 window if band unknown
+                pre_samples = band_windows.get('D2', {}).get('pre', 40)
+                post_samples = band_windows.get('D2', {}).get('post', 85)
 
             # Find peak and extract centered waveform
             search_start = max(0, sample_index - 25)
@@ -1108,9 +1236,20 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.Strong(f"{detection_type}"),
                 html.P(f"Sample Index: {sample_index:,}"),
                 html.P(f"Phase: {phase:.1f}°"),
+                html.P(f"Window: {len(waveform)/sample_rate*1e6:.2f} µs ({len(waveform)} samples)"),
             ]
-            if band != 'N/A':
-                info_items.append(html.P(f"Band: {band}"))
+            # Show band info
+            if detection_type == 'Matched (Both Methods)':
+                info_items.append(html.P(f"Trigger Band (by PW): {band}"))
+                info_items.append(html.P(f"Wavelet Band: {wavelet_band}"))
+                if band == wavelet_band:
+                    info_items.append(html.P("Band Match: Yes", style={'color': 'green'}))
+                else:
+                    info_items.append(html.P(f"Band Match: No ({band} vs {wavelet_band})", style={'color': 'orange'}))
+            elif band != 'N/A':
+                info_items.append(html.P(f"Band (by PW): {band}"))
+            if pulse_width > 0:
+                info_items.append(html.P(f"Stored PW: {pulse_width:.2f} µs"))
 
             # Add feature analysis section
             info_items.extend([
