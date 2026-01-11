@@ -1819,6 +1819,8 @@ def create_comparison_tab(loaded_data):
                     id='comparison-channel',
                     options=[{'label': ch, 'value': ch} for ch in channels],
                     value=channels[0] if channels else None,
+                    persistence=True,
+                    persistence_type='session',
                 ),
             ], style={'width': '20%', 'display': 'inline-block', 'marginRight': '2%'}),
 
@@ -1831,6 +1833,8 @@ def create_comparison_tab(loaded_data):
                     min=1.0,
                     max=20.0,
                     step=0.5,
+                    persistence=True,
+                    persistence_type='session',
                 ),
             ], style={'width': '15%', 'display': 'inline-block', 'marginRight': '2%'}),
 
@@ -1840,6 +1844,8 @@ def create_comparison_tab(loaded_data):
                     id='comparison-wavelet',
                     options=wavelet_options,
                     value=DEFAULT_WAVELET,
+                    persistence=True,
+                    persistence_type='session',
                 ),
             ], style={'width': '20%', 'display': 'inline-block', 'marginRight': '2%'}),
 
