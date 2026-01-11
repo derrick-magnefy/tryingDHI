@@ -965,22 +965,40 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 fwhm_samples = 0
                 fwhm_us = 0
 
-            # 3. Rise time (10% to 90% of peak)
-            thresh_10 = peak_amp * 0.1
-            thresh_90 = peak_amp * 0.9
+            # 3. Rise time (10% to 90% of peak) - ROBUST version
+            # First estimate noise floor from pre-pulse region
             peak_idx_local = np.argmax(abs_wfm)
-            # Search backward from peak for 10% crossing
-            rise_start = 0
-            for i in range(peak_idx_local, -1, -1):
-                if abs_wfm[i] <= thresh_10:
-                    rise_start = i
-                    break
-            # Search backward from peak for 90% crossing
+            pre_pulse_end = max(0, peak_idx_local - 20)  # 20 samples before peak
+            if pre_pulse_end > 10:
+                noise_floor = np.percentile(abs_wfm[:pre_pulse_end], 90)  # 90th percentile of noise
+            else:
+                noise_floor = 0
+
+            # Use thresholds relative to signal above noise
+            signal_range = peak_amp - noise_floor
+            thresh_10 = noise_floor + signal_range * 0.1
+            thresh_90 = noise_floor + signal_range * 0.9
+
+            # Search backward from peak, but STOP at first crossing (don't go into noise)
+            # Find 90% crossing first (closer to peak, more reliable)
             rise_end = peak_idx_local
             for i in range(peak_idx_local, -1, -1):
                 if abs_wfm[i] <= thresh_90:
                     rise_end = i + 1
                     break
+
+            # Now search backward from 90% point for 10% crossing
+            # This avoids searching through noise region
+            rise_start = 0
+            for i in range(rise_end, -1, -1):
+                if abs_wfm[i] <= thresh_10:
+                    rise_start = i
+                    break
+                # Safety: don't go more than 50 samples (400ns at 125MSPS) before 90% point
+                if rise_end - i > 50:
+                    rise_start = i
+                    break
+
             rise_time_samples = rise_end - rise_start
             rise_time_ns = rise_time_samples / sample_rate * 1e9
 
