@@ -920,6 +920,101 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 xaxis=dict(range=[0, 360], dtick=45),
             )
 
+            # ========== Compute waveform features for aggregate statistics ==========
+            def compute_waveform_features(waveform, sample_rate):
+                """Compute features from a single waveform for aggregate statistics."""
+                abs_wfm = np.abs(waveform)
+                peak_amp = np.max(abs_wfm)
+                rms_amp = np.sqrt(np.mean(waveform**2))
+                crest_factor = peak_amp / rms_amp if rms_amp > 0 else 0
+
+                # FWHM
+                half_max = peak_amp / 2
+                above_half = abs_wfm >= half_max
+                if np.any(above_half):
+                    first_above = np.argmax(above_half)
+                    last_above = len(above_half) - 1 - np.argmax(above_half[::-1])
+                    fwhm_samples = last_above - first_above
+                    fwhm_us = fwhm_samples / sample_rate * 1e6
+                else:
+                    fwhm_us = 0
+
+                # Rise time (robust version)
+                peak_idx_local = np.argmax(abs_wfm)
+                pre_pulse_end = max(0, peak_idx_local - 20)
+                if pre_pulse_end > 10:
+                    noise_floor = np.percentile(abs_wfm[:pre_pulse_end], 90)
+                else:
+                    noise_floor = 0
+                signal_range = peak_amp - noise_floor
+                thresh_10 = noise_floor + signal_range * 0.1
+                thresh_90 = noise_floor + signal_range * 0.9
+
+                rise_end = peak_idx_local
+                for i in range(peak_idx_local, -1, -1):
+                    if abs_wfm[i] <= thresh_90:
+                        rise_end = i + 1
+                        break
+                rise_start = 0
+                for i in range(rise_end, -1, -1):
+                    if abs_wfm[i] <= thresh_10:
+                        rise_start = i
+                        break
+                    if rise_end - i > 50:
+                        rise_start = i
+                        break
+                rise_time_ns = (rise_end - rise_start) / sample_rate * 1e9
+
+                # Dominant frequency (using tight pulse window)
+                pulse_half = int(1e-6 * sample_rate / 2)  # ~1µs window
+                pulse_start = max(0, peak_idx_local - pulse_half)
+                pulse_end = min(len(waveform), peak_idx_local + pulse_half)
+                pulse_region = waveform[pulse_start:pulse_end]
+
+                try:
+                    n_fft = len(pulse_region)
+                    fft_result = np.fft.rfft(pulse_region)
+                    fft_freqs = np.fft.rfftfreq(n_fft, 1/sample_rate)
+                    fft_magnitude = np.abs(fft_result)
+                    fft_magnitude[0] = 0  # Ignore DC
+                    dominant_freq_idx = np.argmax(fft_magnitude)
+                    dominant_freq_mhz = fft_freqs[dominant_freq_idx] / 1e6
+                except:
+                    dominant_freq_mhz = 0
+
+                # SNR estimate
+                noise_samples = min(30, len(waveform) // 4)
+                if noise_samples > 5:
+                    noise_std = np.std(waveform[:noise_samples])
+                    snr_db = 20 * np.log10(peak_amp / noise_std) if noise_std > 0 else 0
+                else:
+                    snr_db = 0
+
+                return {
+                    'peak_amp': float(peak_amp),
+                    'rms_amp': float(rms_amp),
+                    'crest_factor': float(crest_factor),
+                    'fwhm_us': float(fwhm_us),
+                    'rise_time_ns': float(rise_time_ns),
+                    'dominant_freq_mhz': float(dominant_freq_mhz),
+                    'snr_db': float(snr_db),
+                }
+
+            # Compute features for all trigger waveforms
+            trigger_features = []
+            for i, wfm in enumerate(trigger_waveform_list):
+                features = compute_waveform_features(wfm, sample_rate)
+                features['band'] = trigger_bands[i]
+                features['pw_us'] = trigger_pulse_widths[i]
+                trigger_features.append(features)
+
+            # Compute features for all wavelet waveforms
+            wavelet_features = []
+            for i, (wfm, event) in enumerate(zip(wavelet_waveform_list, wavelet_result.events)):
+                features = compute_waveform_features(wfm, sample_rate)
+                features['band'] = event.band
+                wavelet_features.append(features)
+
             # Waveform comparison plot - split by detection category
             # Group wavelet waveforms by band for display
             d1_indices = [i for i, e in enumerate(wavelet_result.events) if e.band == 'D1']
@@ -1015,6 +1110,9 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     {'index': int(idx), 'phase': float(phases[idx]), 'band': 'D3', 'type': 'wavelet_d3'}
                     for idx, e in wavelet_only_d3
                 ],
+                # Store pre-computed waveform features for aggregate statistics
+                'trigger_features': trigger_features,
+                'wavelet_features': wavelet_features,
             }
 
             return results_div, comparison_fig, waveform_fig, detection_store
@@ -1378,6 +1476,127 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                                     xref="paper", yref="paper", showarrow=False)
             return error_fig, f"Error loading waveform: {str(e)}"
 
+    # Callback for aggregate waveform statistics by band
+    @app.callback(
+        Output('aggregate-stats-display', 'children'),
+        [Input('aggregate-band-dropdown', 'value')],
+        [State('comparison-detections-store', 'data')]
+    )
+    def display_aggregate_stats(selected_band, detection_store):
+        if not detection_store:
+            return "Run comparison first to see aggregate statistics."
+
+        trigger_features = detection_store.get('trigger_features', [])
+        wavelet_features = detection_store.get('wavelet_features', [])
+
+        # Filter by band if not 'all'
+        if selected_band != 'all':
+            trigger_features = [f for f in trigger_features if f.get('band') == selected_band]
+            wavelet_features = [f for f in wavelet_features if f.get('band') == selected_band]
+
+        # Combine for overall stats (or keep separate)
+        all_features = trigger_features + wavelet_features
+
+        if not all_features:
+            return html.P(f"No waveforms found for band: {selected_band}")
+
+        # Compute aggregate statistics
+        def compute_stats(values):
+            if not values:
+                return {'mean': 0, 'std': 0, 'min': 0, 'max': 0, 'median': 0}
+            arr = np.array(values)
+            return {
+                'mean': float(np.mean(arr)),
+                'std': float(np.std(arr)),
+                'min': float(np.min(arr)),
+                'max': float(np.max(arr)),
+                'median': float(np.median(arr)),
+            }
+
+        # Extract feature arrays
+        peak_amps = [f['peak_amp'] for f in all_features]
+        fwhms = [f['fwhm_us'] for f in all_features]
+        rise_times = [f['rise_time_ns'] for f in all_features]
+        dom_freqs = [f['dominant_freq_mhz'] for f in all_features]
+        snrs = [f['snr_db'] for f in all_features]
+        crest_factors = [f['crest_factor'] for f in all_features]
+
+        # Compute stats for each feature
+        amp_stats = compute_stats(peak_amps)
+        fwhm_stats = compute_stats(fwhms)
+        rise_stats = compute_stats(rise_times)
+        freq_stats = compute_stats(dom_freqs)
+        snr_stats = compute_stats(snrs)
+        crest_stats = compute_stats(crest_factors)
+
+        # Create display table
+        band_label = selected_band if selected_band != 'all' else 'All Bands'
+
+        return html.Div([
+            html.H5(f"Aggregate Statistics: {band_label} ({len(all_features)} waveforms)"),
+            html.P(f"Trigger: {len(trigger_features)} | Wavelet: {len(wavelet_features)}"),
+            html.Table([
+                html.Thead(html.Tr([
+                    html.Th("Feature"),
+                    html.Th("Mean"),
+                    html.Th("Std Dev"),
+                    html.Th("Min"),
+                    html.Th("Max"),
+                    html.Th("Median"),
+                ])),
+                html.Tbody([
+                    html.Tr([
+                        html.Td("Peak Amplitude"),
+                        html.Td(f"{amp_stats['mean']:.4e}"),
+                        html.Td(f"{amp_stats['std']:.4e}"),
+                        html.Td(f"{amp_stats['min']:.4e}"),
+                        html.Td(f"{amp_stats['max']:.4e}"),
+                        html.Td(f"{amp_stats['median']:.4e}"),
+                    ]),
+                    html.Tr([
+                        html.Td("Pulse Width (FWHM) [µs]"),
+                        html.Td(f"{fwhm_stats['mean']:.3f}"),
+                        html.Td(f"{fwhm_stats['std']:.3f}"),
+                        html.Td(f"{fwhm_stats['min']:.3f}"),
+                        html.Td(f"{fwhm_stats['max']:.3f}"),
+                        html.Td(f"{fwhm_stats['median']:.3f}"),
+                    ]),
+                    html.Tr([
+                        html.Td("Rise Time (10-90%) [ns]"),
+                        html.Td(f"{rise_stats['mean']:.1f}"),
+                        html.Td(f"{rise_stats['std']:.1f}"),
+                        html.Td(f"{rise_stats['min']:.1f}"),
+                        html.Td(f"{rise_stats['max']:.1f}"),
+                        html.Td(f"{rise_stats['median']:.1f}"),
+                    ]),
+                    html.Tr([
+                        html.Td("Dominant Frequency [MHz]"),
+                        html.Td(f"{freq_stats['mean']:.2f}"),
+                        html.Td(f"{freq_stats['std']:.2f}"),
+                        html.Td(f"{freq_stats['min']:.2f}"),
+                        html.Td(f"{freq_stats['max']:.2f}"),
+                        html.Td(f"{freq_stats['median']:.2f}"),
+                    ]),
+                    html.Tr([
+                        html.Td("SNR [dB]"),
+                        html.Td(f"{snr_stats['mean']:.1f}"),
+                        html.Td(f"{snr_stats['std']:.1f}"),
+                        html.Td(f"{snr_stats['min']:.1f}"),
+                        html.Td(f"{snr_stats['max']:.1f}"),
+                        html.Td(f"{snr_stats['median']:.1f}"),
+                    ]),
+                    html.Tr([
+                        html.Td("Crest Factor"),
+                        html.Td(f"{crest_stats['mean']:.2f}"),
+                        html.Td(f"{crest_stats['std']:.2f}"),
+                        html.Td(f"{crest_stats['min']:.2f}"),
+                        html.Td(f"{crest_stats['max']:.2f}"),
+                        html.Td(f"{crest_stats['median']:.2f}"),
+                    ]),
+                ]),
+            ], style={'borderCollapse': 'collapse', 'width': '100%', 'textAlign': 'center'}),
+        ])
+
     return app
 
 
@@ -1600,6 +1819,26 @@ def create_comparison_tab(loaded_data):
             html.Div(id='clicked-waveform-info', style={'marginBottom': '10px'}),
             dcc.Graph(id='clicked-waveform-plot', figure=go.Figure()),
         ], style={'backgroundColor': '#f0f8ff', 'padding': '10px', 'marginBottom': '20px'}),
+
+        # Aggregate Waveform Statistics by Band
+        html.Div([
+            html.H4("Aggregate Waveform Statistics"),
+            html.Div([
+                html.Label("Select Band:"),
+                dcc.Dropdown(
+                    id='aggregate-band-dropdown',
+                    options=[
+                        {'label': 'All Bands', 'value': 'all'},
+                        {'label': 'D1 (fast)', 'value': 'D1'},
+                        {'label': 'D2 (medium)', 'value': 'D2'},
+                        {'label': 'D3 (slow)', 'value': 'D3'},
+                    ],
+                    value='all',
+                    style={'width': '200px'},
+                ),
+            ], style={'marginBottom': '10px'}),
+            html.Div(id='aggregate-stats-display', style={'padding': '10px'}),
+        ], style={'backgroundColor': '#f5f5dc', 'padding': '10px', 'marginBottom': '20px'}),
 
         # Store for detection data (to look up waveforms on click)
         dcc.Store(id='comparison-detections-store'),
