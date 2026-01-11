@@ -941,6 +941,115 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             end = min(len(signal), peak_idx + post_samples)
             waveform = signal[start:end]
 
+            # ========== FEATURE EXTRACTION ==========
+            # These features help understand why wavelet might miss a trigger detection
+
+            # 1. Basic amplitude metrics
+            peak_amp = np.max(np.abs(waveform))
+            rms_amp = np.sqrt(np.mean(waveform**2))
+            crest_factor = peak_amp / rms_amp if rms_amp > 0 else 0
+
+            # 2. Pulse width (FWHM - Full Width at Half Maximum)
+            abs_wfm = np.abs(waveform)
+            half_max = peak_amp / 2
+            above_half = abs_wfm >= half_max
+            if np.any(above_half):
+                first_above = np.argmax(above_half)
+                last_above = len(above_half) - 1 - np.argmax(above_half[::-1])
+                fwhm_samples = last_above - first_above
+                fwhm_us = fwhm_samples / sample_rate * 1e6
+            else:
+                fwhm_samples = 0
+                fwhm_us = 0
+
+            # 3. Rise time (10% to 90% of peak)
+            thresh_10 = peak_amp * 0.1
+            thresh_90 = peak_amp * 0.9
+            peak_idx_local = np.argmax(abs_wfm)
+            # Search backward from peak for 10% crossing
+            rise_start = 0
+            for i in range(peak_idx_local, -1, -1):
+                if abs_wfm[i] <= thresh_10:
+                    rise_start = i
+                    break
+            # Search backward from peak for 90% crossing
+            rise_end = peak_idx_local
+            for i in range(peak_idx_local, -1, -1):
+                if abs_wfm[i] <= thresh_90:
+                    rise_end = i + 1
+                    break
+            rise_time_samples = rise_end - rise_start
+            rise_time_ns = rise_time_samples / sample_rate * 1e9
+
+            # 4. Dominant frequency (FFT-based)
+            try:
+                # Use FFT to find dominant frequency
+                n_fft = len(waveform)
+                fft_result = np.fft.rfft(waveform)
+                fft_freqs = np.fft.rfftfreq(n_fft, 1/sample_rate)
+                fft_magnitude = np.abs(fft_result)
+                # Ignore DC component
+                fft_magnitude[0] = 0
+                dominant_freq_idx = np.argmax(fft_magnitude)
+                dominant_freq_mhz = fft_freqs[dominant_freq_idx] / 1e6
+            except:
+                dominant_freq_mhz = 0
+
+            # 5. Band energy distribution (what % of energy in D1, D2, D3 frequency ranges)
+            # D1: highest freq (fs/4 to fs/2), D2: (fs/8 to fs/4), D3: (fs/16 to fs/8)
+            try:
+                total_energy = np.sum(fft_magnitude**2)
+                if total_energy > 0:
+                    # Define frequency bands (approximate for 125 MSPS)
+                    # D1: 31.25-62.5 MHz, D2: 15.625-31.25 MHz, D3: 7.8125-15.625 MHz
+                    d1_mask = (fft_freqs >= sample_rate/4) & (fft_freqs < sample_rate/2)
+                    d2_mask = (fft_freqs >= sample_rate/8) & (fft_freqs < sample_rate/4)
+                    d3_mask = (fft_freqs >= sample_rate/16) & (fft_freqs < sample_rate/8)
+                    low_mask = fft_freqs < sample_rate/16
+
+                    d1_energy_pct = np.sum(fft_magnitude[d1_mask]**2) / total_energy * 100
+                    d2_energy_pct = np.sum(fft_magnitude[d2_mask]**2) / total_energy * 100
+                    d3_energy_pct = np.sum(fft_magnitude[d3_mask]**2) / total_energy * 100
+                    low_energy_pct = np.sum(fft_magnitude[low_mask]**2) / total_energy * 100
+                else:
+                    d1_energy_pct = d2_energy_pct = d3_energy_pct = low_energy_pct = 0
+            except:
+                d1_energy_pct = d2_energy_pct = d3_energy_pct = low_energy_pct = 0
+
+            # 6. Actual wavelet coefficients at this location
+            try:
+                import pywt
+                # Compute DWT of waveform
+                coeffs = pywt.wavedec(waveform, 'db4', level=3)
+                # Get max coefficient in each band
+                d1_coeff_max = np.max(np.abs(coeffs[-1])) if len(coeffs) > 1 else 0
+                d2_coeff_max = np.max(np.abs(coeffs[-2])) if len(coeffs) > 2 else 0
+                d3_coeff_max = np.max(np.abs(coeffs[-3])) if len(coeffs) > 3 else 0
+            except:
+                d1_coeff_max = d2_coeff_max = d3_coeff_max = 0
+
+            # 7. Kurtosis (measure of impulsiveness)
+            try:
+                from scipy.stats import kurtosis as scipy_kurtosis
+                wfm_kurtosis = scipy_kurtosis(waveform, fisher=True)
+            except:
+                # Manual calculation if scipy not available
+                mean_val = np.mean(waveform)
+                std_val = np.std(waveform)
+                if std_val > 0:
+                    wfm_kurtosis = np.mean(((waveform - mean_val) / std_val)**4) - 3
+                else:
+                    wfm_kurtosis = 0
+
+            # 8. SNR estimate (peak vs noise floor)
+            try:
+                # Estimate noise from edges of waveform (before pulse)
+                noise_region = waveform[:pre_samples//2]
+                noise_std = np.std(noise_region) if len(noise_region) > 10 else np.std(waveform)
+                snr_db = 20 * np.log10(peak_amp / noise_std) if noise_std > 0 else 0
+            except:
+                snr_db = 0
+
             # Create time axis in microseconds (centered on peak)
             time_us = (np.arange(len(waveform)) - pre_samples) / sample_rate * 1e6
 
@@ -964,15 +1073,66 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 yaxis_title='Amplitude',
             )
 
-            # Build info text
+            # Build comprehensive info text with features
             info_items = [
                 html.Strong(f"{detection_type}"),
                 html.P(f"Sample Index: {sample_index:,}"),
                 html.P(f"Phase: {phase:.1f}°"),
-                html.P(f"Peak Amplitude: {clicked_amp:.4e}"),
             ]
             if band != 'N/A':
-                info_items.insert(2, html.P(f"Band: {band}"))
+                info_items.append(html.P(f"Band: {band}"))
+
+            # Add feature analysis section
+            info_items.extend([
+                html.Hr(),
+                html.Strong("Pulse Characteristics:"),
+                html.P(f"Peak Amplitude: {peak_amp:.4e}"),
+                html.P(f"Pulse Width (FWHM): {fwhm_us:.2f} µs ({fwhm_samples} samples)"),
+                html.P(f"Rise Time (10-90%): {rise_time_ns:.1f} ns"),
+                html.P(f"Dominant Frequency: {dominant_freq_mhz:.2f} MHz"),
+                html.Hr(),
+                html.Strong("Quality Metrics:"),
+                html.P(f"Crest Factor: {crest_factor:.1f}"),
+                html.P(f"Kurtosis: {wfm_kurtosis:.1f}"),
+                html.P(f"SNR: {snr_db:.1f} dB"),
+                html.Hr(),
+                html.Strong("Band Energy Distribution:"),
+                html.P(f"D1 (high freq): {d1_energy_pct:.1f}%"),
+                html.P(f"D2 (medium): {d2_energy_pct:.1f}%"),
+                html.P(f"D3 (low freq): {d3_energy_pct:.1f}%"),
+                html.P(f"Below D3: {low_energy_pct:.1f}%"),
+                html.Hr(),
+                html.Strong("Wavelet Coefficients (max):"),
+                html.P(f"D1 coeff: {d1_coeff_max:.4e}"),
+                html.P(f"D2 coeff: {d2_coeff_max:.4e}"),
+                html.P(f"D3 coeff: {d3_coeff_max:.4e}"),
+            ])
+
+            # Add explanation for trigger-only detections
+            if detection_type == 'Trigger Only':
+                info_items.extend([
+                    html.Hr(),
+                    html.Strong("Why Wavelet Missed:", style={'color': 'red'}),
+                ])
+                # Analyze why wavelet might have missed this
+                reasons = []
+                if d1_energy_pct < 10 and d2_energy_pct < 10 and d3_energy_pct < 10:
+                    reasons.append("Most energy below D3 band (too slow)")
+                if fwhm_us > 5:
+                    reasons.append(f"Pulse too wide ({fwhm_us:.1f}µs > 5µs)")
+                if crest_factor < 3:
+                    reasons.append(f"Low crest factor ({crest_factor:.1f} < 3)")
+                if snr_db < 10:
+                    reasons.append(f"Low SNR ({snr_db:.1f}dB < 10dB)")
+                if max(d1_coeff_max, d2_coeff_max, d3_coeff_max) < peak_amp * 0.1:
+                    reasons.append("Wavelet coefficients below threshold")
+
+                if reasons:
+                    for reason in reasons:
+                        info_items.append(html.P(f"• {reason}", style={'color': 'red'}))
+                else:
+                    info_items.append(html.P("• Coefficients likely just below detection threshold"))
+
             info_text = html.Div(info_items)
 
             return wfm_fig, info_text
