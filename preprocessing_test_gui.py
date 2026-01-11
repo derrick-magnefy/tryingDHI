@@ -696,6 +696,28 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             band_matches = sum(1 for m in matched_info if m['band_match'])
             band_mismatches = len(matched_info) - band_matches
 
+            # Aggregate band statistics (total unique events per band)
+            # For matched: count by trigger band (since both detected same event)
+            matched_d1 = sum(1 for m in matched_info if m['t_band'] == 'D1')
+            matched_d2 = sum(1 for m in matched_info if m['t_band'] == 'D2')
+            matched_d3 = sum(1 for m in matched_info if m['t_band'] == 'D3')
+
+            # For trigger-only: count by estimated band
+            trig_only_d1 = sum(1 for t in trigger_only if t['band'] == 'D1')
+            trig_only_d2 = sum(1 for t in trigger_only if t['band'] == 'D2')
+            trig_only_d3 = sum(1 for t in trigger_only if t['band'] == 'D3')
+
+            # For wavelet-only: count by wavelet band
+            wav_only_d1 = sum(1 for _, e in wavelet_only if e.band == 'D1')
+            wav_only_d2 = sum(1 for _, e in wavelet_only if e.band == 'D2')
+            wav_only_d3 = sum(1 for _, e in wavelet_only if e.band == 'D3')
+
+            # Total unique events per band
+            total_d1 = matched_d1 + trig_only_d1 + wav_only_d1
+            total_d2 = matched_d2 + trig_only_d2 + wav_only_d2
+            total_d3 = matched_d3 + trig_only_d3 + wav_only_d3
+            total_all = total_d1 + total_d2 + total_d3
+
             results_div = html.Div([
                 html.H4("Detection Comparison"),
                 html.Hr(),
@@ -722,18 +744,61 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     ], style={'width': '45%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '5%'}),
                 ]),
                 html.Hr(),
+                html.H5("Aggregate Band Statistics"),
+                html.P([html.Strong("Total Unique Events: "), f"{total_all}"]),
+                html.Div([
+                    html.Table([
+                        html.Thead(html.Tr([
+                            html.Th("Band"),
+                            html.Th("Matched"),
+                            html.Th("Trig Only"),
+                            html.Th("Wav Only"),
+                            html.Th("Total"),
+                            html.Th("%"),
+                        ])),
+                        html.Tbody([
+                            html.Tr([
+                                html.Td("D1 (fast)"),
+                                html.Td(str(matched_d1)),
+                                html.Td(str(trig_only_d1)),
+                                html.Td(str(wav_only_d1)),
+                                html.Td(html.Strong(str(total_d1))),
+                                html.Td(f"{100*total_d1/total_all:.1f}%" if total_all > 0 else "0%"),
+                            ]),
+                            html.Tr([
+                                html.Td("D2 (medium)"),
+                                html.Td(str(matched_d2)),
+                                html.Td(str(trig_only_d2)),
+                                html.Td(str(wav_only_d2)),
+                                html.Td(html.Strong(str(total_d2))),
+                                html.Td(f"{100*total_d2/total_all:.1f}%" if total_all > 0 else "0%"),
+                            ]),
+                            html.Tr([
+                                html.Td("D3 (slow)"),
+                                html.Td(str(matched_d3)),
+                                html.Td(str(trig_only_d3)),
+                                html.Td(str(wav_only_d3)),
+                                html.Td(html.Strong(str(total_d3))),
+                                html.Td(f"{100*total_d3/total_all:.1f}%" if total_all > 0 else "0%"),
+                            ]),
+                            html.Tr([
+                                html.Td(html.Strong("Total")),
+                                html.Td(html.Strong(str(len(matched_info)))),
+                                html.Td(html.Strong(str(len(trigger_only)))),
+                                html.Td(html.Strong(str(len(wavelet_only)))),
+                                html.Td(html.Strong(str(total_all))),
+                                html.Td("100%"),
+                            ], style={'borderTop': '2px solid black'}),
+                        ]),
+                    ], style={'borderCollapse': 'collapse', 'width': '100%', 'textAlign': 'center'}),
+                ], style={'marginBottom': '15px'}),
+                html.Hr(),
                 html.H5("Comparison Metrics"),
                 html.P([html.Strong("Matched (▲ green): "), f"{len(matched_info)} detections"]),
                 html.P([html.Strong("  Band agreement: "), f"{band_matches} ({100*band_matches/len(matched_info):.0f}%)" if matched_info else "N/A"]),
                 html.P([html.Strong("  Band mismatch: "), f"{band_mismatches}"]),
                 html.P([html.Strong("Trigger-only (● red): "), f"{len(trigger_only)} detections"]),
-                html.P([html.Strong("  D1: "), f"{sum(1 for t in trigger_only if t['band'] == 'D1')}"]),
-                html.P([html.Strong("  D2: "), f"{sum(1 for t in trigger_only if t['band'] == 'D2')}"]),
-                html.P([html.Strong("  D3: "), f"{sum(1 for t in trigger_only if t['band'] == 'D3')}"]),
                 html.P([html.Strong("Wavelet-only: "), f"{len(wavelet_only)} total"]),
-                html.P([html.Strong("  ◆ D1 (cyan): "), f"{sum(1 for _, e in wavelet_only if e.band == 'D1')}"]),
-                html.P([html.Strong("  ✕ D2 (blue): "), f"{sum(1 for _, e in wavelet_only if e.band == 'D2')}"]),
-                html.P([html.Strong("  ■ D3 (purple): "), f"{sum(1 for _, e in wavelet_only if e.band == 'D3')}"]),
             ])
 
             # Detection comparison plot - Phase-resolved (sinusoidal format)
