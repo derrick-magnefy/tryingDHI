@@ -986,8 +986,22 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     fft_magnitude[0] = 0  # Ignore DC
                     dominant_freq_idx = np.argmax(fft_magnitude)
                     dominant_freq_mhz = fft_freqs[dominant_freq_idx] / 1e6
+
+                    # Band energy percentages (at 125 MSPS: D1=31.25-62.5, D2=15.625-31.25, D3=7.8125-15.625)
+                    total_energy = np.sum(fft_magnitude**2)
+                    if total_energy > 0:
+                        d1_mask = (fft_freqs >= sample_rate/4) & (fft_freqs < sample_rate/2)
+                        d2_mask = (fft_freqs >= sample_rate/8) & (fft_freqs < sample_rate/4)
+                        d3_mask = (fft_freqs >= sample_rate/16) & (fft_freqs < sample_rate/8)
+
+                        d1_energy_pct = np.sum(fft_magnitude[d1_mask]**2) / total_energy * 100
+                        d2_energy_pct = np.sum(fft_magnitude[d2_mask]**2) / total_energy * 100
+                        d3_energy_pct = np.sum(fft_magnitude[d3_mask]**2) / total_energy * 100
+                    else:
+                        d1_energy_pct = d2_energy_pct = d3_energy_pct = 0
                 except:
                     dominant_freq_mhz = 0
+                    d1_energy_pct = d2_energy_pct = d3_energy_pct = 0
 
                 # SNR estimate
                 noise_samples = min(30, len(waveform) // 4)
@@ -1004,6 +1018,9 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     'fwhm_us': float(fwhm_us),
                     'rise_time_ns': float(rise_time_ns),
                     'dominant_freq_mhz': float(dominant_freq_mhz),
+                    'd1_energy_pct': float(d1_energy_pct),
+                    'd2_energy_pct': float(d2_energy_pct),
+                    'd3_energy_pct': float(d3_energy_pct),
                     'snr_db': float(snr_db),
                 }
 
@@ -1522,6 +1539,9 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             freq_stats = compute_stats([f['dominant_freq_mhz'] for f in features])
             snr_stats = compute_stats([f['snr_db'] for f in features])
             crest_stats = compute_stats([f['crest_factor'] for f in features])
+            d1_energy_stats = compute_stats([f.get('d1_energy_pct', 0) for f in features])
+            d2_energy_stats = compute_stats([f.get('d2_energy_pct', 0) for f in features])
+            d3_energy_stats = compute_stats([f.get('d3_energy_pct', 0) for f in features])
 
             return html.Div([
                 html.H5(f"{band_name} ({len(features)} waveforms)"),
@@ -1567,6 +1587,30 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                             html.Td(f"{freq_stats['min']:.2f}"),
                             html.Td(f"{freq_stats['max']:.2f}"),
                             html.Td(f"{freq_stats['median']:.2f}"),
+                        ]),
+                        html.Tr([
+                            html.Td("D1 Energy (31-62 MHz) [%]"),
+                            html.Td(f"{d1_energy_stats['mean']:.1f}"),
+                            html.Td(f"{d1_energy_stats['std']:.1f}"),
+                            html.Td(f"{d1_energy_stats['min']:.1f}"),
+                            html.Td(f"{d1_energy_stats['max']:.1f}"),
+                            html.Td(f"{d1_energy_stats['median']:.1f}"),
+                        ]),
+                        html.Tr([
+                            html.Td("D2 Energy (15-31 MHz) [%]"),
+                            html.Td(f"{d2_energy_stats['mean']:.1f}"),
+                            html.Td(f"{d2_energy_stats['std']:.1f}"),
+                            html.Td(f"{d2_energy_stats['min']:.1f}"),
+                            html.Td(f"{d2_energy_stats['max']:.1f}"),
+                            html.Td(f"{d2_energy_stats['median']:.1f}"),
+                        ]),
+                        html.Tr([
+                            html.Td("D3 Energy (7-15 MHz) [%]"),
+                            html.Td(f"{d3_energy_stats['mean']:.1f}"),
+                            html.Td(f"{d3_energy_stats['std']:.1f}"),
+                            html.Td(f"{d3_energy_stats['min']:.1f}"),
+                            html.Td(f"{d3_energy_stats['max']:.1f}"),
+                            html.Td(f"{d3_energy_stats['median']:.1f}"),
                         ]),
                         html.Tr([
                             html.Td("SNR [dB]"),
