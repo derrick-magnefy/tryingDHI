@@ -45,6 +45,15 @@ except ImportError as e:
     PREPROCESSING_AVAILABLE = False
     print(f"Preprocessing modules not available: {e}")
 
+# Import pdlib clustering/classification modules for validation
+try:
+    from pdlib.clustering import cluster_pulses, compute_cluster_features
+    from pdlib.classification import PDTypeClassifier
+    PDLIB_AVAILABLE = True
+except ImportError as e:
+    PDLIB_AVAILABLE = False
+    print(f"PDLib modules not available: {e}")
+
 # Default data directory
 DEFAULT_DATA_DIR = "IEEE Data"
 
@@ -1642,6 +1651,312 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
 
         return html.Div(bands_display)
 
+    # Callback for wavelet-only validation using HDBScan + Decision Tree
+    @app.callback(
+        Output('validation-results', 'children'),
+        [Input('validate-wavelet-btn', 'n_clicks')],
+        [State('comparison-detections-store', 'data'),
+         State('loaded-data-store', 'data')]
+    )
+    def validate_wavelet_only(n_clicks, detection_store, loaded_data):
+        """
+        Validate wavelet-only detections using the main PD GUI's classification pipeline:
+        1. Extract features from wavelet-only waveforms
+        2. Run HDBScan clustering
+        3. Compute cluster features
+        4. Run Decision Tree classification
+        """
+        if not n_clicks or not detection_store or not loaded_data:
+            raise PreventUpdate
+
+        if not PDLIB_AVAILABLE:
+            return html.Div("PDLib modules not available. Cannot run validation.", style={'color': 'red'})
+
+        try:
+            # Get wavelet-only detections from all bands
+            wav_d1 = detection_store.get('wavelet_d1_detections', [])
+            wav_d2 = detection_store.get('wavelet_d2_detections', [])
+            wav_d3 = detection_store.get('wavelet_d3_detections', [])
+            all_wavelet_only = wav_d1 + wav_d2 + wav_d3
+
+            if not all_wavelet_only:
+                return html.Div("No wavelet-only detections to validate.", style={'color': 'orange'})
+
+            # Load signal for feature extraction
+            filepath = detection_store['filepath']
+            channel = detection_store.get('channel', 'Ch1')
+            sample_rate = detection_store['sample_rate']
+            band_windows = detection_store.get('band_windows', {})
+            ac_frequency = loaded_data.get('ac_frequency', 60)
+
+            loader = MatLoader(filepath)
+            data = loader.load_channel(channel)
+            signal = data['signal']
+
+            # Extract waveforms and compute features for each wavelet-only detection
+            feature_names = [
+                'peak_amplitude', 'rms_amplitude', 'crest_factor', 'pulse_width_us',
+                'rise_time_ns', 'dominant_freq_mhz', 'snr_db',
+                'd1_energy_pct', 'd2_energy_pct', 'd3_energy_pct'
+            ]
+
+            features_list = []
+            phases_list = []
+            amplitudes_list = []
+
+            for det in all_wavelet_only:
+                sample_index = det['index']
+                phase = det.get('phase', 0)
+                band = det.get('band', 'D2')
+
+                # Get band-specific window
+                if band in band_windows:
+                    pre_samples = band_windows[band]['pre']
+                    post_samples = band_windows[band]['post']
+                else:
+                    pre_samples = 40
+                    post_samples = 85
+
+                # Find peak and extract centered waveform
+                search_start = max(0, sample_index - 25)
+                search_end = min(len(signal), sample_index + 100)
+                search_region = signal[search_start:search_end]
+                peak_offset = np.argmax(np.abs(search_region))
+                peak_idx = search_start + peak_offset
+
+                start = max(0, peak_idx - pre_samples)
+                end = min(len(signal), peak_idx + post_samples)
+                waveform = signal[start:end]
+
+                if len(waveform) < 20:
+                    continue
+
+                # Compute features (same as clicked waveform)
+                peak_amp = np.max(np.abs(waveform))
+                rms_amp = np.sqrt(np.mean(waveform**2))
+                crest_factor = peak_amp / rms_amp if rms_amp > 0 else 0
+
+                # Pulse width (FWHM)
+                abs_wfm = np.abs(waveform)
+                half_max = peak_amp / 2
+                above_half = abs_wfm >= half_max
+                if np.any(above_half):
+                    first_above = np.argmax(above_half)
+                    last_above = len(above_half) - 1 - np.argmax(above_half[::-1])
+                    fwhm_samples = last_above - first_above
+                    fwhm_us = fwhm_samples / sample_rate * 1e6
+                else:
+                    fwhm_us = 0
+
+                # Rise time (10-90%)
+                peak_idx_local = np.argmax(abs_wfm)
+                pre_pulse_end = max(0, peak_idx_local - 20)
+                if pre_pulse_end > 10:
+                    noise_floor = np.percentile(abs_wfm[:pre_pulse_end], 90)
+                else:
+                    noise_floor = 0
+                signal_range = peak_amp - noise_floor
+                thresh_10 = noise_floor + signal_range * 0.1
+                thresh_90 = noise_floor + signal_range * 0.9
+
+                rise_end = peak_idx_local
+                for i in range(peak_idx_local, -1, -1):
+                    if abs_wfm[i] <= thresh_90:
+                        rise_end = i + 1
+                        break
+                rise_start = 0
+                for i in range(rise_end, -1, -1):
+                    if abs_wfm[i] <= thresh_10:
+                        rise_start = i
+                        break
+                    if rise_end - i > 50:
+                        rise_start = i
+                        break
+                rise_time_ns = (rise_end - rise_start) / sample_rate * 1e9
+
+                # Frequency analysis
+                try:
+                    pulse_analysis_samples = int(2e-6 * sample_rate)
+                    pulse_half = pulse_analysis_samples // 2
+                    pulse_start = max(0, peak_idx_local - pulse_half)
+                    pulse_end = min(len(waveform), peak_idx_local + pulse_half)
+                    pulse_region = waveform[pulse_start:pulse_end]
+
+                    n_fft = len(pulse_region)
+                    fft_result = np.fft.rfft(pulse_region)
+                    fft_freqs = np.fft.rfftfreq(n_fft, 1/sample_rate)
+                    fft_magnitude = np.abs(fft_result)
+                    fft_magnitude[0] = 0
+                    dominant_freq_idx = np.argmax(fft_magnitude)
+                    dominant_freq_mhz = fft_freqs[dominant_freq_idx] / 1e6
+
+                    # Band energy
+                    total_energy = np.sum(fft_magnitude**2)
+                    if total_energy > 0:
+                        d1_mask = (fft_freqs >= sample_rate/4) & (fft_freqs < sample_rate/2)
+                        d2_mask = (fft_freqs >= sample_rate/8) & (fft_freqs < sample_rate/4)
+                        d3_mask = (fft_freqs >= sample_rate/16) & (fft_freqs < sample_rate/8)
+                        d1_energy_pct = np.sum(fft_magnitude[d1_mask]**2) / total_energy * 100
+                        d2_energy_pct = np.sum(fft_magnitude[d2_mask]**2) / total_energy * 100
+                        d3_energy_pct = np.sum(fft_magnitude[d3_mask]**2) / total_energy * 100
+                    else:
+                        d1_energy_pct = d2_energy_pct = d3_energy_pct = 0
+                except:
+                    dominant_freq_mhz = 0
+                    d1_energy_pct = d2_energy_pct = d3_energy_pct = 0
+
+                # SNR
+                noise_samples = min(50, pre_samples // 2)
+                noise_region = waveform[:noise_samples] if len(waveform) > noise_samples else waveform
+                noise_std = np.std(noise_region) if len(noise_region) > 5 else 1e-10
+                snr_db = 20 * np.log10(peak_amp / noise_std) if noise_std > 0 else 0
+
+                # Build feature vector
+                features = np.array([
+                    peak_amp, rms_amp, crest_factor, fwhm_us,
+                    rise_time_ns, dominant_freq_mhz, snr_db,
+                    d1_energy_pct, d2_energy_pct, d3_energy_pct
+                ])
+
+                features_list.append(features)
+                phases_list.append(phase)
+                amplitudes_list.append(peak_amp)
+
+            if len(features_list) < 5:
+                return html.Div(f"Only {len(features_list)} valid wavelet-only detections. Need at least 5 for clustering.", style={'color': 'orange'})
+
+            # Convert to numpy arrays
+            features_matrix = np.array(features_list)
+            phases = np.array(phases_list)
+            amplitudes = np.array(amplitudes_list)
+
+            # Run HDBScan clustering (same defaults as main PD GUI)
+            labels, cluster_info = cluster_pulses(
+                features_matrix,
+                feature_names,
+                method='hdbscan',
+                min_samples=5,
+                min_cluster_size=5
+            )
+
+            n_clusters = cluster_info['n_clusters']
+            n_noise = cluster_info['n_noise']
+
+            # Compute cluster features
+            cluster_features_dict = compute_cluster_features(
+                features_matrix=features_matrix,
+                feature_names=feature_names,
+                labels=labels,
+                trigger_times=None,
+                ac_frequency=ac_frequency
+            )
+
+            # Run Decision Tree classification
+            classifier = PDTypeClassifier(verbose=False)
+            classifications = []
+
+            for cluster_label in sorted(cluster_features_dict.keys()):
+                result = classifier.classify(
+                    cluster_features_dict[cluster_label],
+                    int(cluster_label)
+                )
+                n_in_cluster = np.sum(labels == cluster_label)
+                classifications.append({
+                    'cluster': cluster_label,
+                    'pd_type': result['pd_type'],
+                    'confidence': result.get('confidence', 0),
+                    'n_pulses': int(n_in_cluster),
+                    'reasoning': result.get('reasoning', []),
+                })
+
+            # Build results display
+            results_children = [
+                html.H5(f"Validation Results: {len(all_wavelet_only)} wavelet-only detections"),
+                html.P(f"Clustering: {n_clusters} clusters, {n_noise} noise points ({n_noise*100//len(labels) if len(labels) > 0 else 0}% noise)"),
+                html.Hr(),
+            ]
+
+            # Summary counts by PD type
+            type_counts = {}
+            for c in classifications:
+                pd_type = c['pd_type']
+                n_pulses = c['n_pulses']
+                type_counts[pd_type] = type_counts.get(pd_type, 0) + n_pulses
+
+            summary_rows = []
+            for pd_type, count in sorted(type_counts.items(), key=lambda x: -x[1]):
+                pct = count * 100 / len(features_list) if len(features_list) > 0 else 0
+                color = 'gray' if pd_type == 'NOISE' else ('green' if pd_type in ['CORONA', 'INTERNAL', 'SURFACE'] else 'orange')
+                summary_rows.append(html.Tr([
+                    html.Td(pd_type, style={'color': color, 'fontWeight': 'bold'}),
+                    html.Td(f"{count}"),
+                    html.Td(f"{pct:.1f}%"),
+                ]))
+
+            results_children.append(html.H6("Classification Summary"))
+            results_children.append(html.Table([
+                html.Thead(html.Tr([
+                    html.Th("PD Type"),
+                    html.Th("Count"),
+                    html.Th("Percentage"),
+                ])),
+                html.Tbody(summary_rows),
+            ], style={'borderCollapse': 'collapse', 'marginBottom': '15px'}))
+
+            # Per-cluster details
+            results_children.append(html.H6("Cluster Details"))
+            cluster_rows = []
+            for c in classifications:
+                cluster_label = c['cluster']
+                pd_type = c['pd_type']
+                confidence = c['confidence']
+                n_pulses = c['n_pulses']
+                color = 'gray' if pd_type == 'NOISE' else ('green' if pd_type in ['CORONA', 'INTERNAL', 'SURFACE'] else 'orange')
+
+                cluster_rows.append(html.Tr([
+                    html.Td(f"{'NOISE' if cluster_label == -1 else cluster_label}"),
+                    html.Td(f"{n_pulses}"),
+                    html.Td(pd_type, style={'color': color}),
+                    html.Td(f"{confidence:.2f}" if confidence else "N/A"),
+                ]))
+
+            results_children.append(html.Table([
+                html.Thead(html.Tr([
+                    html.Th("Cluster"),
+                    html.Th("Pulses"),
+                    html.Th("Classification"),
+                    html.Th("Confidence"),
+                ])),
+                html.Tbody(cluster_rows),
+            ], style={'borderCollapse': 'collapse'}))
+
+            # Interpretation
+            noise_pct = type_counts.get('NOISE', 0) * 100 / len(features_list) if len(features_list) > 0 else 0
+            if noise_pct > 80:
+                interpretation = "Most wavelet-only detections are classified as NOISE. The trigger threshold appears well-calibrated."
+                interp_color = 'green'
+            elif noise_pct > 50:
+                interpretation = "Majority classified as NOISE, but some potential PD activity detected below trigger threshold."
+                interp_color = 'orange'
+            else:
+                interpretation = "Significant potential PD activity below trigger threshold! Consider lowering trigger threshold."
+                interp_color = 'red'
+
+            results_children.append(html.Hr())
+            results_children.append(html.P([
+                html.Strong("Interpretation: "),
+                html.Span(interpretation, style={'color': interp_color})
+            ]))
+
+            return html.Div(results_children)
+
+        except Exception as e:
+            import traceback
+            return html.Div([
+                html.P(f"Validation error: {str(e)}", style={'color': 'red'}),
+                html.Pre(traceback.format_exc(), style={'fontSize': '10px'}),
+            ])
+
     return app
 
 
@@ -1876,6 +2191,20 @@ def create_comparison_tab(loaded_data):
             html.H4("Aggregate Waveform Statistics"),
             html.Div(id='aggregate-stats-display', style={'padding': '10px'}),
         ], style={'backgroundColor': '#f5f5dc', 'padding': '10px', 'marginBottom': '20px'}),
+
+        # Wavelet-Only Validation Section
+        html.Div([
+            html.H4("Wavelet-Only Detection Validation"),
+            html.P("Validate wavelet-only detections using HDBScan clustering + Decision Tree classification from main PD GUI."),
+            html.Button(
+                "Validate Wavelet-Only Detections",
+                id='validate-wavelet-btn',
+                n_clicks=0,
+                style={'padding': '10px 20px', 'marginBottom': '10px'},
+                disabled=not PDLIB_AVAILABLE,
+            ),
+            html.Div(id='validation-results', style={'padding': '10px', 'marginTop': '10px'}),
+        ], style={'backgroundColor': '#ffe4e1', 'padding': '10px', 'marginBottom': '20px'}),
 
         # Store for detection data (to look up waveforms on click)
         dcc.Store(id='comparison-detections-store'),
