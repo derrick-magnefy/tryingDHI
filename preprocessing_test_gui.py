@@ -49,6 +49,7 @@ except ImportError as e:
 try:
     from pdlib.clustering import cluster_pulses, compute_cluster_features
     from pdlib.classification import PDTypeClassifier
+    from pdlib.features import PDFeatureExtractor, FEATURE_NAMES
     PDLIB_AVAILABLE = True
 except ImportError as e:
     PDLIB_AVAILABLE = False
@@ -1661,7 +1662,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
     def validate_wavelet_only(n_clicks, detection_store, loaded_data):
         """
         Validate wavelet-only detections using the main PD GUI's classification pipeline:
-        1. Extract features from wavelet-only waveforms
+        1. Extract features from wavelet-only waveforms using PDFeatureExtractor
         2. Run HDBScan clustering
         3. Compute cluster features
         4. Run Decision Tree classification
@@ -1693,18 +1694,16 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             data = loader.load_channel(channel)
             signal = data['signal']
 
-            # Extract waveforms and compute features for each wavelet-only detection
-            # NOTE: phase_angle is REQUIRED by compute_cluster_features for PRPD analysis
-            feature_names = [
-                'phase_angle',  # Required for PRPD features
-                'peak_amplitude', 'rms_amplitude', 'crest_factor', 'pulse_width_us',
-                'rise_time_ns', 'dominant_freq_mhz', 'snr_db',
-                'd1_energy_pct', 'd2_energy_pct', 'd3_energy_pct'
-            ]
+            # Initialize PDFeatureExtractor (same as main PD GUI)
+            sample_interval = 1.0 / sample_rate
+            extractor = PDFeatureExtractor(
+                sample_interval=sample_interval,
+                ac_frequency=ac_frequency
+            )
 
-            features_list = []
+            # Extract waveforms for each wavelet-only detection
+            waveforms = []
             phases_list = []
-            amplitudes_list = []
 
             for det in all_wavelet_only:
                 sample_index = det['index']
@@ -1733,110 +1732,26 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 if len(waveform) < 20:
                     continue
 
-                # Compute features (same as clicked waveform)
-                peak_amp = np.max(np.abs(waveform))
-                rms_amp = np.sqrt(np.mean(waveform**2))
-                crest_factor = peak_amp / rms_amp if rms_amp > 0 else 0
-
-                # Pulse width (FWHM)
-                abs_wfm = np.abs(waveform)
-                half_max = peak_amp / 2
-                above_half = abs_wfm >= half_max
-                if np.any(above_half):
-                    first_above = np.argmax(above_half)
-                    last_above = len(above_half) - 1 - np.argmax(above_half[::-1])
-                    fwhm_samples = last_above - first_above
-                    fwhm_us = fwhm_samples / sample_rate * 1e6
-                else:
-                    fwhm_us = 0
-
-                # Rise time (10-90%)
-                peak_idx_local = np.argmax(abs_wfm)
-                pre_pulse_end = max(0, peak_idx_local - 20)
-                if pre_pulse_end > 10:
-                    noise_floor = np.percentile(abs_wfm[:pre_pulse_end], 90)
-                else:
-                    noise_floor = 0
-                signal_range = peak_amp - noise_floor
-                thresh_10 = noise_floor + signal_range * 0.1
-                thresh_90 = noise_floor + signal_range * 0.9
-
-                rise_end = peak_idx_local
-                for i in range(peak_idx_local, -1, -1):
-                    if abs_wfm[i] <= thresh_90:
-                        rise_end = i + 1
-                        break
-                rise_start = 0
-                for i in range(rise_end, -1, -1):
-                    if abs_wfm[i] <= thresh_10:
-                        rise_start = i
-                        break
-                    if rise_end - i > 50:
-                        rise_start = i
-                        break
-                rise_time_ns = (rise_end - rise_start) / sample_rate * 1e9
-
-                # Frequency analysis
-                try:
-                    pulse_analysis_samples = int(2e-6 * sample_rate)
-                    pulse_half = pulse_analysis_samples // 2
-                    pulse_start = max(0, peak_idx_local - pulse_half)
-                    pulse_end = min(len(waveform), peak_idx_local + pulse_half)
-                    pulse_region = waveform[pulse_start:pulse_end]
-
-                    n_fft = len(pulse_region)
-                    fft_result = np.fft.rfft(pulse_region)
-                    fft_freqs = np.fft.rfftfreq(n_fft, 1/sample_rate)
-                    fft_magnitude = np.abs(fft_result)
-                    fft_magnitude[0] = 0
-                    dominant_freq_idx = np.argmax(fft_magnitude)
-                    dominant_freq_mhz = fft_freqs[dominant_freq_idx] / 1e6
-
-                    # Band energy
-                    total_energy = np.sum(fft_magnitude**2)
-                    if total_energy > 0:
-                        d1_mask = (fft_freqs >= sample_rate/4) & (fft_freqs < sample_rate/2)
-                        d2_mask = (fft_freqs >= sample_rate/8) & (fft_freqs < sample_rate/4)
-                        d3_mask = (fft_freqs >= sample_rate/16) & (fft_freqs < sample_rate/8)
-                        d1_energy_pct = np.sum(fft_magnitude[d1_mask]**2) / total_energy * 100
-                        d2_energy_pct = np.sum(fft_magnitude[d2_mask]**2) / total_energy * 100
-                        d3_energy_pct = np.sum(fft_magnitude[d3_mask]**2) / total_energy * 100
-                    else:
-                        d1_energy_pct = d2_energy_pct = d3_energy_pct = 0
-                except:
-                    dominant_freq_mhz = 0
-                    d1_energy_pct = d2_energy_pct = d3_energy_pct = 0
-
-                # SNR
-                noise_samples = min(50, pre_samples // 2)
-                noise_region = waveform[:noise_samples] if len(waveform) > noise_samples else waveform
-                noise_std = np.std(noise_region) if len(noise_region) > 5 else 1e-10
-                snr_db = 20 * np.log10(peak_amp / noise_std) if noise_std > 0 else 0
-
-                # Build feature vector (phase_angle must be first to match feature_names)
-                features = np.array([
-                    phase,  # phase_angle - required for PRPD
-                    peak_amp, rms_amp, crest_factor, fwhm_us,
-                    rise_time_ns, dominant_freq_mhz, snr_db,
-                    d1_energy_pct, d2_energy_pct, d3_energy_pct
-                ])
-
-                features_list.append(features)
+                waveforms.append(waveform)
                 phases_list.append(phase)
-                amplitudes_list.append(peak_amp)
 
-            if len(features_list) < 5:
-                return html.Div(f"Only {len(features_list)} valid wavelet-only detections. Need at least 5 for clustering.", style={'color': 'orange'})
+            if len(waveforms) < 5:
+                return html.Div(f"Only {len(waveforms)} valid wavelet-only detections. Need at least 5 for clustering.", style={'color': 'orange'})
 
-            # Convert to numpy arrays
-            features_matrix = np.array(features_list)
-            phases = np.array(phases_list)
-            amplitudes = np.array(amplitudes_list)
+            # Use PDFeatureExtractor to extract all features (same as main PD GUI)
+            all_features = extractor.extract_all(waveforms, phase_angles=phases_list, normalize=True)
+
+            # Convert to feature matrix using FEATURE_NAMES from pdlib
+            features_matrix = np.array([
+                [feat.get(name, 0.0) for name in FEATURE_NAMES]
+                for feat in all_features
+            ])
 
             # Run HDBScan clustering (same defaults as main PD GUI)
+            # Use FEATURE_NAMES from pdlib for consistency
             labels, cluster_info = cluster_pulses(
                 features_matrix,
-                feature_names,
+                FEATURE_NAMES,  # Use pdlib's feature names
                 method='hdbscan',
                 min_samples=5,
                 min_cluster_size=5
@@ -1845,10 +1760,10 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             n_clusters = cluster_info['n_clusters']
             n_noise = cluster_info['n_noise']
 
-            # Compute cluster features
+            # Compute cluster features using pdlib's FEATURE_NAMES
             cluster_features_dict = compute_cluster_features(
                 features_matrix=features_matrix,
-                feature_names=feature_names,
+                feature_names=FEATURE_NAMES,  # Use pdlib's feature names
                 labels=labels,
                 trigger_times=None,
                 ac_frequency=ac_frequency
@@ -1888,7 +1803,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
 
             summary_rows = []
             for pd_type, count in sorted(type_counts.items(), key=lambda x: -x[1]):
-                pct = count * 100 / len(features_list) if len(features_list) > 0 else 0
+                pct = count * 100 / len(waveforms) if len(waveforms) > 0 else 0
                 color = 'gray' if pd_type == 'NOISE' else ('green' if pd_type in ['CORONA', 'INTERNAL', 'SURFACE'] else 'orange')
                 summary_rows.append(html.Tr([
                     html.Td(pd_type, style={'color': color, 'fontWeight': 'bold'}),
@@ -1934,7 +1849,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             ], style={'borderCollapse': 'collapse'}))
 
             # Interpretation
-            noise_pct = type_counts.get('NOISE', 0) * 100 / len(features_list) if len(features_list) > 0 else 0
+            noise_pct = type_counts.get('NOISE', 0) * 100 / len(waveforms) if len(waveforms) > 0 else 0
             if noise_pct > 80:
                 interpretation = "Most wavelet-only detections are classified as NOISE. The trigger threshold appears well-calibrated."
                 interp_color = 'green'
