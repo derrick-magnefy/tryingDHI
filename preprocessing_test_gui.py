@@ -1694,7 +1694,9 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             signal = data['signal']
 
             # Extract waveforms and compute features for each wavelet-only detection
+            # NOTE: phase_angle is REQUIRED by compute_cluster_features for PRPD analysis
             feature_names = [
+                'phase_angle',  # Required for PRPD features
                 'peak_amplitude', 'rms_amplitude', 'crest_factor', 'pulse_width_us',
                 'rise_time_ns', 'dominant_freq_mhz', 'snr_db',
                 'd1_energy_pct', 'd2_energy_pct', 'd3_energy_pct'
@@ -1811,8 +1813,9 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 noise_std = np.std(noise_region) if len(noise_region) > 5 else 1e-10
                 snr_db = 20 * np.log10(peak_amp / noise_std) if noise_std > 0 else 0
 
-                # Build feature vector
+                # Build feature vector (phase_angle must be first to match feature_names)
                 features = np.array([
+                    phase,  # phase_angle - required for PRPD
                     peak_amp, rms_amp, crest_factor, fwhm_us,
                     rise_time_ns, dominant_freq_mhz, snr_db,
                     d1_energy_pct, d2_energy_pct, d3_energy_pct
