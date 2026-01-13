@@ -109,7 +109,10 @@ def compute_prpd_features(
     # === PULSE COUNT FEATURES ===
     features['pulses_per_positive_halfcycle'] = len(positive_phases)
     features['pulses_per_negative_halfcycle'] = len(negative_phases)
-    features['pulses_per_cycle'] = len(positive_phases) + len(negative_phases)
+
+    # NOTE: pulses_per_cycle is computed later once we know the duration
+    # For now, store total counts which will be normalized below
+    features['total_pulse_count'] = len(positive_phases) + len(negative_phases)
 
     # === PHASE DISTRIBUTION (Hn) - Histogram of pulse counts ===
     n_bins = 36  # 10-degree bins
@@ -271,15 +274,27 @@ def compute_prpd_features(
     features['weibull_alpha'] = alpha
     features['weibull_beta'] = beta
 
-    # === REPETITION RATE ===
+    # === REPETITION RATE AND PULSES PER CYCLE ===
     if trigger_times is not None and len(trigger_times) > 1:
         duration = np.max(trigger_times) - np.min(trigger_times)
         if duration > 0:
             features['repetition_rate'] = n_pulses / duration
+            # Calculate actual pulses per AC cycle
+            n_ac_cycles = duration * ac_frequency
+            if n_ac_cycles > 0:
+                features['pulses_per_cycle'] = n_pulses / n_ac_cycles
+            else:
+                features['pulses_per_cycle'] = n_pulses
         else:
             features['repetition_rate'] = 0.0
+            features['pulses_per_cycle'] = n_pulses
     else:
         features['repetition_rate'] = n_pulses * ac_frequency / 360.0
+        # Without timing info, estimate based on typical AC cycle coverage
+        # This is a rough estimate - assume 1 second of data (~60 cycles at 60 Hz)
+        # Use the pulse count feature as a fallback but divide by estimated cycles
+        # NOTE: This is imprecise and should be updated if timing info becomes available
+        features['pulses_per_cycle'] = features['total_pulse_count']  # Fallback: use as-is
 
     # === AMPLITUDE-PHASE CORRELATION ===
     if len(phases) > 10 and len(amplitudes) > 10:

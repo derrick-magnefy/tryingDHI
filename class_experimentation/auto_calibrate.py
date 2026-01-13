@@ -43,8 +43,25 @@ class CalibrationResult:
 
     def save(self, filepath: str):
         """Save results to JSON."""
+        import numpy as np
+
+        def convert_numpy(obj):
+            """Convert numpy types to native Python types for JSON serialization."""
+            if isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy(v) for v in obj]
+            elif isinstance(obj, (np.integer, np.int64, np.int32)):
+                return int(obj)
+            elif isinstance(obj, (np.floating, np.float64, np.float32)):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            return obj
+
+        data = convert_numpy(asdict(self))
         with open(filepath, 'w') as f:
-            json.dump(asdict(self), f, indent=2)
+            json.dump(data, f, indent=2)
 
     @classmethod
     def load(cls, filepath: str) -> 'CalibrationResult':
@@ -72,25 +89,67 @@ class ClassifierCalibrator:
     # Define the parameter search space
     # Each parameter has (min, max, step) or (min, max) for continuous
     PARAM_SPACE = {
-        # Noise detection
-        'noise_detection.min_phase_entropy': (0.8, 0.99, 0.01),
-        'noise_detection.noise_score_threshold': (0.2, 0.5, 0.05),
-        'noise_detection.min_mean_snr_for_pd': (3.0, 10.0, 0.5),
+        # ===== NOISE DETECTION =====
+        # These parameters control when clusters are classified as NOISE
+        # Corona was being classified as NOISE - need to make noise detection less aggressive
 
-        # Phase spread
-        'phase_spread.surface_phase_spread_min': (10.0, 120.0, 5.0),
+        # Score threshold for noise classification
+        'noise_detection.noise_score_threshold': (0.3, 0.7, 0.05),  # Higher = fewer noise classifications
 
-        # Surface detection
-        'surface_detection.min_surface_score': (4, 12, 1),
-        'surface_detection.surface_phase_spread': (10.0, 120.0, 5.0),
-        'surface_detection.surface_max_phase_entropy': (0.4, 0.8, 0.05),
-        'surface_detection.surface_min_snr_for_focused': (4.0, 12.0, 0.5),
+        # Phase entropy: high entropy = uniform distribution = noise
+        # Corona may have moderate entropy, so threshold should be HIGH
+        'noise_detection.min_phase_entropy': (0.90, 0.99, 0.01),
 
-        # Corona/Internal
-        'corona_internal.min_corona_score': (6, 20, 1),
-        'corona_internal.min_internal_score': (6, 20, 1),
-        'corona_internal.corona_neg_max_asymmetry': (-0.9, -0.3, 0.1),
-        'corona_internal.corona_pos_min_asymmetry': (0.3, 0.9, 0.1),
+        # SNR threshold: low SNR = noise
+        # Corona/Internal should have reasonable SNR, so lower this to avoid false positives
+        'noise_detection.min_mean_snr_for_pd': (2.0, 8.0, 0.5),
+
+        # Spectral flatness: high flatness = broad spectrum = noise
+        'noise_detection.min_spectral_flatness': (0.5, 0.85, 0.05),
+
+        # Slew rate: slow slew = noise
+        'noise_detection.min_slew_rate': (5e5, 2e6, 1e5),
+
+        # Crest factor: low crest = noise
+        'noise_detection.min_crest_factor': (2.0, 5.0, 0.5),
+
+        # Pulses per cycle: too many pulses = noise
+        'noise_detection.max_pulses_per_cycle': (10.0, 50.0, 5.0),
+
+        # Amplitude CV: high variation = noise
+        'noise_detection.max_amplitude_cv': (1.0, 3.0, 0.25),
+
+        # ===== MULTIPULSE DETECTION =====
+        # Internal PD was being classified as NOISE_MULTIPULSE
+        # Need higher threshold to allow Internal PD through
+        'noise_detection.min_pulses_for_multipulse': (2, 8, 1),
+
+        # ===== PHASE SPREAD =====
+        'phase_spread.surface_phase_spread_min': (20.0, 150.0, 10.0),
+
+        # ===== SURFACE DETECTION =====
+        'surface_detection.min_surface_score': (4, 14, 1),
+        'surface_detection.surface_phase_spread': (20.0, 150.0, 10.0),
+        'surface_detection.surface_max_phase_entropy': (0.4, 0.85, 0.05),
+        'surface_detection.surface_min_snr_for_focused': (3.0, 10.0, 0.5),
+        'surface_detection.surface_max_slew_rate': (2e6, 1e7, 1e6),
+
+        # ===== CORONA DETECTION =====
+        'corona_internal.min_corona_score': (6, 25, 1),
+        'corona_internal.corona_neg_max_asymmetry': (-0.95, -0.3, 0.05),
+        'corona_internal.corona_pos_min_asymmetry': (0.3, 0.95, 0.05),
+        'corona_internal.corona_min_slew_rate': (2e7, 1e8, 1e7),
+        'corona_internal.corona_max_amp_phase_corr': (0.1, 0.5, 0.05),
+        'corona_internal.corona_max_spectral_power_low': (0.4, 0.8, 0.05),
+
+        # ===== INTERNAL DETECTION =====
+        'corona_internal.min_internal_score': (6, 25, 1),
+        'corona_internal.internal_min_asymmetry': (-0.95, -0.5, 0.05),
+        'corona_internal.internal_max_asymmetry': (0.5, 0.95, 0.05),
+        'corona_internal.internal_min_amp_phase_corr': (0.3, 0.7, 0.05),
+        'corona_internal.internal_min_spectral_power_low': (0.7, 0.95, 0.05),
+        'corona_internal.internal_min_slew_rate': (5e6, 3e7, 5e6),
+        'corona_internal.internal_max_slew_rate': (3e7, 8e7, 5e6),
     }
 
     # HDBScan parameters (separate from classifier thresholds)
