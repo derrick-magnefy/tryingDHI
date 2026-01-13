@@ -96,6 +96,11 @@ class PDTypeClassifier:
                 'min_surface_score': 8,
                 'surface_phase_spread': 30.0,  # Lowered from 120 - Surface can have narrow phase spread
                 'corona_phase_spread': 100.0,
+                # NEW: Focused PD detection - low entropy + good SNR indicates real Surface PD
+                # even with narrow phase spread (distinguishes from Corona)
+                'surface_max_phase_entropy': 0.6,  # Low entropy = focused activity
+                'surface_min_snr_for_focused': 7.0,  # Good SNR = real PD signal
+                'surface_max_slew_for_focused': 1.0e7,  # Not extremely fast like Corona
                 'surface_max_slew_rate': 5.0e6,
                 'corona_min_slew_rate': 1.0e7,
                 'surface_max_spectral_power_ratio': 0.5,
@@ -484,6 +489,15 @@ class PDTypeClassifier:
             score += 0.10
             reasons.append(f"low_mean_amp={mean_amp:.2e}")
 
+        # === FOCUSED PD PROTECTION ===
+        # If signal shows clear PD characteristics (low entropy + good SNR),
+        # reduce noise score to prevent false positives on Surface PD
+        # This is critical for narrow-phase Surface PD with moderate slew rate
+        if phase_entropy < 0.6 and mean_snr > 7.0:
+            protection = 0.20  # Subtract from noise score
+            score = max(0, score - protection)
+            reasons.append(f"focused_pd_protection: entropy={phase_entropy:.2f}, SNR={mean_snr:.1f}dB")
+
         return score, reasons
 
     def _compute_surface_score(
@@ -497,10 +511,27 @@ class PDTypeClassifier:
         score = 0
         indicators = []
 
-        # Primary: phase spread (activity across phases)
+        # Primary 1: phase spread (wide activity across phases)
         if phase_spread > cfg['surface_phase_spread']:
             score += weights['primary']
             indicators.append(f"phase_spread={phase_spread:.1f}°")
+
+        # Primary 2: Focused high-quality PD detection
+        # Low phase entropy + Good SNR + Moderate slew = real Surface PD
+        # This catches narrow-phase Surface PD that would otherwise look like Corona
+        phase_entropy = self._get_feature(features, 'phase_entropy', 1.0)
+        mean_snr = self._get_feature(features, 'mean_signal_to_noise_ratio',
+                                     self._get_feature(features, 'signal_to_noise_ratio', 0))
+        slew_rate = self._get_feature(features, 'mean_slew_rate',
+                                      self._get_feature(features, 'slew_rate', 1e7))
+
+        max_entropy = cfg.get('surface_max_phase_entropy', 0.6)
+        min_snr = cfg.get('surface_min_snr_for_focused', 7.0)
+        max_slew_focused = cfg.get('surface_max_slew_for_focused', 1.0e7)
+
+        if phase_entropy < max_entropy and mean_snr > min_snr and slew_rate < max_slew_focused:
+            score += weights['primary']
+            indicators.append(f"focused_pd: entropy={phase_entropy:.2f}, SNR={mean_snr:.1f}dB")
 
         # Secondary features
         slew_rate = self._get_feature(features, 'mean_slew_rate',
@@ -551,7 +582,7 @@ class PDTypeClassifier:
             indicators.append(f"freq={dom_freq/1e6:.1f}MHz")
 
         max_score = (
-            1 * weights['primary'] +  # phase_spread only
+            2 * weights['primary'] +  # phase_spread + focused_pd
             3 * weights['secondary'] +
             2 * weights['mid'] +
             3 * weights['supporting']
