@@ -1909,29 +1909,39 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.Span(interpretation, style={'color': interp_color})
             ]))
 
-            # Create PRPD plot colored by CLUSTER (showing classification)
-            # Each cluster gets its own color, with matched=circle, wavelet-only=x
+            # Create PRPD plot colored by CLUSTER
             cluster_to_type = {c['cluster']: c['pd_type'] for c in classifications}
+            cluster_to_reasoning = {c['cluster']: c.get('reasoning', []) for c in classifications}
 
-            # Get amplitudes from features
-            amp_idx = FEATURE_NAMES.index('absolute_amplitude') if 'absolute_amplitude' in FEATURE_NAMES else 0
-            amplitudes = features_matrix[:, amp_idx]
+            # Get SIGNED amplitudes (positive/negative like original PRPD)
+            # Use peak_amplitude_positive and peak_amplitude_negative to determine sign
+            pos_amp_idx = FEATURE_NAMES.index('peak_amplitude_positive') if 'peak_amplitude_positive' in FEATURE_NAMES else None
+            neg_amp_idx = FEATURE_NAMES.index('peak_amplitude_negative') if 'peak_amplitude_negative' in FEATURE_NAMES else None
 
-            # Color palette for clusters (distinct colors)
+            if pos_amp_idx is not None and neg_amp_idx is not None:
+                pos_amps = features_matrix[:, pos_amp_idx]
+                neg_amps = features_matrix[:, neg_amp_idx]
+                # Use positive if larger, else use negative (as negative value)
+                amplitudes = np.where(pos_amps >= neg_amps, pos_amps, -neg_amps)
+            else:
+                # Fallback to absolute amplitude
+                amp_idx = FEATURE_NAMES.index('absolute_amplitude') if 'absolute_amplitude' in FEATURE_NAMES else 0
+                amplitudes = features_matrix[:, amp_idx]
+
+            # Color palette for clusters
             cluster_colors = [
                 '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
-                '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',
             ]
 
-            # Create figure with subplots
+            # Create figure
             prpd_fig = make_subplots(
                 rows=1, cols=2,
-                subplot_titles=['PRPD by Cluster (●=matched, ×=wavelet-only)', 'Amplitude Distribution'],
+                subplot_titles=['PRPD by Cluster (click cluster in legend for details)', 'Amplitude Distribution'],
                 column_widths=[0.7, 0.3]
             )
 
-            # Add traces for each CLUSTER, split by source
+            # Add traces for each CLUSTER
             phases_arr = np.array(phases_list)
             unique_clusters = sorted(set(labels))
 
@@ -1951,49 +1961,24 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     color = cluster_colors[cluster_label % len(cluster_colors)]
                     cluster_display = f"Cluster {cluster_label}"
 
-                # Split by source: matched (circles) vs wavelet-only (x)
-                matched_mask = cluster_mask & (sources_arr == 'matched')
-                wavelet_mask = cluster_mask & (sources_arr == 'wavelet_only')
-
-                # Add matched points (circles)
-                if np.any(matched_mask):
-                    prpd_fig.add_trace(
-                        go.Scatter(
-                            x=phases_arr[matched_mask],
-                            y=amplitudes[matched_mask],
-                            mode='markers',
-                            name=f"{cluster_display} → {pd_type} (matched: {np.sum(matched_mask)})",
-                            marker=dict(
-                                color=color,
-                                size=6,
-                                opacity=0.8,
-                                symbol='circle',
-                            ),
-                            legendgroup=f"cluster_{cluster_label}",
+                # Simple trace with cluster count
+                prpd_fig.add_trace(
+                    go.Scatter(
+                        x=phases_arr[cluster_mask],
+                        y=amplitudes[cluster_mask],
+                        mode='markers',
+                        name=f"{cluster_display} → {pd_type} ({n_in_cluster})",
+                        marker=dict(
+                            color=color,
+                            size=5,
+                            opacity=0.7,
                         ),
-                        row=1, col=1
-                    )
+                        customdata=[cluster_label] * n_in_cluster,
+                    ),
+                    row=1, col=1
+                )
 
-                # Add wavelet-only points (x markers)
-                if np.any(wavelet_mask):
-                    prpd_fig.add_trace(
-                        go.Scatter(
-                            x=phases_arr[wavelet_mask],
-                            y=amplitudes[wavelet_mask],
-                            mode='markers',
-                            name=f"{cluster_display} → {pd_type} (wav-only: {np.sum(wavelet_mask)})",
-                            marker=dict(
-                                color=color,
-                                size=5,
-                                opacity=0.5,
-                                symbol='x',
-                            ),
-                            legendgroup=f"cluster_{cluster_label}",
-                        ),
-                        row=1, col=1
-                    )
-
-                # Add histogram for entire cluster
+                # Add histogram
                 prpd_fig.add_trace(
                     go.Histogram(
                         y=amplitudes[cluster_mask],
@@ -2010,9 +1995,28 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             prpd_fig.update_xaxes(title_text="Count", row=1, col=2)
             prpd_fig.update_layout(
                 height=500,
-                title_text="Wavelet-Only Detections by Cluster",
+                title_text="Wavelet Detections by Cluster",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
             )
+
+            # Add classification reasoning to results for each cluster
+            results_children.append(html.Hr())
+            results_children.append(html.H6("Classification Reasoning (per cluster)"))
+            for c in classifications:
+                cluster_label = c['cluster']
+                pd_type = c['pd_type']
+                reasoning = c.get('reasoning', [])
+                confidence = c.get('confidence', 0)
+
+                cluster_display = "DBSCAN-Noise" if cluster_label == -1 else f"Cluster {cluster_label}"
+                color = 'gray' if 'NOISE' in pd_type else ('blue' if pd_type == 'SURFACE' else ('red' if pd_type == 'CORONA' else 'green'))
+
+                results_children.append(html.Div([
+                    html.Strong(f"{cluster_display} → ", style={'color': 'black'}),
+                    html.Span(f"{pd_type} ", style={'color': color, 'fontWeight': 'bold'}),
+                    html.Span(f"(conf: {confidence:.2f})", style={'color': 'gray'}),
+                    html.Ul([html.Li(r) for r in reasoning], style={'marginTop': '5px', 'marginBottom': '10px', 'fontSize': '12px'}),
+                ], style={'marginBottom': '10px', 'padding': '5px', 'backgroundColor': '#f9f9f9', 'borderLeft': f'3px solid {color}'}))
 
             return html.Div(results_children), prpd_fig
 
