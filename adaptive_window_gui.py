@@ -16,7 +16,7 @@ Methods:
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, hilbert
 from scipy.ndimage import gaussian_filter1d
 
 import dash
@@ -231,6 +231,206 @@ def method_derivative_based(waveform: np.ndarray, sample_interval: float,
     }
 
 
+def method_smart_bounds(waveform: np.ndarray, sample_interval: float,
+                        noise_window: int = 50, snr_threshold: float = 3.0,
+                        min_separation_us: float = 0.5) -> Dict:
+    """
+    Smart boundary detection that:
+    1. Estimates noise floor from signal edges
+    2. Uses envelope (Hilbert) to find true signal boundaries
+    3. For multi-pulse: isolates main pulse with smart boundaries
+    4. For single-pulse: finds where signal actually returns to noise
+
+    Parameters:
+        noise_window: samples at edges to estimate noise floor
+        snr_threshold: multiplier above noise floor to define signal
+        min_separation_us: minimum pulse separation for multi-pulse detection
+    """
+    n = len(waveform)
+    if n < noise_window * 2:
+        return method_original(waveform, sample_interval)
+
+    # Step 1: Estimate noise floor from edges of waveform
+    # Use both start and end, take the minimum RMS (cleaner estimate)
+    noise_start = waveform[:noise_window]
+    noise_end = waveform[-noise_window:]
+    noise_rms_start = np.sqrt(np.mean(noise_start ** 2))
+    noise_rms_end = np.sqrt(np.mean(noise_end ** 2))
+    noise_floor = min(noise_rms_start, noise_rms_end)
+
+    # If noise floor is essentially zero, use a small fraction of max
+    if noise_floor < 1e-10:
+        noise_floor = np.max(np.abs(waveform)) * 0.01
+
+    # Step 2: Compute envelope using Hilbert transform
+    analytic_signal = hilbert(waveform)
+    envelope = np.abs(analytic_signal)
+
+    # Smooth the envelope to reduce noise
+    envelope_smooth = gaussian_filter1d(envelope, sigma=3)
+
+    # Step 3: Define signal threshold as multiple of noise floor
+    signal_threshold = snr_threshold * noise_floor
+
+    # Find where envelope exceeds threshold
+    above_threshold = envelope_smooth > signal_threshold
+
+    if not np.any(above_threshold):
+        # No signal above threshold - return minimal window around peak
+        peak_idx = np.argmax(envelope_smooth)
+        half_win = max(25, int(0.2e-6 / sample_interval))  # At least 0.2µs
+        start_idx = max(0, peak_idx - half_win)
+        end_idx = min(n, peak_idx + half_win)
+        return {
+            'name': 'SmartBounds (low SNR)',
+            'waveform': waveform[start_idx:end_idx],
+            'start_idx': start_idx,
+            'end_idx': end_idx,
+            'description': f'Low SNR, minimal window around peak'
+        }
+
+    # Step 4: Check for multi-pulse
+    pulse_info = detect_pulses(waveform, sample_interval,
+                               amplitude_threshold_ratio=0.3,
+                               min_pulse_separation_us=min_separation_us)
+
+    if pulse_info['pulse_count'] > 1:
+        # Multi-pulse: isolate the main pulse using envelope
+        pulse_indices = pulse_info['pulse_indices']
+        pulse_amps = [envelope_smooth[i] for i in pulse_indices]
+        main_pulse_idx = pulse_indices[np.argmax(pulse_amps)]
+
+        # Find the boundaries of just the main pulse using envelope
+        # Search backward from main pulse to find where envelope drops
+        start_idx = main_pulse_idx
+        for i in range(main_pulse_idx, -1, -1):
+            if envelope_smooth[i] < signal_threshold:
+                start_idx = i
+                break
+            # Also stop if we're getting close to another pulse
+            for other_idx in pulse_indices:
+                if other_idx < main_pulse_idx and i <= other_idx:
+                    start_idx = max(i, other_idx + 10)
+                    break
+
+        # Search forward from main pulse
+        end_idx = main_pulse_idx
+        for i in range(main_pulse_idx, n):
+            if envelope_smooth[i] < signal_threshold:
+                end_idx = i
+                break
+            # Also stop if we're getting close to another pulse
+            for other_idx in pulse_indices:
+                if other_idx > main_pulse_idx and i >= other_idx - 10:
+                    end_idx = min(i, other_idx - 10)
+                    break
+
+        # Add small padding
+        padding = max(10, int(0.1e-6 / sample_interval))
+        start_idx = max(0, start_idx - padding)
+        end_idx = min(n, end_idx + padding)
+
+        return {
+            'name': f'SmartBounds ({pulse_info["pulse_count"]}→1 pulse)',
+            'waveform': waveform[start_idx:end_idx],
+            'start_idx': start_idx,
+            'end_idx': end_idx,
+            'description': f'Multi-pulse isolated using envelope, SNR threshold={snr_threshold:.1f}x noise'
+        }
+
+    # Step 5: Single pulse - find true boundaries where envelope returns to noise
+    indices = np.where(above_threshold)[0]
+
+    # Find continuous region around peak
+    peak_idx = np.argmax(envelope_smooth)
+
+    # Search backward from peak for true start
+    start_idx = indices[0]
+    for i in range(peak_idx, -1, -1):
+        if envelope_smooth[i] < signal_threshold:
+            start_idx = i
+            break
+
+    # Search forward from peak for true end (where signal returns to noise)
+    end_idx = indices[-1]
+    for i in range(peak_idx, n):
+        if envelope_smooth[i] < signal_threshold:
+            # Found where envelope drops below threshold
+            # But check if signal rises again (might be ringing)
+            remaining = envelope_smooth[i:min(i+50, n)]
+            if np.max(remaining) < signal_threshold * 1.5:
+                # Signal stays low, this is the true end
+                end_idx = i
+                break
+
+    # Add padding proportional to signal duration
+    signal_duration = end_idx - start_idx
+    padding = max(10, signal_duration // 10)
+    start_idx = max(0, start_idx - padding)
+    end_idx = min(n, end_idx + padding)
+
+    return {
+        'name': 'SmartBounds (single pulse)',
+        'waveform': waveform[start_idx:end_idx],
+        'start_idx': start_idx,
+        'end_idx': end_idx,
+        'description': f'Envelope-based bounds, {snr_threshold:.1f}x noise threshold'
+    }
+
+
+def method_smart_bounds_conservative(waveform: np.ndarray, sample_interval: float) -> Dict:
+    """SmartBounds with conservative (higher) SNR threshold."""
+    return method_smart_bounds(waveform, sample_interval, snr_threshold=5.0)
+
+
+def method_smart_bounds_aggressive(waveform: np.ndarray, sample_interval: float) -> Dict:
+    """SmartBounds with aggressive (lower) SNR threshold - captures more of the tail."""
+    return method_smart_bounds(waveform, sample_interval, snr_threshold=2.0)
+
+
+def method_smart_bounds_padded(waveform: np.ndarray, sample_interval: float,
+                                min_window_us: float = 0.5) -> Dict:
+    """
+    SmartBounds with minimum window guarantee.
+    Finds smart boundaries but ensures at least min_window_us around the peak.
+    Best of both worlds: isolates multi-pulse, keeps enough signal for classification.
+    """
+    # First get smart bounds result
+    result = method_smart_bounds(waveform, sample_interval)
+
+    # Calculate minimum window in samples
+    min_samples = int(min_window_us * 1e-6 / sample_interval)
+
+    # Check if result is too small
+    current_samples = len(result['waveform'])
+
+    if current_samples >= min_samples:
+        result['name'] = f'SmartBounds+ (min {min_window_us}µs)'
+        result['description'] = f'Envelope bounds, kept {current_samples} samples (>= {min_samples} min)'
+        return result
+
+    # Need to expand - center around peak of the extracted region
+    abs_wfm = np.abs(result['waveform'])
+    local_peak = np.argmax(abs_wfm)
+
+    # Convert back to original indices
+    orig_start = result['start_idx']
+    peak_in_original = orig_start + local_peak
+
+    # Expand to minimum window
+    half_window = min_samples // 2
+    new_start = max(0, peak_in_original - half_window)
+    new_end = min(len(waveform), peak_in_original + half_window)
+
+    return {
+        'name': f'SmartBounds+ (min {min_window_us}µs)',
+        'waveform': waveform[new_start:new_end],
+        'start_idx': new_start,
+        'end_idx': new_end,
+        'description': f'Expanded to {min_window_us}µs minimum window'
+    }
+
+
 # All available methods
 ADAPTIVE_METHODS = {
     'original': method_original,
@@ -242,6 +442,11 @@ ADAPTIVE_METHODS = {
     'peak_2.0us': lambda w, s: method_peak_centered(w, s, 2.0),
     'adaptive_shrink': method_adaptive_shrink,
     'derivative': method_derivative_based,
+    'smart_bounds': method_smart_bounds,
+    'smart_bounds_conservative': method_smart_bounds_conservative,
+    'smart_bounds_aggressive': method_smart_bounds_aggressive,
+    'smart_bounds_0.5us': lambda w, s: method_smart_bounds_padded(w, s, 0.5),
+    'smart_bounds_1.0us': lambda w, s: method_smart_bounds_padded(w, s, 1.0),
 }
 
 
@@ -341,8 +546,13 @@ app.layout = html.Div([
                     {'label': 'Peak Centered 2.0µs', 'value': 'peak_2.0us'},
                     {'label': 'Adaptive Shrink', 'value': 'adaptive_shrink'},
                     {'label': 'Derivative Based', 'value': 'derivative'},
+                    {'label': 'SmartBounds (3x noise)', 'value': 'smart_bounds'},
+                    {'label': 'SmartBounds Conservative (5x)', 'value': 'smart_bounds_conservative'},
+                    {'label': 'SmartBounds Aggressive (2x)', 'value': 'smart_bounds_aggressive'},
+                    {'label': 'SmartBounds+ (min 0.5µs)', 'value': 'smart_bounds_0.5us'},
+                    {'label': 'SmartBounds+ (min 1.0µs)', 'value': 'smart_bounds_1.0us'},
                 ],
-                value=['original', 'rise_fall', 'energy_90', 'adaptive_shrink'],
+                value=['original', 'adaptive_shrink', 'smart_bounds', 'smart_bounds_1.0us'],
                 inline=True,
                 style={'marginTop': '5px'}
             ),

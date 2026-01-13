@@ -16,7 +16,7 @@ from pre_middleware.loaders.mat_loader import MatLoader
 from pre_middleware.waveletProc.dwt_detector import DWTDetector
 from pre_middleware.waveletProc.waveform_extractor import WaveletExtractor
 from pdlib.features.pulse_detection import detect_pulses
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, hilbert
 from scipy.ndimage import gaussian_filter1d
 
 
@@ -144,6 +144,145 @@ def method_derivative_based(waveform: np.ndarray, sample_interval: float,
     }
 
 
+def method_smart_bounds(waveform: np.ndarray, sample_interval: float,
+                        noise_window: int = 50, snr_threshold: float = 3.0,
+                        min_separation_us: float = 0.5) -> Dict:
+    """
+    Smart boundary detection using envelope analysis and noise floor estimation.
+    Works for both single-pulse (finds true boundaries) and multi-pulse (isolates main).
+    """
+    n = len(waveform)
+    if n < noise_window * 2:
+        return method_original(waveform, sample_interval)
+
+    # Estimate noise floor from edges
+    noise_start = waveform[:noise_window]
+    noise_end = waveform[-noise_window:]
+    noise_rms_start = np.sqrt(np.mean(noise_start ** 2))
+    noise_rms_end = np.sqrt(np.mean(noise_end ** 2))
+    noise_floor = min(noise_rms_start, noise_rms_end)
+
+    if noise_floor < 1e-10:
+        noise_floor = np.max(np.abs(waveform)) * 0.01
+
+    # Compute envelope using Hilbert transform
+    analytic_signal = hilbert(waveform)
+    envelope = np.abs(analytic_signal)
+    envelope_smooth = gaussian_filter1d(envelope, sigma=3)
+
+    signal_threshold = snr_threshold * noise_floor
+    above_threshold = envelope_smooth > signal_threshold
+
+    if not np.any(above_threshold):
+        peak_idx = np.argmax(envelope_smooth)
+        half_win = max(25, int(0.2e-6 / sample_interval))
+        start_idx = max(0, peak_idx - half_win)
+        end_idx = min(n, peak_idx + half_win)
+        return {
+            'name': 'SmartBounds',
+            'waveform': waveform[start_idx:end_idx],
+            'start_idx': start_idx,
+            'end_idx': end_idx,
+        }
+
+    # Check for multi-pulse
+    pulse_info = detect_pulses(waveform, sample_interval, 0.3, min_separation_us)
+
+    if pulse_info['pulse_count'] > 1:
+        # Multi-pulse: isolate main pulse using envelope
+        pulse_indices = pulse_info['pulse_indices']
+        pulse_amps = [envelope_smooth[i] for i in pulse_indices]
+        main_pulse_idx = pulse_indices[np.argmax(pulse_amps)]
+
+        # Find boundaries using envelope
+        start_idx = main_pulse_idx
+        for i in range(main_pulse_idx, -1, -1):
+            if envelope_smooth[i] < signal_threshold:
+                start_idx = i
+                break
+            for other_idx in pulse_indices:
+                if other_idx < main_pulse_idx and i <= other_idx:
+                    start_idx = max(i, other_idx + 10)
+                    break
+
+        end_idx = main_pulse_idx
+        for i in range(main_pulse_idx, n):
+            if envelope_smooth[i] < signal_threshold:
+                end_idx = i
+                break
+            for other_idx in pulse_indices:
+                if other_idx > main_pulse_idx and i >= other_idx - 10:
+                    end_idx = min(i, other_idx - 10)
+                    break
+
+        padding = max(10, int(0.1e-6 / sample_interval))
+        start_idx = max(0, start_idx - padding)
+        end_idx = min(n, end_idx + padding)
+
+        return {
+            'name': 'SmartBounds',
+            'waveform': waveform[start_idx:end_idx],
+            'start_idx': start_idx,
+            'end_idx': end_idx,
+        }
+
+    # Single pulse - find true boundaries
+    peak_idx = np.argmax(envelope_smooth)
+
+    start_idx = 0
+    for i in range(peak_idx, -1, -1):
+        if envelope_smooth[i] < signal_threshold:
+            start_idx = i
+            break
+
+    end_idx = n - 1
+    for i in range(peak_idx, n):
+        if envelope_smooth[i] < signal_threshold:
+            remaining = envelope_smooth[i:min(i+50, n)]
+            if np.max(remaining) < signal_threshold * 1.5:
+                end_idx = i
+                break
+
+    signal_duration = end_idx - start_idx
+    padding = max(10, signal_duration // 10)
+    start_idx = max(0, start_idx - padding)
+    end_idx = min(n, end_idx + padding)
+
+    return {
+        'name': 'SmartBounds',
+        'waveform': waveform[start_idx:end_idx],
+        'start_idx': start_idx,
+        'end_idx': end_idx,
+    }
+
+
+def method_smart_bounds_padded(waveform: np.ndarray, sample_interval: float,
+                                min_window_us: float = 0.5) -> Dict:
+    """SmartBounds with minimum window guarantee."""
+    result = method_smart_bounds(waveform, sample_interval)
+    min_samples = int(min_window_us * 1e-6 / sample_interval)
+    current_samples = len(result['waveform'])
+
+    if current_samples >= min_samples:
+        result['name'] = f'SB+{min_window_us}us'
+        return result
+
+    # Expand to minimum window
+    abs_wfm = np.abs(result['waveform'])
+    local_peak = np.argmax(abs_wfm)
+    peak_in_original = result['start_idx'] + local_peak
+    half_window = min_samples // 2
+    new_start = max(0, peak_in_original - half_window)
+    new_end = min(len(waveform), peak_in_original + half_window)
+
+    return {
+        'name': f'SB+{min_window_us}us',
+        'waveform': waveform[new_start:new_end],
+        'start_idx': new_start,
+        'end_idx': new_end,
+    }
+
+
 # All methods to test
 METHODS = {
     'Original': method_original,
@@ -155,6 +294,11 @@ METHODS = {
     'Peak2.0us': lambda w, s: method_peak_centered(w, s, 2.0),
     'AdaptShrink': method_adaptive_shrink,
     'Derivative': method_derivative_based,
+    'SmartBounds': method_smart_bounds,
+    'SmartBounds5x': lambda w, s: method_smart_bounds(w, s, snr_threshold=5.0),
+    'SmartBounds2x': lambda w, s: method_smart_bounds(w, s, snr_threshold=2.0),
+    'SB+0.5us': lambda w, s: method_smart_bounds_padded(w, s, 0.5),
+    'SB+1.0us': lambda w, s: method_smart_bounds_padded(w, s, 1.0),
 }
 
 
@@ -265,7 +409,7 @@ def main():
         print(f"BAND: {band}")
         print("=" * 100)
 
-        band_results = defaultdict(lambda: {'total': 0, 'multi_pulse': 0, 'files': 0})
+        band_results = defaultdict(lambda: {'total': 0, 'multi_pulse': 0, 'files': 0, 'avg_samples': 0})
 
         for mat_file in mat_files:
             print(f"\nProcessing: {mat_file.name} (Band {band})...")
@@ -282,6 +426,16 @@ def main():
                     band_results[method_name]['total'] += method_results['total']
                     band_results[method_name]['multi_pulse'] += method_results['multi_pulse']
                     band_results[method_name]['files'] += 1
+                    # Weighted average of samples
+                    n = method_results['total']
+                    if n > 0:
+                        prev_total = band_results[method_name]['total'] - n
+                        prev_avg = band_results[method_name]['avg_samples']
+                        new_avg = method_results['avg_samples']
+                        if prev_total > 0:
+                            band_results[method_name]['avg_samples'] = (prev_avg * prev_total + new_avg * n) / band_results[method_name]['total']
+                        else:
+                            band_results[method_name]['avg_samples'] = new_avg
 
                 # Print file summary
                 orig_mp = results['Original']['multi_pulse_pct']
@@ -309,21 +463,23 @@ def main():
             continue
 
         # Header
-        print(f"{'Method':<15} {'Total WFMs':>12} {'Multi-Pulse':>12} {'MP %':>10} {'Reduction':>12}")
-        print("-" * 80)
+        print(f"{'Method':<15} {'Total WFMs':>12} {'Multi-Pulse':>12} {'MP %':>10} {'Reduction':>12} {'Avg Samples':>12}")
+        print("-" * 95)
 
         # Get original baseline
-        orig_data = all_results[band].get('Original', {'total': 0, 'multi_pulse': 0})
+        orig_data = all_results[band].get('Original', {'total': 0, 'multi_pulse': 0, 'avg_samples': 0})
         orig_total = orig_data['total']
         orig_mp = orig_data['multi_pulse']
         orig_pct = 100 * orig_mp / orig_total if orig_total > 0 else 0
+        orig_samples = orig_data.get('avg_samples', 0)
 
         # Print each method
         for method_name in METHODS.keys():
-            data = all_results[band].get(method_name, {'total': 0, 'multi_pulse': 0})
+            data = all_results[band].get(method_name, {'total': 0, 'multi_pulse': 0, 'avg_samples': 0})
             total = data['total']
             mp = data['multi_pulse']
             pct = 100 * mp / total if total > 0 else 0
+            avg_samples = data.get('avg_samples', 0)
 
             # Calculate reduction from original
             if orig_mp > 0:
@@ -333,7 +489,7 @@ def main():
 
             reduction_str = f"{reduction:+.1f}%" if method_name != 'Original' else "baseline"
 
-            print(f"{method_name:<15} {total:>12} {mp:>12} {pct:>9.1f}% {reduction_str:>12}")
+            print(f"{method_name:<15} {total:>12} {mp:>12} {pct:>9.1f}% {reduction_str:>12} {avg_samples:>12.0f}")
 
     # Overall recommendation
     print("\n" + "=" * 100)
