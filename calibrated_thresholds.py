@@ -1,7 +1,7 @@
 # Optimized thresholds from auto-calibration
 # Accuracy: 4.45%
 # K-Threshold: 6.0
-# Generated: 2026-01-13T07:18:05.715894
+# Generated: 2026-01-13T07:26:29.916763
 
 CALIBRATED_THRESHOLDS = {
     'corona_internal': {

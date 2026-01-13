@@ -93,6 +93,12 @@ class ClassifierCalibrator:
         'corona_internal.corona_pos_min_asymmetry': (0.3, 0.9, 0.1),
     }
 
+    # HDBScan parameters (separate from classifier thresholds)
+    HDBSCAN_PARAMS = {
+        'min_samples': (2, 10, 1),
+        'min_cluster_size': (2, 10, 1),
+    }
+
     def __init__(
         self,
         dataset_features: List[DatasetFeatures],
@@ -142,12 +148,14 @@ class ClassifierCalibrator:
             phases = [df.pulses[i].phase for i in valid_indices]
 
             # Cluster the pulses
+            # Use lower min_samples/min_cluster_size to reduce DBSCAN-Noise assignments
+            # Internal PD especially can have variable features that need looser clustering
             labels, cluster_info = cluster_pulses(
                 feature_matrix,
                 df.feature_names,
                 method='hdbscan',
-                min_samples=5,
-                min_cluster_size=5
+                min_samples=3,
+                min_cluster_size=3
             )
 
             # Compute cluster features
@@ -224,11 +232,13 @@ class ClassifierCalibrator:
                 predicted_type = result['pd_type']
 
                 # Handle noise cluster (-1)
+                # For lab data, DBSCAN-Noise classified as NOISE is a misclassification
+                # (unless the expected type is actually NOISE)
                 if cluster_label == -1:
-                    # DBSCAN noise should map to NOISE
-                    if predicted_type in ['NOISE', 'NOISE_MULTIPULSE']:
-                        # This is expected behavior, don't count against accuracy
-                        continue
+                    if expected_type == 'NOISE' and predicted_type in ['NOISE', 'NOISE_MULTIPULSE']:
+                        # Expected NOISE, got NOISE - correct
+                        pass  # Continue to count this
+                    # Otherwise, count it as whatever it's classified as (likely a misclassification)
 
                 # Count pulses in this cluster
                 n_in_cluster = np.sum(labels == cluster_label)
