@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pre_middleware.wavelet_processing import WaveletProcessor
+from pre_middleware.waveletProc.dwt_detector import DWTDetector
 from pdlib.features import PDFeatureExtractor, FEATURE_NAMES
 from pdlib.clustering import cluster_pulses, compute_cluster_features
 
@@ -138,22 +138,25 @@ class FeaturePipeline:
         amplitude_threshold = self.k_threshold * noise_std
 
         # 2. Run wavelet detection
-        processor = WaveletProcessor(
+        detector = DWTDetector(
+            sample_rate=sample_rate,
             wavelet=self.wavelet,
-            level=self.level,
-            threshold_method='mad',
-            k_factor=3.0,  # Use lower K for detection, filter later
+            bands=['D1', 'D2', 'D3'],
+            threshold_percentile=99.0,  # Use 99th percentile for detection
+            min_separation_us=1.0,
         )
 
-        detection_result = processor.process(signal, sample_rate)
+        detection_result = detector.detect(signal, ac_frequency=ac_frequency)
 
         # Combine detections from all bands
         all_detections = []
-        for band in ['D1', 'D2', 'D3']:
-            band_dets = detection_result.get(f'{band}_detections', [])
-            for det in band_dets:
-                det['band'] = band
-                all_detections.append(det)
+        for event in detection_result.events:
+            all_detections.append({
+                'index': event.sample_index,
+                'phase': event.phase_degrees,
+                'amplitude': event.amplitude,
+                'band': event.band,
+            })
 
         # Sort by index and remove duplicates (within min_separation)
         all_detections.sort(key=lambda x: x['index'])

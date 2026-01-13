@@ -14,7 +14,7 @@ import numpy as np
 # Import the existing MatLoader
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from mat_loader import MatLoader
+from pre_middleware.loaders.mat_loader import MatLoader
 
 
 # Filename patterns to PD type mapping
@@ -151,7 +151,7 @@ class LabeledDatasetLoader:
             loader = MatLoader(str(filepath))
 
             # Try to load the specified channel
-            available_channels = loader.get_channels()
+            available_channels = loader.list_channels()
 
             if self.channel in available_channels:
                 channel = self.channel
