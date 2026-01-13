@@ -637,11 +637,11 @@ if __name__ == '__main__':
     print("=" * 60)
     print("ADAPTIVE WINDOW SIZING COMPARISON GUI")
     print("=" * 60)
-    print("\nStarting server at http://localhost:8051")
+    print("\nStarting server at http://localhost:8052")
     print("\nMethods available:")
     for name, _ in ADAPTIVE_METHODS.items():
         print(f"  - {name}")
     print("\nPress Ctrl+C to stop")
     print("=" * 60)
 
-    app.run_server(debug=True, port=8051)
+    app.run(debug=True, port=8052)
