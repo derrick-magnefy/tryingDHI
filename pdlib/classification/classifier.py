@@ -89,14 +89,12 @@ class PDTypeClassifier:
                 'min_mean_amplitude_for_pd': 0.001,  # Real PD should have decent amplitude
             },
             'phase_spread': {
-                'surface_phase_spread_min': 120.0,
+                'surface_phase_spread_min': 30.0,  # Lowered from 120 - Surface can have narrow phase spread
             },
             'surface_detection': {
                 'weights': {'primary': 4, 'secondary': 3, 'mid': 2, 'supporting': 1},
-                'min_surface_score': 8,  # Lowered from 10
-                'surface_phase_spread': 120.0,
-                # High amplitude is a key Surface indicator
-                'surface_min_amplitude': 0.005,  # High amplitude suggests Surface PD
+                'min_surface_score': 8,
+                'surface_phase_spread': 30.0,  # Lowered from 120 - Surface can have narrow phase spread
                 'corona_phase_spread': 100.0,
                 'surface_max_slew_rate': 5.0e6,
                 'corona_min_slew_rate': 1.0e7,
@@ -120,8 +118,8 @@ class PDTypeClassifier:
             },
             'corona_internal': {
                 'weights': {'primary': 4, 'secondary': 2, 'supporting': 1},
-                'min_corona_score': 8,
-                'min_internal_score': 8,
+                'min_corona_score': 15,  # Raised from 8 - harder to classify as Corona
+                'min_internal_score': 15,  # Raised from 8 - harder to classify as Internal
                 'corona_neg_max_asymmetry': -0.6,
                 'corona_pos_min_asymmetry': 0.6,
                 'internal_min_asymmetry': -0.9,
@@ -499,18 +497,10 @@ class PDTypeClassifier:
         score = 0
         indicators = []
 
-        # Primary: phase spread (wide activity across phases)
+        # Primary: phase spread (activity across phases)
         if phase_spread > cfg['surface_phase_spread']:
             score += weights['primary']
             indicators.append(f"phase_spread={phase_spread:.1f}°")
-
-        # Primary: HIGH AMPLITUDE is a key Surface PD indicator
-        # Surface PD typically has higher amplitude than Corona/Internal
-        mean_amp = self._get_feature(features, 'mean_absolute_amplitude',
-                                     self._get_feature(features, 'absolute_amplitude', 0))
-        if mean_amp > cfg.get('surface_min_amplitude', 0.005):
-            score += weights['primary']
-            indicators.append(f"high_amp={mean_amp:.3f}")
 
         # Secondary features
         slew_rate = self._get_feature(features, 'mean_slew_rate',
@@ -561,7 +551,7 @@ class PDTypeClassifier:
             indicators.append(f"freq={dom_freq/1e6:.1f}MHz")
 
         max_score = (
-            2 * weights['primary'] +  # phase_spread + high_amplitude
+            1 * weights['primary'] +  # phase_spread only
             3 * weights['secondary'] +
             2 * weights['mid'] +
             3 * weights['supporting']
