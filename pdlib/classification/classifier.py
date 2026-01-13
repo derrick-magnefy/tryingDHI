@@ -78,6 +78,11 @@ class PDTypeClassifier:
                 'min_cross_correlation': 0.3,
                 'max_coefficient_of_variation': 2.0,
                 'min_pulses_for_multipulse': 2,
+                # New noise indicators for sub-threshold detection
+                'min_phase_entropy': 0.85,  # High entropy = uniform distribution = likely noise
+                'max_amplitude_cv': 0.8,  # Low CV = consistent amplitudes = likely real PD
+                'max_pulses_per_cycle': 10.0,  # Too many pulses per cycle = likely noise
+                'noise_score_threshold': 0.30,  # Lowered from 0.45 for better noise detection
             },
             'phase_spread': {
                 'surface_phase_spread_min': 120.0,
@@ -252,15 +257,16 @@ class PDTypeClassifier:
 
         # Score-based noise detection
         noise_score, noise_reasons = self._compute_noise_score(cluster_features, noise_cfg)
+        noise_threshold = noise_cfg.get('noise_score_threshold', 0.30)
 
-        if noise_score >= 0.45:
+        if noise_score >= noise_threshold:
             result['pd_type'] = 'NOISE'
             result['pd_type_code'] = PD_TYPES['NOISE']['code']
             result['confidence'] = min(0.5 + noise_score, 0.95)
             result['reasoning'].append(f"Noise indicators: {', '.join(noise_reasons)}")
             return result
 
-        if noise_score > 0.2:
+        if noise_score > noise_threshold * 0.5:
             result['warnings'].append(f"Partial noise indicators (score={noise_score:.2f})")
 
         result['reasoning'].append(f"Passed noise detection (score={noise_score:.2f})")
@@ -425,6 +431,30 @@ class PDTypeClassifier:
         if dom_freq < cfg['max_dominant_frequency']:
             score += 0.10
             reasons.append(f"low_freq={dom_freq:.0f}")
+
+        # === NEW NOISE INDICATORS FOR SUB-THRESHOLD DETECTION ===
+
+        # 1. Phase distribution uniformity (high entropy = random/uniform = likely noise)
+        # Real PD has characteristic phase patterns; noise is uniformly distributed
+        phase_entropy = self._get_feature(features, 'phase_entropy', 0)
+        if phase_entropy > cfg.get('min_phase_entropy', 0.85):
+            score += 0.15
+            reasons.append(f"uniform_phase={phase_entropy:.2f}")
+
+        # 2. Amplitude consistency (high CV in amplitudes = inconsistent = likely noise)
+        # Real PD clusters have relatively consistent amplitudes; noise is random
+        amp_cv = self._get_feature(features, 'amplitude_coefficient_of_variation',
+                                   self._get_feature(features, 'amp_cv', 0))
+        if amp_cv > cfg.get('max_amplitude_cv', 0.8):
+            score += 0.10
+            reasons.append(f"amp_inconsistent={amp_cv:.2f}")
+
+        # 3. Pulses per cycle (too many pulses per AC cycle = likely noise)
+        # Real PD typically has limited pulses per cycle; excessive count suggests noise
+        pulses_per_cycle = self._get_feature(features, 'pulses_per_cycle', 0)
+        if pulses_per_cycle > cfg.get('max_pulses_per_cycle', 10.0):
+            score += 0.15
+            reasons.append(f"high_pulse_rate={pulses_per_cycle:.1f}/cycle")
 
         return score, reasons
 

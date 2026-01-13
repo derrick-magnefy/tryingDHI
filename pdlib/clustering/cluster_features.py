@@ -302,6 +302,25 @@ def compute_prpd_features(
     else:
         features['amplitude_phase_correlation'] = 0.0
 
+    # === PHASE ENTROPY (for noise detection) ===
+    # High entropy = uniform distribution = likely random noise
+    # Low entropy = clustered distribution = likely real PD
+    # Uses normalized histogram to compute Shannon entropy
+    if np.sum(Hn_full) > 0:
+        Hn_prob = Hn_full / np.sum(Hn_full)  # Normalize to probability
+        # Add small epsilon to avoid log(0)
+        Hn_prob_safe = np.where(Hn_prob > 0, Hn_prob, 1e-10)
+        entropy = -np.sum(Hn_prob * np.log2(Hn_prob_safe))
+        # Normalize by max possible entropy (uniform distribution across n_bins)
+        max_entropy = np.log2(n_bins)  # log2(36) ≈ 5.17
+        features['phase_entropy'] = entropy / max_entropy if max_entropy > 0 else 0.0
+    else:
+        features['phase_entropy'] = 0.0
+
+    # === AMPLITUDE COEFFICIENT OF VARIATION (alias for classifier) ===
+    # Already computed as 'coefficient_of_variation', but add explicit name for clarity
+    features['amplitude_coefficient_of_variation'] = features['coefficient_of_variation']
+
     return features
 
 
