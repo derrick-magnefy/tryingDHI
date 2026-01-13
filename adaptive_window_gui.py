@@ -408,7 +408,10 @@ def load_data(n_clicks, file_path, k_threshold, band):
         sample_interval = 1.0 / sample_rate
 
         # Load raw signal
-        raw_signal = loader.load_channel(data_channel)
+        load_result = loader.load_channel(data_channel)
+        raw_signal = load_result['signal']
+        sample_rate = load_result.get('sample_rate', sample_rate)
+        sample_interval = 1.0 / sample_rate
 
         # Run DWT detection
         detector = DWTDetector(sample_rate=sample_rate)
@@ -430,7 +433,7 @@ def load_data(n_clicks, file_path, k_threshold, band):
         if len(result.waveforms) == 0:
             return None, None, 'Failed to extract waveforms'
 
-        waveforms = [wfm.samples.tolist() for wfm in result.waveforms]
+        waveforms = [wfm.waveform.tolist() for wfm in result.waveforms]
 
         return waveforms, sample_interval, f'Loaded {len(waveforms)} waveforms from band {band}'
 
