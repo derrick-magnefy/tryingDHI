@@ -79,10 +79,11 @@ class PDTypeClassifier:
                 'max_coefficient_of_variation': 2.0,
                 'min_pulses_for_multipulse': 2,
                 # New noise indicators for sub-threshold detection
-                'min_phase_entropy': 0.85,  # High entropy = uniform distribution = likely noise
-                'max_amplitude_cv': 0.8,  # Low CV = consistent amplitudes = likely real PD
-                'max_pulses_per_cycle': 10.0,  # Too many pulses per cycle = likely noise
-                'noise_score_threshold': 0.30,  # Lowered from 0.45 for better noise detection
+                # NOTE: Tuned to avoid false positives on Surface PD (which has wide phase spread)
+                'min_phase_entropy': 0.95,  # Very high entropy = nearly uniform = likely noise
+                'max_amplitude_cv': 1.5,  # High CV = very inconsistent = likely noise
+                'max_pulses_per_cycle': 20.0,  # Many pulses per cycle = likely noise
+                'noise_score_threshold': 0.35,  # Balanced threshold
             },
             'phase_spread': {
                 'surface_phase_spread_min': 120.0,
@@ -433,27 +434,30 @@ class PDTypeClassifier:
             reasons.append(f"low_freq={dom_freq:.0f}")
 
         # === NEW NOISE INDICATORS FOR SUB-THRESHOLD DETECTION ===
+        # NOTE: Lower weights to avoid false positives on Surface PD
 
         # 1. Phase distribution uniformity (high entropy = random/uniform = likely noise)
         # Real PD has characteristic phase patterns; noise is uniformly distributed
+        # Surface PD has wide spread but NOT perfectly uniform - threshold set high
         phase_entropy = self._get_feature(features, 'phase_entropy', 0)
-        if phase_entropy > cfg.get('min_phase_entropy', 0.85):
-            score += 0.15
+        if phase_entropy > cfg.get('min_phase_entropy', 0.95):
+            score += 0.10  # Reduced from 0.15
             reasons.append(f"uniform_phase={phase_entropy:.2f}")
 
         # 2. Amplitude consistency (high CV in amplitudes = inconsistent = likely noise)
         # Real PD clusters have relatively consistent amplitudes; noise is random
+        # Surface PD can have variable amplitudes - threshold set higher
         amp_cv = self._get_feature(features, 'amplitude_coefficient_of_variation',
                                    self._get_feature(features, 'amp_cv', 0))
-        if amp_cv > cfg.get('max_amplitude_cv', 0.8):
-            score += 0.10
+        if amp_cv > cfg.get('max_amplitude_cv', 1.5):
+            score += 0.08  # Reduced from 0.10
             reasons.append(f"amp_inconsistent={amp_cv:.2f}")
 
         # 3. Pulses per cycle (too many pulses per AC cycle = likely noise)
         # Real PD typically has limited pulses per cycle; excessive count suggests noise
         pulses_per_cycle = self._get_feature(features, 'pulses_per_cycle', 0)
-        if pulses_per_cycle > cfg.get('max_pulses_per_cycle', 10.0):
-            score += 0.15
+        if pulses_per_cycle > cfg.get('max_pulses_per_cycle', 20.0):
+            score += 0.10  # Reduced from 0.15
             reasons.append(f"high_pulse_rate={pulses_per_cycle:.1f}/cycle")
 
         return score, reasons

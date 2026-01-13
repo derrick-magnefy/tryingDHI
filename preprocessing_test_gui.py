@@ -1654,7 +1654,8 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
 
     # Callback for wavelet-only validation using HDBScan + Decision Tree
     @app.callback(
-        Output('validation-results', 'children'),
+        [Output('validation-results', 'children'),
+         Output('validation-prpd-plot', 'figure')],
         [Input('validate-wavelet-btn', 'n_clicks')],
         [State('comparison-detections-store', 'data'),
          State('loaded-data-store', 'data')]
@@ -1667,11 +1668,14 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
         3. Compute cluster features
         4. Run Decision Tree classification
         """
+        empty_fig = go.Figure()
+        empty_fig.update_layout(title="Run validation to see PRPD by classification")
+
         if not n_clicks or not detection_store or not loaded_data:
             raise PreventUpdate
 
         if not PDLIB_AVAILABLE:
-            return html.Div("PDLib modules not available. Cannot run validation.", style={'color': 'red'})
+            return html.Div("PDLib modules not available. Cannot run validation.", style={'color': 'red'}), empty_fig
 
         try:
             # Get wavelet-only detections from all bands
@@ -1681,7 +1685,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             all_wavelet_only = wav_d1 + wav_d2 + wav_d3
 
             if not all_wavelet_only:
-                return html.Div("No wavelet-only detections to validate.", style={'color': 'orange'})
+                return html.Div("No wavelet-only detections to validate.", style={'color': 'orange'}), empty_fig
 
             # Load signal for feature extraction
             filepath = detection_store['filepath']
@@ -1736,7 +1740,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 phases_list.append(phase)
 
             if len(waveforms) < 5:
-                return html.Div(f"Only {len(waveforms)} valid wavelet-only detections. Need at least 5 for clustering.", style={'color': 'orange'})
+                return html.Div(f"Only {len(waveforms)} valid wavelet-only detections. Need at least 5 for clustering.", style={'color': 'orange'}), empty_fig
 
             # Use PDFeatureExtractor to extract all features (same as main PD GUI)
             all_features = extractor.extract_all(waveforms, phase_angles=phases_list, normalize=True)
@@ -1866,14 +1870,81 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.Span(interpretation, style={'color': interp_color})
             ]))
 
-            return html.Div(results_children)
+            # Create PRPD plot colored by classification
+            # Map cluster labels to PD types
+            cluster_to_type = {c['cluster']: c['pd_type'] for c in classifications}
+            pulse_types = [cluster_to_type.get(lbl, 'UNKNOWN') for lbl in labels]
+
+            # Get amplitudes from features
+            amp_idx = FEATURE_NAMES.index('absolute_amplitude') if 'absolute_amplitude' in FEATURE_NAMES else 0
+            amplitudes = features_matrix[:, amp_idx]
+
+            # Color map for PD types
+            type_colors = {
+                'NOISE': 'gray',
+                'NOISE_MULTIPULSE': 'darkgray',
+                'SURFACE': 'blue',
+                'CORONA': 'red',
+                'INTERNAL': 'green',
+                'UNKNOWN': 'orange',
+            }
+
+            # Create figure with subplots
+            prpd_fig = make_subplots(
+                rows=1, cols=2,
+                subplot_titles=['PRPD by Classification', 'Amplitude Distribution'],
+                column_widths=[0.7, 0.3]
+            )
+
+            # Add traces for each PD type
+            phases_arr = np.array(phases_list)
+            for pd_type in set(pulse_types):
+                mask = np.array([pt == pd_type for pt in pulse_types])
+                if np.any(mask):
+                    prpd_fig.add_trace(
+                        go.Scatter(
+                            x=phases_arr[mask],
+                            y=amplitudes[mask],
+                            mode='markers',
+                            name=f"{pd_type} ({np.sum(mask)})",
+                            marker=dict(
+                                color=type_colors.get(pd_type, 'black'),
+                                size=4,
+                                opacity=0.6
+                            ),
+                        ),
+                        row=1, col=1
+                    )
+
+                    # Add histogram
+                    prpd_fig.add_trace(
+                        go.Histogram(
+                            y=amplitudes[mask],
+                            name=pd_type,
+                            marker_color=type_colors.get(pd_type, 'black'),
+                            opacity=0.6,
+                            showlegend=False,
+                        ),
+                        row=1, col=2
+                    )
+
+            prpd_fig.update_xaxes(title_text="Phase (degrees)", row=1, col=1)
+            prpd_fig.update_yaxes(title_text="Amplitude", row=1, col=1)
+            prpd_fig.update_xaxes(title_text="Count", row=1, col=2)
+            prpd_fig.update_layout(
+                height=400,
+                title_text="Wavelet-Only Detections by Classification",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02)
+            )
+
+            return html.Div(results_children), prpd_fig
 
         except Exception as e:
             import traceback
             return html.Div([
                 html.P(f"Validation error: {str(e)}", style={'color': 'red'}),
                 html.Pre(traceback.format_exc(), style={'fontSize': '10px'}),
-            ])
+            ]), empty_fig
 
     return app
 
@@ -2122,6 +2193,7 @@ def create_comparison_tab(loaded_data):
                 disabled=not PDLIB_AVAILABLE,
             ),
             html.Div(id='validation-results', style={'padding': '10px', 'marginTop': '10px'}),
+            dcc.Graph(id='validation-prpd-plot', figure=go.Figure()),
         ], style={'backgroundColor': '#ffe4e1', 'padding': '10px', 'marginBottom': '20px'}),
 
         # Store for detection data (to look up waveforms on click)
