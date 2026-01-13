@@ -104,6 +104,7 @@ class ClassifierCalibrator:
         dataset_features: List[DatasetFeatures],
         ac_frequency: float = 60.0,
         only_above_threshold: bool = True,
+        use_file_level: bool = False,
     ):
         """
         Initialize the calibrator.
@@ -112,6 +113,8 @@ class ClassifierCalibrator:
             dataset_features: List of DatasetFeatures from FeaturePipeline
             ac_frequency: AC frequency for phase calculations
             only_above_threshold: Only use pulses above noise floor for training
+            use_file_level: If True, aggregate features per-file instead of clustering.
+                           This bypasses HDBScan and uses file labels as ground truth.
         """
         if not OPTUNA_AVAILABLE:
             raise ImportError("optuna required for calibration. Install with: pip install optuna")
@@ -119,9 +122,60 @@ class ClassifierCalibrator:
         self.dataset_features = dataset_features
         self.ac_frequency = ac_frequency
         self.only_above_threshold = only_above_threshold
+        self.use_file_level = use_file_level
 
         # Prepare the training data
-        self._prepare_data()
+        if use_file_level:
+            self._prepare_data_file_level()
+        else:
+            self._prepare_data()
+
+    def _prepare_data_file_level(self):
+        """Prepare file-level aggregated data for evaluation (no clustering)."""
+        self.evaluation_data = []
+
+        for df in self.dataset_features:
+            expected_type = df.dataset.expected_type
+
+            # Filter pulses
+            if self.only_above_threshold:
+                valid_indices = [
+                    i for i, p in enumerate(df.pulses)
+                    if p.above_noise_floor
+                ]
+            else:
+                valid_indices = list(range(len(df.pulses)))
+
+            if len(valid_indices) < 5:
+                print(f"  Skipping {df.dataset.filename}: only {len(valid_indices)} valid pulses")
+                continue
+
+            # Get feature matrix for valid pulses
+            feature_matrix = df.feature_matrix[valid_indices]
+            phases = np.array([df.pulses[i].phase for i in valid_indices])
+
+            # Compute aggregated features for the ENTIRE file (treat as one cluster)
+            # Create a single "cluster" with label 0 containing all pulses
+            all_same_label = np.zeros(len(valid_indices), dtype=int)
+
+            cluster_features = compute_cluster_features(
+                features_matrix=feature_matrix,
+                feature_names=df.feature_names,
+                labels=all_same_label,
+                trigger_times=None,
+                ac_frequency=self.ac_frequency
+            )
+
+            # Store for evaluation - just one "cluster" (the whole file)
+            self.evaluation_data.append({
+                'filename': df.dataset.filename,
+                'expected_type': expected_type,
+                'cluster_features': cluster_features,  # Will have key 0
+                'labels': all_same_label,
+                'n_pulses': len(valid_indices),
+            })
+
+        print(f"Prepared {len(self.evaluation_data)} datasets for file-level calibration")
 
     def _prepare_data(self):
         """Prepare clustered data for evaluation."""
@@ -160,7 +214,7 @@ class ClassifierCalibrator:
 
             # Compute cluster features
             cluster_features = compute_cluster_features(
-                feature_matrix=feature_matrix,
+                features_matrix=feature_matrix,
                 feature_names=df.feature_names,
                 labels=labels,
                 trigger_times=None,
@@ -356,11 +410,16 @@ def run_grid_search(
     dataset_features: List[DatasetFeatures],
     param_grid: Optional[Dict[str, List[Any]]] = None,
     ac_frequency: float = 60.0,
+    use_file_level: bool = False,
 ) -> CalibrationResult:
     """
     Simple grid search alternative (doesn't require optuna).
 
-    This is slower but doesn't have dependencies.
+    Args:
+        dataset_features: List of DatasetFeatures from FeaturePipeline
+        param_grid: Optional custom parameter grid
+        ac_frequency: AC frequency for phase calculations
+        use_file_level: If True, aggregate features per-file instead of per-pulse
     """
     if param_grid is None:
         # Default small grid
@@ -370,6 +429,32 @@ def run_grid_search(
             'corona_internal.min_corona_score': [10, 15, 20],
             'corona_internal.min_internal_score': [10, 15, 20],
         }
+
+    # Pre-compute file-level features if needed
+    file_level_data = []
+    if use_file_level:
+        print("Computing file-level aggregated features...")
+        for df in dataset_features:
+            valid_indices = [i for i, p in enumerate(df.pulses) if p.above_noise_floor]
+            if len(valid_indices) < 5:
+                continue
+
+            feature_matrix = df.feature_matrix[valid_indices]
+            all_same_label = np.zeros(len(valid_indices), dtype=int)
+
+            cluster_features = compute_cluster_features(
+                features_matrix=feature_matrix,
+                feature_names=df.feature_names,
+                labels=all_same_label,
+                trigger_times=None,
+                ac_frequency=ac_frequency
+            )
+
+            file_level_data.append({
+                'expected_type': df.dataset.expected_type,
+                'features': cluster_features[0],  # Single cluster with label 0
+                'n_pulses': len(valid_indices),
+            })
 
     # Generate all combinations
     from itertools import product
@@ -396,34 +481,49 @@ def run_grid_search(
                 thresholds[section] = {}
             thresholds[section][key] = value
 
-        # Evaluate (simplified - just use first dataset for speed)
         classifier = PDTypeClassifier(thresholds=thresholds, verbose=False)
-
         correct = 0
         total = 0
         confusion = {}
 
-        for df in dataset_features:
-            expected_type = df.dataset.expected_type
-
-            # Quick evaluation using pulse-level classification
-            for pulse in df.pulses:
-                if not pulse.above_noise_floor:
-                    continue
-
-                # Classify based on features
-                result = classifier.classify(pulse.features, 0)
+        if use_file_level:
+            # File-level evaluation (proper cluster features)
+            for data in file_level_data:
+                expected_type = data['expected_type']
+                result = classifier.classify(data['features'], 0)
                 predicted = result['pd_type']
+                n_pulses = data['n_pulses']
 
                 if expected_type not in confusion:
                     confusion[expected_type] = {}
                 if predicted not in confusion[expected_type]:
                     confusion[expected_type][predicted] = 0
-                confusion[expected_type][predicted] += 1
+                confusion[expected_type][predicted] += n_pulses
 
                 if predicted == expected_type:
-                    correct += 1
-                total += 1
+                    correct += n_pulses
+                total += n_pulses
+        else:
+            # Pulse-level evaluation (original behavior)
+            for df in dataset_features:
+                expected_type = df.dataset.expected_type
+
+                for pulse in df.pulses:
+                    if not pulse.above_noise_floor:
+                        continue
+
+                    result = classifier.classify(pulse.features, 0)
+                    predicted = result['pd_type']
+
+                    if expected_type not in confusion:
+                        confusion[expected_type] = {}
+                    if predicted not in confusion[expected_type]:
+                        confusion[expected_type][predicted] = 0
+                    confusion[expected_type][predicted] += 1
+
+                    if predicted == expected_type:
+                        correct += 1
+                    total += 1
 
         accuracy = correct / total if total > 0 else 0.0
 

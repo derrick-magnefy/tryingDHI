@@ -11,27 +11,21 @@
       "min_internal_score": 10
     }
   },
-  "best_accuracy": 0.04454941860465116,
+  "best_accuracy": 0.09375,
   "confusion_matrix": {
     "CORONA": {
-      "NOISE": 24327,
-      "SURFACE": 64
+      "NOISE": 24391
     },
     "INTERNAL": {
-      "SURFACE": 180,
-      "CORONA": 4,
-      "NOISE": 312,
-      "INTERNAL": 53
+      "SURFACE": 169,
+      "NOISE_MULTIPULSE": 380
     },
     "SURFACE": {
-      "NOISE": 1175,
-      "SURFACE": 1173,
-      "CORONA": 181,
-      "INTERNAL": 51
+      "SURFACE": 2580
     }
   },
   "per_type_accuracy": {},
   "n_trials": 108,
-  "timestamp": "2026-01-13T07:26:29.916763",
+  "timestamp": "2026-01-13T07:55:33.582210",
   "k_threshold": 6.0
 }

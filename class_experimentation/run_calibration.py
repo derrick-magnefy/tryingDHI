@@ -84,6 +84,12 @@ def main():
         default=None,
         help='Only load specific PD types (e.g., --filter-types SURFACE CORONA)'
     )
+    parser.add_argument(
+        '--file-level',
+        action='store_true',
+        help='Use file-level aggregation instead of HDBScan clustering. '
+             'Treats each file as one cluster with the known label.'
+    )
 
     args = parser.parse_args()
 
@@ -94,6 +100,7 @@ def main():
     print(f"K-threshold: {args.k_threshold}")
     print(f"Method: {args.method}")
     print(f"Trials: {args.n_trials}")
+    print(f"File-level mode: {args.file_level}")
     print()
 
     # Step 1: Load labeled datasets
@@ -147,11 +154,12 @@ def main():
     if args.method == 'optuna':
         calibrator = ClassifierCalibrator(
             dataset_features,
-            only_above_threshold=True
+            only_above_threshold=True,
+            use_file_level=args.file_level,
         )
         result = calibrator.optimize(n_trials=args.n_trials)
     else:
-        result = run_grid_search(dataset_features)
+        result = run_grid_search(dataset_features, use_file_level=args.file_level)
 
     print()
 
