@@ -1678,14 +1678,35 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             return html.Div("PDLib modules not available. Cannot run validation.", style={'color': 'red'}), empty_fig
 
         try:
-            # Get wavelet-only detections from all bands
+            # Get ALL wavelet-detected waveforms (matched + wavelet-only)
+            # This includes everything the wavelet detector found
+            matched = detection_store.get('matched_detections', [])
             wav_d1 = detection_store.get('wavelet_d1_detections', [])
             wav_d2 = detection_store.get('wavelet_d2_detections', [])
             wav_d3 = detection_store.get('wavelet_d3_detections', [])
-            all_wavelet_only = wav_d1 + wav_d2 + wav_d3
 
-            if not all_wavelet_only:
-                return html.Div("No wavelet-only detections to validate.", style={'color': 'orange'}), empty_fig
+            # Combine all wavelet detections with source tracking
+            all_detections = []
+            for det in matched:
+                det_copy = dict(det)
+                det_copy['source'] = 'matched'
+                det_copy['band'] = det.get('w_band', det.get('t_band', 'D2'))
+                all_detections.append(det_copy)
+            for det in wav_d1:
+                det_copy = dict(det)
+                det_copy['source'] = 'wavelet_only'
+                all_detections.append(det_copy)
+            for det in wav_d2:
+                det_copy = dict(det)
+                det_copy['source'] = 'wavelet_only'
+                all_detections.append(det_copy)
+            for det in wav_d3:
+                det_copy = dict(det)
+                det_copy['source'] = 'wavelet_only'
+                all_detections.append(det_copy)
+
+            if not all_detections:
+                return html.Div("No wavelet detections to validate.", style={'color': 'orange'}), empty_fig
 
             # Load signal for feature extraction
             filepath = detection_store['filepath']
@@ -1705,11 +1726,12 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 ac_frequency=ac_frequency
             )
 
-            # Extract waveforms for each wavelet-only detection
+            # Extract waveforms for each detection
             waveforms = []
             phases_list = []
+            sources_list = []  # Track source (matched vs wavelet_only)
 
-            for det in all_wavelet_only:
+            for det in all_detections:
                 sample_index = det['index']
                 phase = det.get('phase', 0)
                 band = det.get('band', 'D2')
@@ -1738,9 +1760,14 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
 
                 waveforms.append(waveform)
                 phases_list.append(phase)
+                sources_list.append(det.get('source', 'unknown'))
 
             if len(waveforms) < 5:
-                return html.Div(f"Only {len(waveforms)} valid wavelet-only detections. Need at least 5 for clustering.", style={'color': 'orange'}), empty_fig
+                return html.Div(f"Only {len(waveforms)} valid detections. Need at least 5 for clustering.", style={'color': 'orange'}), empty_fig
+
+            # Count sources
+            n_matched = sum(1 for s in sources_list if s == 'matched')
+            n_wavelet_only = sum(1 for s in sources_list if s == 'wavelet_only')
 
             # Use PDFeatureExtractor to extract all features (same as main PD GUI)
             all_features = extractor.extract_all(waveforms, phase_angles=phases_list, normalize=True)
@@ -1793,8 +1820,9 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
 
             # Build results display
             results_children = [
-                html.H5(f"Validation Results: {len(all_wavelet_only)} wavelet-only detections"),
-                html.P(f"Clustering: {n_clusters} clusters, {n_noise} noise points ({n_noise*100//len(labels) if len(labels) > 0 else 0}% noise)"),
+                html.H5(f"Validation Results: {len(waveforms)} total wavelet detections"),
+                html.P(f"Sources: {n_matched} matched (trigger+wavelet), {n_wavelet_only} wavelet-only"),
+                html.P(f"Clustering: {n_clusters} clusters, {n_noise} DBSCAN noise points ({n_noise*100//len(labels) if len(labels) > 0 else 0}%)"),
                 html.Hr(),
             ]
 
@@ -1825,9 +1853,11 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.Tbody(summary_rows),
             ], style={'borderCollapse': 'collapse', 'marginBottom': '15px'}))
 
-            # Per-cluster details
+            # Per-cluster details with matched/wavelet-only breakdown
             results_children.append(html.H6("Cluster Details"))
             cluster_rows = []
+            sources_arr = np.array(sources_list)
+
             for c in classifications:
                 cluster_label = c['cluster']
                 pd_type = c['pd_type']
@@ -1835,17 +1865,26 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 n_pulses = c['n_pulses']
                 color = 'gray' if pd_type == 'NOISE' else ('green' if pd_type in ['CORONA', 'INTERNAL', 'SURFACE'] else 'orange')
 
+                # Count matched vs wavelet-only in this cluster
+                cluster_mask = labels == cluster_label
+                n_matched_in_cluster = np.sum((cluster_mask) & (sources_arr == 'matched'))
+                n_wavelet_in_cluster = np.sum((cluster_mask) & (sources_arr == 'wavelet_only'))
+
                 cluster_rows.append(html.Tr([
-                    html.Td(f"{'NOISE' if cluster_label == -1 else cluster_label}"),
+                    html.Td(f"{'DBSCAN-Noise' if cluster_label == -1 else cluster_label}"),
                     html.Td(f"{n_pulses}"),
-                    html.Td(pd_type, style={'color': color}),
+                    html.Td(f"{n_matched_in_cluster}"),
+                    html.Td(f"{n_wavelet_in_cluster}"),
+                    html.Td(pd_type, style={'color': color, 'fontWeight': 'bold'}),
                     html.Td(f"{confidence:.2f}" if confidence else "N/A"),
                 ]))
 
             results_children.append(html.Table([
                 html.Thead(html.Tr([
                     html.Th("Cluster"),
-                    html.Th("Pulses"),
+                    html.Th("Total"),
+                    html.Th("Matched"),
+                    html.Th("Wavelet-Only"),
                     html.Th("Classification"),
                     html.Th("Confidence"),
                 ])),
@@ -1871,7 +1910,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             ]))
 
             # Create PRPD plot colored by CLUSTER (showing classification)
-            # Each cluster gets its own color/trace with classification label
+            # Each cluster gets its own color, with matched=circle, wavelet-only=x
             cluster_to_type = {c['cluster']: c['pd_type'] for c in classifications}
 
             # Get amplitudes from features
@@ -1888,53 +1927,77 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             # Create figure with subplots
             prpd_fig = make_subplots(
                 rows=1, cols=2,
-                subplot_titles=['PRPD by Cluster (with Classification)', 'Amplitude Distribution'],
+                subplot_titles=['PRPD by Cluster (●=matched, ×=wavelet-only)', 'Amplitude Distribution'],
                 column_widths=[0.7, 0.3]
             )
 
-            # Add traces for each CLUSTER
+            # Add traces for each CLUSTER, split by source
             phases_arr = np.array(phases_list)
             unique_clusters = sorted(set(labels))
 
             for i, cluster_label in enumerate(unique_clusters):
-                mask = labels == cluster_label
-                if not np.any(mask):
+                cluster_mask = labels == cluster_label
+                if not np.any(cluster_mask):
                     continue
 
                 pd_type = cluster_to_type.get(cluster_label, 'UNKNOWN')
-                n_in_cluster = np.sum(mask)
+                n_in_cluster = np.sum(cluster_mask)
 
-                # Special handling for noise cluster (-1)
+                # Get color for this cluster
                 if cluster_label == -1:
-                    cluster_name = f"DBSCAN Noise → {pd_type} ({n_in_cluster})"
                     color = 'lightgray'
-                    marker_symbol = 'x'
+                    cluster_display = "DBSCAN-Noise"
                 else:
-                    cluster_name = f"Cluster {cluster_label} → {pd_type} ({n_in_cluster})"
-                    color = cluster_colors[i % len(cluster_colors)]
-                    marker_symbol = 'circle'
+                    color = cluster_colors[cluster_label % len(cluster_colors)]
+                    cluster_display = f"Cluster {cluster_label}"
 
-                prpd_fig.add_trace(
-                    go.Scatter(
-                        x=phases_arr[mask],
-                        y=amplitudes[mask],
-                        mode='markers',
-                        name=cluster_name,
-                        marker=dict(
-                            color=color,
-                            size=5 if cluster_label != -1 else 3,
-                            opacity=0.7 if cluster_label != -1 else 0.4,
-                            symbol=marker_symbol,
+                # Split by source: matched (circles) vs wavelet-only (x)
+                matched_mask = cluster_mask & (sources_arr == 'matched')
+                wavelet_mask = cluster_mask & (sources_arr == 'wavelet_only')
+
+                # Add matched points (circles)
+                if np.any(matched_mask):
+                    prpd_fig.add_trace(
+                        go.Scatter(
+                            x=phases_arr[matched_mask],
+                            y=amplitudes[matched_mask],
+                            mode='markers',
+                            name=f"{cluster_display} → {pd_type} (matched: {np.sum(matched_mask)})",
+                            marker=dict(
+                                color=color,
+                                size=6,
+                                opacity=0.8,
+                                symbol='circle',
+                            ),
+                            legendgroup=f"cluster_{cluster_label}",
                         ),
-                    ),
-                    row=1, col=1
-                )
+                        row=1, col=1
+                    )
 
-                # Add histogram for this cluster
+                # Add wavelet-only points (x markers)
+                if np.any(wavelet_mask):
+                    prpd_fig.add_trace(
+                        go.Scatter(
+                            x=phases_arr[wavelet_mask],
+                            y=amplitudes[wavelet_mask],
+                            mode='markers',
+                            name=f"{cluster_display} → {pd_type} (wav-only: {np.sum(wavelet_mask)})",
+                            marker=dict(
+                                color=color,
+                                size=5,
+                                opacity=0.5,
+                                symbol='x',
+                            ),
+                            legendgroup=f"cluster_{cluster_label}",
+                        ),
+                        row=1, col=1
+                    )
+
+                # Add histogram for entire cluster
                 prpd_fig.add_trace(
                     go.Histogram(
-                        y=amplitudes[mask],
-                        name=cluster_name,
+                        y=amplitudes[cluster_mask],
+                        name=f"{cluster_display}",
                         marker_color=color,
                         opacity=0.6,
                         showlegend=False,
