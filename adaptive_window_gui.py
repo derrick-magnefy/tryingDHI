@@ -403,7 +403,7 @@ def load_data(n_clicks, file_path, k_threshold, band):
             return None, None, 'No data channel found'
 
         # Get signal info
-        info = loader.get_channel_info(data_channel)
+        info = loader.get_info()
         sample_rate = info.get('sample_rate', 250e6)
         sample_interval = 1.0 / sample_rate
 
