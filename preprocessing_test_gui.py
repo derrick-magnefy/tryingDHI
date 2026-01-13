@@ -1870,71 +1870,85 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.Span(interpretation, style={'color': interp_color})
             ]))
 
-            # Create PRPD plot colored by classification
-            # Map cluster labels to PD types
+            # Create PRPD plot colored by CLUSTER (showing classification)
+            # Each cluster gets its own color/trace with classification label
             cluster_to_type = {c['cluster']: c['pd_type'] for c in classifications}
-            pulse_types = [cluster_to_type.get(lbl, 'UNKNOWN') for lbl in labels]
 
             # Get amplitudes from features
             amp_idx = FEATURE_NAMES.index('absolute_amplitude') if 'absolute_amplitude' in FEATURE_NAMES else 0
             amplitudes = features_matrix[:, amp_idx]
 
-            # Color map for PD types
-            type_colors = {
-                'NOISE': 'gray',
-                'NOISE_MULTIPULSE': 'darkgray',
-                'SURFACE': 'blue',
-                'CORONA': 'red',
-                'INTERNAL': 'green',
-                'UNKNOWN': 'orange',
-            }
+            # Color palette for clusters (distinct colors)
+            cluster_colors = [
+                '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+                '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',
+            ]
 
             # Create figure with subplots
             prpd_fig = make_subplots(
                 rows=1, cols=2,
-                subplot_titles=['PRPD by Classification', 'Amplitude Distribution'],
+                subplot_titles=['PRPD by Cluster (with Classification)', 'Amplitude Distribution'],
                 column_widths=[0.7, 0.3]
             )
 
-            # Add traces for each PD type
+            # Add traces for each CLUSTER
             phases_arr = np.array(phases_list)
-            for pd_type in set(pulse_types):
-                mask = np.array([pt == pd_type for pt in pulse_types])
-                if np.any(mask):
-                    prpd_fig.add_trace(
-                        go.Scatter(
-                            x=phases_arr[mask],
-                            y=amplitudes[mask],
-                            mode='markers',
-                            name=f"{pd_type} ({np.sum(mask)})",
-                            marker=dict(
-                                color=type_colors.get(pd_type, 'black'),
-                                size=4,
-                                opacity=0.6
-                            ),
-                        ),
-                        row=1, col=1
-                    )
+            unique_clusters = sorted(set(labels))
 
-                    # Add histogram
-                    prpd_fig.add_trace(
-                        go.Histogram(
-                            y=amplitudes[mask],
-                            name=pd_type,
-                            marker_color=type_colors.get(pd_type, 'black'),
-                            opacity=0.6,
-                            showlegend=False,
+            for i, cluster_label in enumerate(unique_clusters):
+                mask = labels == cluster_label
+                if not np.any(mask):
+                    continue
+
+                pd_type = cluster_to_type.get(cluster_label, 'UNKNOWN')
+                n_in_cluster = np.sum(mask)
+
+                # Special handling for noise cluster (-1)
+                if cluster_label == -1:
+                    cluster_name = f"DBSCAN Noise → {pd_type} ({n_in_cluster})"
+                    color = 'lightgray'
+                    marker_symbol = 'x'
+                else:
+                    cluster_name = f"Cluster {cluster_label} → {pd_type} ({n_in_cluster})"
+                    color = cluster_colors[i % len(cluster_colors)]
+                    marker_symbol = 'circle'
+
+                prpd_fig.add_trace(
+                    go.Scatter(
+                        x=phases_arr[mask],
+                        y=amplitudes[mask],
+                        mode='markers',
+                        name=cluster_name,
+                        marker=dict(
+                            color=color,
+                            size=5 if cluster_label != -1 else 3,
+                            opacity=0.7 if cluster_label != -1 else 0.4,
+                            symbol=marker_symbol,
                         ),
-                        row=1, col=2
-                    )
+                    ),
+                    row=1, col=1
+                )
+
+                # Add histogram for this cluster
+                prpd_fig.add_trace(
+                    go.Histogram(
+                        y=amplitudes[mask],
+                        name=cluster_name,
+                        marker_color=color,
+                        opacity=0.6,
+                        showlegend=False,
+                    ),
+                    row=1, col=2
+                )
 
             prpd_fig.update_xaxes(title_text="Phase (degrees)", row=1, col=1)
             prpd_fig.update_yaxes(title_text="Amplitude", row=1, col=1)
             prpd_fig.update_xaxes(title_text="Count", row=1, col=2)
             prpd_fig.update_layout(
-                height=400,
-                title_text="Wavelet-Only Detections by Classification",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02)
+                height=500,
+                title_text="Wavelet-Only Detections by Cluster",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
             )
 
             return html.Div(results_children), prpd_fig

@@ -84,6 +84,9 @@ class PDTypeClassifier:
                 'max_amplitude_cv': 1.5,  # High CV = very inconsistent = likely noise
                 'max_pulses_per_cycle': 20.0,  # Many pulses per cycle = likely noise
                 'noise_score_threshold': 0.35,  # Balanced threshold
+                # Amplitude/SNR based noise detection (primary differentiator for sub-threshold)
+                'min_mean_snr_for_pd': 6.0,  # Real PD should have SNR > 6 dB
+                'min_mean_amplitude_for_pd': 0.001,  # Real PD should have decent amplitude
             },
             'phase_spread': {
                 'surface_phase_spread_min': 120.0,
@@ -459,6 +462,27 @@ class PDTypeClassifier:
         if pulses_per_cycle > cfg.get('max_pulses_per_cycle', 20.0):
             score += 0.10  # Reduced from 0.15
             reasons.append(f"high_pulse_rate={pulses_per_cycle:.1f}/cycle")
+
+        # 4. Amplitude/SNR based noise detection (PRIMARY for sub-threshold)
+        # Real PD should have decent amplitude and SNR even if below trigger threshold
+        # This is a key differentiator: Surface PD has HIGH amplitude, noise has LOW amplitude
+        mean_snr = self._get_feature(features, 'mean_signal_to_noise_ratio',
+                                     self._get_feature(features, 'signal_to_noise_ratio', 10))
+        mean_amp = self._get_feature(features, 'mean_absolute_amplitude',
+                                     self._get_feature(features, 'absolute_amplitude', 0.01))
+
+        min_snr_for_pd = cfg.get('min_mean_snr_for_pd', 6.0)
+        min_amp_for_pd = cfg.get('min_mean_amplitude_for_pd', 0.001)
+
+        # Low SNR is a strong noise indicator
+        if mean_snr < min_snr_for_pd:
+            score += 0.15
+            reasons.append(f"low_mean_snr={mean_snr:.1f}dB")
+
+        # Very low amplitude combined with other noise indicators
+        if mean_amp < min_amp_for_pd:
+            score += 0.10
+            reasons.append(f"low_mean_amp={mean_amp:.2e}")
 
         return score, reasons
 
