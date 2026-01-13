@@ -93,8 +93,10 @@ class PDTypeClassifier:
             },
             'surface_detection': {
                 'weights': {'primary': 4, 'secondary': 3, 'mid': 2, 'supporting': 1},
-                'min_surface_score': 10,
+                'min_surface_score': 8,  # Lowered from 10
                 'surface_phase_spread': 120.0,
+                # High amplitude is a key Surface indicator
+                'surface_min_amplitude': 0.005,  # High amplitude suggests Surface PD
                 'corona_phase_spread': 100.0,
                 'surface_max_slew_rate': 5.0e6,
                 'corona_min_slew_rate': 1.0e7,
@@ -103,7 +105,7 @@ class PDTypeClassifier:
                 'surface_min_cv': 0.4,
                 'corona_max_cv': 0.3,
                 'surface_min_crest_factor': 4.0,
-                'surface_max_crest_factor': 6.0,
+                'surface_max_crest_factor': 10.0,  # Expanded from 6.0 - Surface can have high crest factor
                 'corona_min_crest_factor': 6.0,
                 'surface_min_cross_corr': 0.4,
                 'surface_max_cross_corr': 0.6,
@@ -497,10 +499,18 @@ class PDTypeClassifier:
         score = 0
         indicators = []
 
-        # Primary: phase spread
+        # Primary: phase spread (wide activity across phases)
         if phase_spread > cfg['surface_phase_spread']:
             score += weights['primary']
             indicators.append(f"phase_spread={phase_spread:.1f}°")
+
+        # Primary: HIGH AMPLITUDE is a key Surface PD indicator
+        # Surface PD typically has higher amplitude than Corona/Internal
+        mean_amp = self._get_feature(features, 'mean_absolute_amplitude',
+                                     self._get_feature(features, 'absolute_amplitude', 0))
+        if mean_amp > cfg.get('surface_min_amplitude', 0.005):
+            score += weights['primary']
+            indicators.append(f"high_amp={mean_amp:.3f}")
 
         # Secondary features
         slew_rate = self._get_feature(features, 'mean_slew_rate',
@@ -551,7 +561,7 @@ class PDTypeClassifier:
             indicators.append(f"freq={dom_freq/1e6:.1f}MHz")
 
         max_score = (
-            weights['primary'] +
+            2 * weights['primary'] +  # phase_spread + high_amplitude
             3 * weights['secondary'] +
             2 * weights['mid'] +
             3 * weights['supporting']
