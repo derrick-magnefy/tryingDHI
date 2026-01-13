@@ -412,7 +412,8 @@ def load_data(n_clicks, file_path, k_threshold, band):
 
         # Run DWT detection
         detector = DWTDetector(sample_rate=sample_rate)
-        events = detector.detect(raw_signal, k_factor=float(k_threshold))
+        detection_result = detector.detect(raw_signal)
+        events = detection_result.events
 
         # Filter by band
         band_events = [e for e in events if e.band == band]
