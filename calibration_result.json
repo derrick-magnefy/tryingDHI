@@ -1,0 +1,37 @@
+{
+  "best_thresholds": {
+    "phase_spread": {
+      "surface_phase_spread_min": 20.0
+    },
+    "surface_detection": {
+      "min_surface_score": 6
+    },
+    "corona_internal": {
+      "min_corona_score": 10,
+      "min_internal_score": 10
+    }
+  },
+  "best_accuracy": 0.04454941860465116,
+  "confusion_matrix": {
+    "CORONA": {
+      "NOISE": 24327,
+      "SURFACE": 64
+    },
+    "INTERNAL": {
+      "SURFACE": 180,
+      "CORONA": 4,
+      "NOISE": 312,
+      "INTERNAL": 53
+    },
+    "SURFACE": {
+      "NOISE": 1175,
+      "SURFACE": 1173,
+      "CORONA": 181,
+      "INTERNAL": 51
+    }
+  },
+  "per_type_accuracy": {},
+  "n_trials": 108,
+  "timestamp": "2026-01-13T07:18:05.715894",
+  "k_threshold": 6.0
+}
