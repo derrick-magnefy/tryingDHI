@@ -1730,6 +1730,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             waveforms = []
             phases_list = []
             sources_list = []  # Track source (matched vs wavelet_only)
+            signed_amplitudes = []  # Store signed peak amplitudes for PRPD plot
 
             for det in all_detections:
                 sample_index = det['index']
@@ -1758,9 +1759,15 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 if len(waveform) < 20:
                     continue
 
+                # Get signed peak amplitude (like original PRPD graph)
+                abs_wfm = np.abs(waveform)
+                peak_idx_local = np.argmax(abs_wfm)
+                signed_amplitude = waveform[peak_idx_local]  # Actual signed value
+
                 waveforms.append(waveform)
                 phases_list.append(phase)
                 sources_list.append(det.get('source', 'unknown'))
+                signed_amplitudes.append(signed_amplitude)  # Store for PRPD plot
 
             if len(waveforms) < 5:
                 return html.Div(f"Only {len(waveforms)} valid detections. Need at least 5 for clustering.", style={'color': 'orange'}), empty_fig
@@ -1913,20 +1920,8 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             cluster_to_type = {c['cluster']: c['pd_type'] for c in classifications}
             cluster_to_reasoning = {c['cluster']: c.get('reasoning', []) for c in classifications}
 
-            # Get SIGNED amplitudes (positive/negative like original PRPD)
-            # Use peak_amplitude_positive and peak_amplitude_negative to determine sign
-            pos_amp_idx = FEATURE_NAMES.index('peak_amplitude_positive') if 'peak_amplitude_positive' in FEATURE_NAMES else None
-            neg_amp_idx = FEATURE_NAMES.index('peak_amplitude_negative') if 'peak_amplitude_negative' in FEATURE_NAMES else None
-
-            if pos_amp_idx is not None and neg_amp_idx is not None:
-                pos_amps = features_matrix[:, pos_amp_idx]
-                neg_amps = features_matrix[:, neg_amp_idx]
-                # Use positive if larger, else use negative (as negative value)
-                amplitudes = np.where(pos_amps >= neg_amps, pos_amps, -neg_amps)
-            else:
-                # Fallback to absolute amplitude
-                amp_idx = FEATURE_NAMES.index('absolute_amplitude') if 'absolute_amplitude' in FEATURE_NAMES else 0
-                amplitudes = features_matrix[:, amp_idx]
+            # Use signed amplitudes extracted during waveform processing
+            amplitudes = np.array(signed_amplitudes)
 
             # Color palette for clusters
             cluster_colors = [
