@@ -2013,6 +2013,124 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                     html.Ul([html.Li(r) for r in reasoning], style={'marginTop': '5px', 'marginBottom': '10px', 'fontSize': '12px'}),
                 ], style={'marginBottom': '10px', 'padding': '5px', 'backgroundColor': '#f9f9f9', 'borderLeft': f'3px solid {color}'}))
 
+            # ===== COPY-PASTE SECTION FOR CLASSIFIER TUNING =====
+            # Generate a text block with key features for each cluster that user can copy-paste
+            results_children.append(html.Hr())
+            results_children.append(html.H6("📋 Cluster Features for Tuning (copy-paste this)"))
+            results_children.append(html.P(
+                "Copy the text below and tell me which clusters should be which PD type (SURFACE, CORONA, INTERNAL, or NOISE).",
+                style={'fontStyle': 'italic', 'color': '#666'}
+            ))
+
+            # Build the copy-paste text
+            tuning_lines = []
+            tuning_lines.append("=" * 70)
+            tuning_lines.append("CLUSTER FEATURES FOR CLASSIFIER TUNING")
+            tuning_lines.append("=" * 70)
+            tuning_lines.append("")
+
+            for c in classifications:
+                cluster_label = c['cluster']
+                pd_type = c['pd_type']
+                n_pulses = c['n_pulses']
+                confidence = c.get('confidence', 0)
+
+                cluster_display = "DBSCAN-Noise" if cluster_label == -1 else f"Cluster {cluster_label}"
+                cf = cluster_features_dict.get(cluster_label, {})
+
+                tuning_lines.append(f"--- {cluster_display} ({n_pulses} pulses) ---")
+                tuning_lines.append(f"Current Classification: {pd_type} (confidence: {confidence:.2f})")
+                tuning_lines.append(f"YOUR CORRECTION: _____________ (SURFACE / CORONA / INTERNAL / NOISE)")
+                tuning_lines.append("")
+                tuning_lines.append("Key Features:")
+
+                # Phase-related features (critical for PD type)
+                phase_spread = cf.get('phase_spread', 0)
+                phase_max = cf.get('phase_of_max_activity', 0)
+                phase_entropy = cf.get('phase_entropy', 0)
+                tuning_lines.append(f"  phase_spread:        {phase_spread:.1f}° (Surface threshold: 30°)")
+                tuning_lines.append(f"  phase_of_max:        {phase_max:.1f}°")
+                tuning_lines.append(f"  phase_entropy:       {phase_entropy:.3f} (>0.95 suggests noise)")
+
+                # Asymmetry (Corona vs Internal)
+                asymmetry = cf.get('discharge_asymmetry', 0)
+                tuning_lines.append(f"  discharge_asymmetry: {asymmetry:.3f} (Corona: <-0.6 or >0.6, Internal: -0.9 to 0.9)")
+
+                # Amplitude/Energy
+                mean_amp = cf.get('mean_absolute_amplitude', cf.get('absolute_amplitude', 0))
+                mean_snr = cf.get('mean_signal_to_noise_ratio', cf.get('signal_to_noise_ratio', 0))
+                tuning_lines.append(f"  mean_amplitude:      {mean_amp:.4f}")
+                tuning_lines.append(f"  mean_SNR:            {mean_snr:.1f} dB")
+
+                # Spectral features
+                spec_low = cf.get('mean_spectral_power_low', cf.get('spectral_power_low', 0))
+                spec_high = cf.get('mean_spectral_power_high', cf.get('spectral_power_high', 0))
+                spec_ratio = cf.get('spectral_power_ratio', spec_high / spec_low if spec_low > 0 else 0)
+                tuning_lines.append(f"  spectral_power_low:  {spec_low:.3f}")
+                tuning_lines.append(f"  spectral_power_high: {spec_high:.3f}")
+                tuning_lines.append(f"  spectral_ratio:      {spec_ratio:.3f}")
+
+                # Timing/shape features
+                slew = cf.get('mean_slew_rate', cf.get('slew_rate', 0))
+                crest = cf.get('mean_crest_factor', cf.get('crest_factor', 0))
+                cv = cf.get('coefficient_of_variation', 0)
+                osc = cf.get('mean_oscillation_count', cf.get('oscillation_count', 0))
+                tuning_lines.append(f"  mean_slew_rate:      {slew:.2e}")
+                tuning_lines.append(f"  mean_crest_factor:   {crest:.2f}")
+                tuning_lines.append(f"  coeff_of_variation:  {cv:.3f}")
+                tuning_lines.append(f"  oscillation_count:   {osc:.1f}")
+
+                # Correlation
+                cross_corr = cf.get('cross_correlation', 0)
+                amp_phase_corr = cf.get('amplitude_phase_correlation', 0)
+                tuning_lines.append(f"  cross_correlation:   {cross_corr:.3f}")
+                tuning_lines.append(f"  amp_phase_corr:      {amp_phase_corr:.3f}")
+
+                # Quadrant percentages (useful for phase analysis)
+                q1 = cf.get('quadrant_1_percentage', 0)
+                q2 = cf.get('quadrant_2_percentage', 0)
+                q3 = cf.get('quadrant_3_percentage', 0)
+                q4 = cf.get('quadrant_4_percentage', 0)
+                tuning_lines.append(f"  quadrants (Q1/Q2/Q3/Q4): {q1:.1f}% / {q2:.1f}% / {q3:.1f}% / {q4:.1f}%")
+
+                tuning_lines.append("")
+
+            tuning_lines.append("=" * 70)
+            tuning_lines.append("INSTRUCTIONS:")
+            tuning_lines.append("1. Fill in YOUR CORRECTION for each cluster")
+            tuning_lines.append("2. Copy and paste this entire block to Claude")
+            tuning_lines.append("3. I will suggest threshold adjustments based on your corrections")
+            tuning_lines.append("=" * 70)
+
+            tuning_text = "\n".join(tuning_lines)
+
+            # Add as a pre-formatted textarea that's easy to copy
+            # Use dcc.Clipboard for native copy functionality
+            results_children.append(html.Div([
+                dcc.Textarea(
+                    id='tuning-data-textarea',
+                    value=tuning_text,
+                    style={
+                        'width': '100%',
+                        'height': '400px',
+                        'fontFamily': 'monospace',
+                        'fontSize': '11px',
+                        'backgroundColor': '#f5f5f5',
+                        'border': '1px solid #ccc',
+                        'padding': '10px',
+                    },
+                    readOnly=True,
+                ),
+                html.Div([
+                    dcc.Clipboard(
+                        target_id='tuning-data-textarea',
+                        title="Copy to clipboard",
+                        style={'fontSize': '20px', 'marginRight': '10px', 'cursor': 'pointer'}
+                    ),
+                    html.Span("Click 📋 to copy, then paste to Claude", style={'color': '#666', 'fontSize': '12px'}),
+                ], style={'marginTop': '5px', 'display': 'flex', 'alignItems': 'center'}),
+            ]))
+
             return html.Div(results_children), prpd_fig
 
         except Exception as e:
