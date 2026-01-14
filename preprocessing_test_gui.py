@@ -398,8 +398,13 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
             )
             detection_result = detector.detect(signal, phases, ac_freq)
 
-            # Extract waveforms
-            extractor = WaveletExtractor(sample_rate=sample_rate)
+            # Extract waveforms with SmartBounds adaptive windowing
+            extractor = WaveletExtractor(
+                sample_rate=sample_rate,
+                adaptive_window=True,
+                snr_threshold=2.0,
+                min_window_us=1.0,
+            )
             extraction_result = extractor.extract(signal, detection_result)
 
             # Create results display
@@ -422,6 +427,7 @@ def create_app(data_dir: str = DEFAULT_DATA_DIR):
                 html.H5("Detection Results:"),
                 html.P([html.Strong("Total Events Detected: "), str(len(detection_result.events))]),
                 html.P([html.Strong("Waveforms Extracted: "), str(extraction_result.num_waveforms)]),
+                html.P([html.Strong("Adaptive Window: "), "SmartBounds 2x+ (min 1.0µs)"]),
                 html.Ul([
                     html.Li(f"{band}: {detection_result.band_stats[band]['num_detections']} detections, "
                            f"threshold={detection_result.thresholds[band]:.2e}")
