@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from pre_middleware.loaders.mat_loader import MatLoader
 from pre_middleware.waveletProc.dwt_detector import DWTDetector
-from pre_middleware.waveletProc.waveform_extractor import WaveletExtractor
+from pre_middleware.waveletProc.waveform_extractor import WaveletExtractor, smart_bounds
 from pdlib.features.pulse_detection import detect_pulses
 from scipy.signal import find_peaks, hilbert
 from scipy.ndimage import gaussian_filter1d
@@ -284,6 +284,8 @@ def method_smart_bounds_padded(waveform: np.ndarray, sample_interval: float,
 
 
 # All methods to test
+# Note: SmartBounds entries use the production smart_bounds from waveform_extractor
+# which includes multi-pulse detection to prevent minimum window from including adjacent pulses
 METHODS = {
     'Original': method_original,
     'Rise-Fall': method_rise_fall_based,
@@ -294,11 +296,16 @@ METHODS = {
     'Peak2.0us': lambda w, s: method_peak_centered(w, s, 2.0),
     'AdaptShrink': method_adaptive_shrink,
     'Derivative': method_derivative_based,
+    # Local SmartBounds (for comparison with legacy)
     'SmartBounds': method_smart_bounds,
     'SmartBounds5x': lambda w, s: method_smart_bounds(w, s, snr_threshold=5.0),
     'SmartBounds2x': lambda w, s: method_smart_bounds(w, s, snr_threshold=2.0),
     'SB+0.5us': lambda w, s: method_smart_bounds_padded(w, s, 0.5),
     'SB+1.0us': lambda w, s: method_smart_bounds_padded(w, s, 1.0),
+    # Production SmartBounds with multi-pulse detection
+    'SB2x+1.0us(prod)': lambda w, s: smart_bounds(w, s, snr_threshold=2.0, min_window_us=1.0),
+    'SB2x+0.5us(prod)': lambda w, s: smart_bounds(w, s, snr_threshold=2.0, min_window_us=0.5),
+    'SB3x+1.0us(prod)': lambda w, s: smart_bounds(w, s, snr_threshold=3.0, min_window_us=1.0),
 }
 
 

@@ -36,6 +36,13 @@ from .dwt_detector import (
     BAND_CHARACTERISTICS,
 )
 
+# Import pulse detection for multi-pulse handling
+try:
+    from pdlib.features.pulse_detection import detect_pulses
+    PULSE_DETECTION_AVAILABLE = True
+except ImportError:
+    PULSE_DETECTION_AVAILABLE = False
+
 
 # =============================================================================
 # ADAPTIVE WINDOWING (SmartBounds)
@@ -47,11 +54,15 @@ def smart_bounds(
     noise_window: int = 50,
     snr_threshold: float = 2.0,
     min_window_us: float = 1.0,
+    min_separation_us: float = 0.5,
 ) -> Dict[str, Any]:
     """
     Smart boundary detection using envelope analysis and noise floor estimation.
 
     Finds true signal boundaries based on SNR, with a minimum window guarantee.
+    Detects multi-pulse waveforms and isolates the main pulse to prevent
+    the minimum window from expanding into adjacent pulses.
+
     This is the default adaptive windowing method: SmartBounds 2x+ (min 1.0µs).
 
     Args:
@@ -61,6 +72,7 @@ def smart_bounds(
         snr_threshold: Multiplier above noise floor to define signal boundary
                       (2.0=aggressive, 3.0=default, 5.0=conservative)
         min_window_us: Minimum window size in microseconds
+        min_separation_us: Minimum separation between pulses for multi-pulse detection
 
     Returns:
         Dict with 'waveform', 'start_idx', 'end_idx', 'name', 'description'
@@ -105,33 +117,110 @@ def smart_bounds(
         half_win = max(min_samples // 2, 25)
         start_idx = max(0, peak_idx - half_win)
         end_idx = min(n, peak_idx + half_win)
-    else:
-        # Find boundaries where envelope crosses threshold
-        start_idx = 0
-        for i in range(peak_idx, -1, -1):
+        return {
+            'waveform': waveform[start_idx:end_idx],
+            'start_idx': start_idx,
+            'end_idx': end_idx,
+            'name': f'SmartBounds {snr_threshold:.0f}x+ (min {min_window_us}µs)',
+            'description': 'Low SNR, minimal window around peak',
+        }
+
+    # Check for multi-pulse
+    pulse_indices = []
+    is_multi_pulse = False
+
+    if PULSE_DETECTION_AVAILABLE:
+        pulse_info = detect_pulses(waveform, sample_interval,
+                                   amplitude_threshold_ratio=0.3,
+                                   min_pulse_separation_us=min_separation_us)
+        is_multi_pulse = pulse_info['pulse_count'] > 1
+        pulse_indices = pulse_info.get('pulse_indices', [])
+
+    if is_multi_pulse and len(pulse_indices) > 1:
+        # Multi-pulse detected: isolate the main pulse
+        pulse_amps = [envelope_smooth[i] for i in pulse_indices]
+        main_pulse_idx = pulse_indices[np.argmax(pulse_amps)]
+
+        # Find boundaries using envelope, but stop at adjacent pulses
+        start_idx = main_pulse_idx
+        for i in range(main_pulse_idx, -1, -1):
             if envelope_smooth[i] < signal_threshold:
                 start_idx = i
                 break
-
-        end_idx = n - 1
-        for i in range(peak_idx, n):
-            if envelope_smooth[i] < signal_threshold:
-                # Check if signal stays low (not just a dip)
-                remaining = envelope_smooth[i:min(i + 50, n)]
-                if len(remaining) == 0 or np.max(remaining) < signal_threshold * 1.5:
-                    end_idx = i
+            # Stop before reaching another pulse
+            for other_idx in pulse_indices:
+                if other_idx < main_pulse_idx and i <= other_idx:
+                    start_idx = max(i, other_idx + 10)
                     break
 
-        # Add padding proportional to signal duration
-        signal_duration = end_idx - start_idx
-        padding = max(10, signal_duration // 10)
-        start_idx = max(0, start_idx - padding)
-        end_idx = min(n, end_idx + padding)
+        end_idx = main_pulse_idx
+        for i in range(main_pulse_idx, n):
+            if envelope_smooth[i] < signal_threshold:
+                end_idx = i
+                break
+            # Stop before reaching another pulse
+            for other_idx in pulse_indices:
+                if other_idx > main_pulse_idx and i >= other_idx - 10:
+                    end_idx = min(i, other_idx - 10)
+                    break
 
-    # Ensure minimum window size
+        # Add small padding (but don't cross into other pulses)
+        padding = max(10, int(0.1e-6 / sample_interval))
+
+        # Find nearest other pulse boundaries
+        left_boundary = 0
+        right_boundary = n
+        for other_idx in pulse_indices:
+            if other_idx < main_pulse_idx:
+                left_boundary = max(left_boundary, other_idx + 10)
+            elif other_idx > main_pulse_idx:
+                right_boundary = min(right_boundary, other_idx - 10)
+
+        start_idx = max(left_boundary, start_idx - padding)
+        end_idx = min(right_boundary, end_idx + padding)
+
+        # Apply minimum window, but constrained to not cross pulse boundaries
+        current_samples = end_idx - start_idx
+        if current_samples < min_samples:
+            half_window = min_samples // 2
+            new_start = max(left_boundary, main_pulse_idx - half_window)
+            new_end = min(right_boundary, main_pulse_idx + half_window)
+            start_idx = new_start
+            end_idx = new_end
+
+        return {
+            'waveform': waveform[start_idx:end_idx],
+            'start_idx': start_idx,
+            'end_idx': end_idx,
+            'name': f'SmartBounds {snr_threshold:.0f}x+ (min {min_window_us}µs)',
+            'description': f'Multi-pulse isolated ({len(pulse_indices)}→1), {snr_threshold:.0f}x noise',
+        }
+
+    # Single pulse - find true boundaries where envelope returns to noise
+    start_idx = 0
+    for i in range(peak_idx, -1, -1):
+        if envelope_smooth[i] < signal_threshold:
+            start_idx = i
+            break
+
+    end_idx = n - 1
+    for i in range(peak_idx, n):
+        if envelope_smooth[i] < signal_threshold:
+            # Check if signal stays low (not just a dip)
+            remaining = envelope_smooth[i:min(i + 50, n)]
+            if len(remaining) == 0 or np.max(remaining) < signal_threshold * 1.5:
+                end_idx = i
+                break
+
+    # Add padding proportional to signal duration
+    signal_duration = end_idx - start_idx
+    padding = max(10, signal_duration // 10)
+    start_idx = max(0, start_idx - padding)
+    end_idx = min(n, end_idx + padding)
+
+    # Ensure minimum window size (safe for single pulse)
     current_samples = end_idx - start_idx
     if current_samples < min_samples:
-        # Expand to minimum window centered on peak
         half_window = min_samples // 2
         start_idx = max(0, peak_idx - half_window)
         end_idx = min(n, peak_idx + half_window)
