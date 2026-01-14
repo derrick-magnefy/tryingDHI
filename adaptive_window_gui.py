@@ -389,14 +389,19 @@ def method_smart_bounds_aggressive(waveform: np.ndarray, sample_interval: float)
 
 
 def method_smart_bounds_padded(waveform: np.ndarray, sample_interval: float,
-                                min_window_us: float = 0.5) -> Dict:
+                                min_window_us: float = 0.5,
+                                snr_threshold: float = 3.0) -> Dict:
     """
     SmartBounds with minimum window guarantee.
     Finds smart boundaries but ensures at least min_window_us around the peak.
     Best of both worlds: isolates multi-pulse, keeps enough signal for classification.
+
+    Parameters:
+        min_window_us: minimum window size in microseconds
+        snr_threshold: SNR multiplier for boundary detection (2.0=aggressive, 3.0=default, 5.0=conservative)
     """
-    # First get smart bounds result
-    result = method_smart_bounds(waveform, sample_interval)
+    # First get smart bounds result with specified threshold
+    result = method_smart_bounds(waveform, sample_interval, snr_threshold=snr_threshold)
 
     # Calculate minimum window in samples
     min_samples = int(min_window_us * 1e-6 / sample_interval)
@@ -405,8 +410,8 @@ def method_smart_bounds_padded(waveform: np.ndarray, sample_interval: float,
     current_samples = len(result['waveform'])
 
     if current_samples >= min_samples:
-        result['name'] = f'SmartBounds+ (min {min_window_us}µs)'
-        result['description'] = f'Envelope bounds, kept {current_samples} samples (>= {min_samples} min)'
+        result['name'] = f'SmartBounds {snr_threshold:.0f}x+ (min {min_window_us}µs)'
+        result['description'] = f'Envelope bounds ({snr_threshold:.0f}x), kept {current_samples} samples (>= {min_samples} min)'
         return result
 
     # Need to expand - center around peak of the extracted region
@@ -423,11 +428,11 @@ def method_smart_bounds_padded(waveform: np.ndarray, sample_interval: float,
     new_end = min(len(waveform), peak_in_original + half_window)
 
     return {
-        'name': f'SmartBounds+ (min {min_window_us}µs)',
+        'name': f'SmartBounds {snr_threshold:.0f}x+ (min {min_window_us}µs)',
         'waveform': waveform[new_start:new_end],
         'start_idx': new_start,
         'end_idx': new_end,
-        'description': f'Expanded to {min_window_us}µs minimum window'
+        'description': f'Expanded to {min_window_us}µs minimum ({snr_threshold:.0f}x threshold)'
     }
 
 
@@ -445,8 +450,10 @@ ADAPTIVE_METHODS = {
     'smart_bounds': method_smart_bounds,
     'smart_bounds_conservative': method_smart_bounds_conservative,
     'smart_bounds_aggressive': method_smart_bounds_aggressive,
-    'smart_bounds_0.5us': lambda w, s: method_smart_bounds_padded(w, s, 0.5),
-    'smart_bounds_1.0us': lambda w, s: method_smart_bounds_padded(w, s, 1.0),
+    'smart_bounds_3x_0.5us': lambda w, s: method_smart_bounds_padded(w, s, 0.5, 3.0),
+    'smart_bounds_3x_1.0us': lambda w, s: method_smart_bounds_padded(w, s, 1.0, 3.0),
+    'smart_bounds_2x_0.5us': lambda w, s: method_smart_bounds_padded(w, s, 0.5, 2.0),
+    'smart_bounds_2x_1.0us': lambda w, s: method_smart_bounds_padded(w, s, 1.0, 2.0),
 }
 
 
@@ -546,13 +553,15 @@ app.layout = html.Div([
                     {'label': 'Peak Centered 2.0µs', 'value': 'peak_2.0us'},
                     {'label': 'Adaptive Shrink', 'value': 'adaptive_shrink'},
                     {'label': 'Derivative Based', 'value': 'derivative'},
-                    {'label': 'SmartBounds (3x noise)', 'value': 'smart_bounds'},
-                    {'label': 'SmartBounds Conservative (5x)', 'value': 'smart_bounds_conservative'},
-                    {'label': 'SmartBounds Aggressive (2x)', 'value': 'smart_bounds_aggressive'},
-                    {'label': 'SmartBounds+ (min 0.5µs)', 'value': 'smart_bounds_0.5us'},
-                    {'label': 'SmartBounds+ (min 1.0µs)', 'value': 'smart_bounds_1.0us'},
+                    {'label': 'SmartBounds 3x', 'value': 'smart_bounds'},
+                    {'label': 'SmartBounds 5x (conservative)', 'value': 'smart_bounds_conservative'},
+                    {'label': 'SmartBounds 2x (aggressive)', 'value': 'smart_bounds_aggressive'},
+                    {'label': 'SmartBounds 3x+ (min 0.5µs)', 'value': 'smart_bounds_3x_0.5us'},
+                    {'label': 'SmartBounds 3x+ (min 1.0µs)', 'value': 'smart_bounds_3x_1.0us'},
+                    {'label': 'SmartBounds 2x+ (min 0.5µs)', 'value': 'smart_bounds_2x_0.5us'},
+                    {'label': 'SmartBounds 2x+ (min 1.0µs)', 'value': 'smart_bounds_2x_1.0us'},
                 ],
-                value=['original', 'adaptive_shrink', 'smart_bounds', 'smart_bounds_1.0us'],
+                value=['original', 'smart_bounds', 'smart_bounds_2x_0.5us'],
                 inline=True,
                 style={'marginTop': '5px'}
             ),
