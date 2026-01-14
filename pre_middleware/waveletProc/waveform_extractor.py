@@ -26,6 +26,8 @@ import numpy as np
 from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass, field
 import os
+from scipy.signal import hilbert
+from scipy.ndimage import gaussian_filter1d
 
 from .dwt_detector import (
     DetectionEvent,
@@ -33,6 +35,114 @@ from .dwt_detector import (
     BAND_WINDOWS,
     BAND_CHARACTERISTICS,
 )
+
+
+# =============================================================================
+# ADAPTIVE WINDOWING (SmartBounds)
+# =============================================================================
+
+def smart_bounds(
+    waveform: np.ndarray,
+    sample_interval: float,
+    noise_window: int = 50,
+    snr_threshold: float = 2.0,
+    min_window_us: float = 0.5,
+) -> Dict[str, Any]:
+    """
+    Smart boundary detection using envelope analysis and noise floor estimation.
+
+    Finds true signal boundaries based on SNR, with a minimum window guarantee.
+    This is the default adaptive windowing method: SmartBounds 2x+ (min 0.5µs).
+
+    Args:
+        waveform: Input waveform array
+        sample_interval: Time between samples in seconds
+        noise_window: Number of samples at edges to estimate noise floor
+        snr_threshold: Multiplier above noise floor to define signal boundary
+                      (2.0=aggressive, 3.0=default, 5.0=conservative)
+        min_window_us: Minimum window size in microseconds
+
+    Returns:
+        Dict with 'waveform', 'start_idx', 'end_idx', 'name', 'description'
+    """
+    n = len(waveform)
+    min_samples = int(min_window_us * 1e-6 / sample_interval)
+
+    if n < noise_window * 2:
+        # Waveform too short for noise estimation
+        return {
+            'waveform': waveform,
+            'start_idx': 0,
+            'end_idx': n,
+            'name': f'SmartBounds {snr_threshold:.0f}x+ (min {min_window_us}µs)',
+            'description': 'Waveform too short for adaptive windowing',
+        }
+
+    # Estimate noise floor from edges
+    noise_start = waveform[:noise_window]
+    noise_end = waveform[-noise_window:]
+    noise_rms_start = np.sqrt(np.mean(noise_start ** 2))
+    noise_rms_end = np.sqrt(np.mean(noise_end ** 2))
+    noise_floor = min(noise_rms_start, noise_rms_end)
+
+    if noise_floor < 1e-10:
+        noise_floor = np.max(np.abs(waveform)) * 0.01
+
+    # Compute envelope using Hilbert transform
+    analytic_signal = hilbert(waveform)
+    envelope = np.abs(analytic_signal)
+    envelope_smooth = gaussian_filter1d(envelope, sigma=3)
+
+    # Find signal threshold
+    signal_threshold = snr_threshold * noise_floor
+    above_threshold = envelope_smooth > signal_threshold
+
+    # Find peak location
+    peak_idx = np.argmax(envelope_smooth)
+
+    if not np.any(above_threshold):
+        # Low SNR - use minimum window around peak
+        half_win = max(min_samples // 2, 25)
+        start_idx = max(0, peak_idx - half_win)
+        end_idx = min(n, peak_idx + half_win)
+    else:
+        # Find boundaries where envelope crosses threshold
+        start_idx = 0
+        for i in range(peak_idx, -1, -1):
+            if envelope_smooth[i] < signal_threshold:
+                start_idx = i
+                break
+
+        end_idx = n - 1
+        for i in range(peak_idx, n):
+            if envelope_smooth[i] < signal_threshold:
+                # Check if signal stays low (not just a dip)
+                remaining = envelope_smooth[i:min(i + 50, n)]
+                if len(remaining) == 0 or np.max(remaining) < signal_threshold * 1.5:
+                    end_idx = i
+                    break
+
+        # Add padding proportional to signal duration
+        signal_duration = end_idx - start_idx
+        padding = max(10, signal_duration // 10)
+        start_idx = max(0, start_idx - padding)
+        end_idx = min(n, end_idx + padding)
+
+    # Ensure minimum window size
+    current_samples = end_idx - start_idx
+    if current_samples < min_samples:
+        # Expand to minimum window centered on peak
+        half_window = min_samples // 2
+        start_idx = max(0, peak_idx - half_window)
+        end_idx = min(n, peak_idx + half_window)
+
+    return {
+        'waveform': waveform[start_idx:end_idx],
+        'start_idx': start_idx,
+        'end_idx': end_idx,
+        'name': f'SmartBounds {snr_threshold:.0f}x+ (min {min_window_us}µs)',
+        'description': f'Envelope-based bounds, {snr_threshold:.0f}x noise, min {min_window_us}µs',
+    }
 
 
 @dataclass
@@ -133,6 +243,9 @@ class WaveletExtractor:
         sample_rate: float = 250e6,
         overlap_handling: str = 'skip',
         validate_extraction: bool = True,
+        adaptive_window: bool = True,
+        snr_threshold: float = 2.0,
+        min_window_us: float = 0.5,
     ):
         """
         Initialize waveform extractor.
@@ -143,10 +256,16 @@ class WaveletExtractor:
                              'skip': Skip overlapping extractions
                              'allow': Allow overlaps
             validate_extraction: Validate peak is near trigger point
+            adaptive_window: Apply SmartBounds adaptive windowing (default: True)
+            snr_threshold: SNR threshold for SmartBounds (default: 2.0 = aggressive)
+            min_window_us: Minimum window size in µs for SmartBounds (default: 0.5)
         """
         self.sample_rate = sample_rate
         self.overlap_handling = overlap_handling
         self.validate_extraction = validate_extraction
+        self.adaptive_window = adaptive_window
+        self.snr_threshold = snr_threshold
+        self.min_window_us = min_window_us
 
         # Pre-compute scaled window parameters
         self._scaled_windows = {}
@@ -185,6 +304,9 @@ class WaveletExtractor:
             'skipped_bounds': 0,
             'skipped_overlap': 0,
             'by_band': {band: 0 for band in self._scaled_windows.keys()},
+            'adaptive_window': self.adaptive_window,
+            'snr_threshold': self.snr_threshold if self.adaptive_window else None,
+            'min_window_us': self.min_window_us if self.adaptive_window else None,
         }
 
         last_end = -1  # Track end of last extraction for overlap detection
@@ -215,6 +337,25 @@ class WaveletExtractor:
             # Extract waveform
             wfm_data = signal[start_idx:end_idx].copy()
 
+            # Apply adaptive windowing if enabled
+            sample_interval = 1.0 / self.sample_rate
+            if self.adaptive_window:
+                bounds_result = smart_bounds(
+                    wfm_data,
+                    sample_interval,
+                    snr_threshold=self.snr_threshold,
+                    min_window_us=self.min_window_us,
+                )
+                wfm_data = bounds_result['waveform']
+                # Update pre/post samples based on adaptive window
+                adaptive_pre = bounds_result['start_idx']
+                adaptive_post = len(bounds_result['waveform']) - (pre - adaptive_pre)
+                actual_pre = pre - bounds_result['start_idx']
+                actual_post = bounds_result['end_idx'] - pre
+            else:
+                actual_pre = pre
+                actual_post = post
+
             # Compute amplitude
             amplitude = float(np.max(np.abs(wfm_data)))
 
@@ -226,8 +367,8 @@ class WaveletExtractor:
                 source=source,
                 amplitude=amplitude,
                 significance=event.significance,
-                pre_samples=pre,
-                post_samples=post,
+                pre_samples=actual_pre,
+                post_samples=actual_post,
                 sample_rate=self.sample_rate,
             )
             waveforms.append(wfm)
@@ -395,17 +536,31 @@ def extract_wavelet_waveforms(
     signal: np.ndarray,
     detection_result: DetectionResult,
     sample_rate: float = 250e6,
+    adaptive_window: bool = True,
+    snr_threshold: float = 2.0,
+    min_window_us: float = 0.5,
 ) -> ExtractionResult:
     """
     Convenience function for waveform extraction.
+
+    By default, uses SmartBounds 2x+ (min 0.5µs) adaptive windowing to
+    find true signal boundaries and reduce false multi-pulse detections.
 
     Args:
         signal: Raw signal data
         detection_result: DetectionResult from DWTDetector
         sample_rate: Sample rate in Hz
+        adaptive_window: Apply SmartBounds adaptive windowing (default: True)
+        snr_threshold: SNR threshold for boundary detection (default: 2.0)
+        min_window_us: Minimum window size in µs (default: 0.5)
 
     Returns:
         ExtractionResult
     """
-    extractor = WaveletExtractor(sample_rate=sample_rate)
+    extractor = WaveletExtractor(
+        sample_rate=sample_rate,
+        adaptive_window=adaptive_window,
+        snr_threshold=snr_threshold,
+        min_window_us=min_window_us,
+    )
     return extractor.extract(signal, detection_result)

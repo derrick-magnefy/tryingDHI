@@ -11,6 +11,7 @@ Key Features:
 - Sample rate adaptive (125 MSPS, 250 MSPS, etc.)
 - Band-specific waveform extraction windows
 - Event tagging with originating band for classification
+- SmartBounds adaptive windowing (default: 2x SNR threshold, 0.5µs minimum)
 
 Band Characteristics:
     Band    Frequency Range     Likely PD Type          Window (250 MSPS)
@@ -25,9 +26,12 @@ Usage:
     detector = DWTDetector(sample_rate=250e6)
     events = detector.detect(signal, phases)
 
-    # Extract waveforms with band-specific windows
+    # Extract waveforms with SmartBounds adaptive windowing (default)
     extractor = WaveletExtractor(sample_rate=250e6)
     waveforms = extractor.extract(signal, events)
+
+    # Or disable adaptive windowing
+    extractor = WaveletExtractor(sample_rate=250e6, adaptive_window=False)
 """
 
 from .dwt_detector import (
@@ -54,6 +58,8 @@ from .waveform_extractor import (
     WaveletExtractor,
     WaveletWaveform,
     ExtractionResult,
+    smart_bounds,
+    extract_wavelet_waveforms,
 )
 
 __all__ = [
@@ -80,4 +86,6 @@ __all__ = [
     'WaveletExtractor',
     'WaveletWaveform',
     'ExtractionResult',
+    'smart_bounds',
+    'extract_wavelet_waveforms',
 ]
