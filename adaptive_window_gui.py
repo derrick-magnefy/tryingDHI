@@ -282,7 +282,7 @@ def method_smart_bounds(waveform: np.ndarray, sample_interval: float,
         start_idx = max(0, peak_idx - half_win)
         end_idx = min(n, peak_idx + half_win)
         return {
-            'name': 'SmartBounds (low SNR)',
+            'name': f'SmartBounds {snr_threshold:.0f}x (low SNR)',
             'waveform': waveform[start_idx:end_idx],
             'start_idx': start_idx,
             'end_idx': end_idx,
@@ -331,7 +331,7 @@ def method_smart_bounds(waveform: np.ndarray, sample_interval: float,
         end_idx = min(n, end_idx + padding)
 
         return {
-            'name': f'SmartBounds ({pulse_info["pulse_count"]}→1 pulse)',
+            'name': f'SmartBounds {snr_threshold:.0f}x ({pulse_info["pulse_count"]}→1 pulse)',
             'waveform': waveform[start_idx:end_idx],
             'start_idx': start_idx,
             'end_idx': end_idx,
@@ -370,7 +370,7 @@ def method_smart_bounds(waveform: np.ndarray, sample_interval: float,
     end_idx = min(n, end_idx + padding)
 
     return {
-        'name': 'SmartBounds (single pulse)',
+        'name': f'SmartBounds {snr_threshold:.0f}x (single pulse)',
         'waveform': waveform[start_idx:end_idx],
         'start_idx': start_idx,
         'end_idx': end_idx,
