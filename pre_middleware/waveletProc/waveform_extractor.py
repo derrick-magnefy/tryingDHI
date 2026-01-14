@@ -46,13 +46,13 @@ def smart_bounds(
     sample_interval: float,
     noise_window: int = 50,
     snr_threshold: float = 2.0,
-    min_window_us: float = 0.5,
+    min_window_us: float = 1.0,
 ) -> Dict[str, Any]:
     """
     Smart boundary detection using envelope analysis and noise floor estimation.
 
     Finds true signal boundaries based on SNR, with a minimum window guarantee.
-    This is the default adaptive windowing method: SmartBounds 2x+ (min 0.5µs).
+    This is the default adaptive windowing method: SmartBounds 2x+ (min 1.0µs).
 
     Args:
         waveform: Input waveform array
@@ -245,7 +245,7 @@ class WaveletExtractor:
         validate_extraction: bool = True,
         adaptive_window: bool = True,
         snr_threshold: float = 2.0,
-        min_window_us: float = 0.5,
+        min_window_us: float = 1.0,
     ):
         """
         Initialize waveform extractor.
@@ -258,7 +258,7 @@ class WaveletExtractor:
             validate_extraction: Validate peak is near trigger point
             adaptive_window: Apply SmartBounds adaptive windowing (default: True)
             snr_threshold: SNR threshold for SmartBounds (default: 2.0 = aggressive)
-            min_window_us: Minimum window size in µs for SmartBounds (default: 0.5)
+            min_window_us: Minimum window size in µs for SmartBounds (default: 1.0)
         """
         self.sample_rate = sample_rate
         self.overlap_handling = overlap_handling
@@ -538,12 +538,12 @@ def extract_wavelet_waveforms(
     sample_rate: float = 250e6,
     adaptive_window: bool = True,
     snr_threshold: float = 2.0,
-    min_window_us: float = 0.5,
+    min_window_us: float = 1.0,
 ) -> ExtractionResult:
     """
     Convenience function for waveform extraction.
 
-    By default, uses SmartBounds 2x+ (min 0.5µs) adaptive windowing to
+    By default, uses SmartBounds 2x+ (min 1.0µs) adaptive windowing to
     find true signal boundaries and reduce false multi-pulse detections.
 
     Args:
@@ -552,7 +552,7 @@ def extract_wavelet_waveforms(
         sample_rate: Sample rate in Hz
         adaptive_window: Apply SmartBounds adaptive windowing (default: True)
         snr_threshold: SNR threshold for boundary detection (default: 2.0)
-        min_window_us: Minimum window size in µs (default: 0.5)
+        min_window_us: Minimum window size in µs (default: 1.0)
 
     Returns:
         ExtractionResult

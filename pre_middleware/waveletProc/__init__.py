@@ -11,7 +11,7 @@ Key Features:
 - Sample rate adaptive (125 MSPS, 250 MSPS, etc.)
 - Band-specific waveform extraction windows
 - Event tagging with originating band for classification
-- SmartBounds adaptive windowing (default: 2x SNR threshold, 0.5µs minimum)
+- SmartBounds adaptive windowing (default: 2x SNR threshold, 1.0µs minimum)
 
 Band Characteristics:
     Band    Frequency Range     Likely PD Type          Window (250 MSPS)

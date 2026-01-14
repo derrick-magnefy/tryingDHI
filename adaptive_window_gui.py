@@ -561,7 +561,7 @@ app.layout = html.Div([
                     {'label': 'SmartBounds 2x+ (min 0.5µs)', 'value': 'smart_bounds_2x_0.5us'},
                     {'label': 'SmartBounds 2x+ (min 1.0µs)', 'value': 'smart_bounds_2x_1.0us'},
                 ],
-                value=['original', 'smart_bounds', 'smart_bounds_2x_0.5us'],
+                value=['original', 'smart_bounds', 'smart_bounds_2x_1.0us'],
                 inline=True,
                 style={'marginTop': '5px'}
             ),
