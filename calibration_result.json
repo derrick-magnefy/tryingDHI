@@ -1,0 +1,61 @@
+{
+  "best_thresholds": {
+    "noise_detection": {
+      "noise_score_threshold": 0.45,
+      "min_phase_entropy": 0.99,
+      "min_mean_snr_for_pd": 6.5,
+      "min_spectral_flatness": 0.7,
+      "min_slew_rate": 700000,
+      "min_crest_factor": 2.5,
+      "max_pulses_per_cycle": 10,
+      "max_amplitude_cv": 2.75,
+      "min_pulses_for_multipulse": 6
+    },
+    "phase_spread": {
+      "surface_phase_spread_min": 110
+    },
+    "surface_detection": {
+      "min_surface_score": 4,
+      "surface_phase_spread": 150,
+      "surface_max_phase_entropy": 0.8,
+      "surface_min_snr_for_focused": 4.5,
+      "surface_max_slew_rate": 3000000
+    },
+    "corona_internal": {
+      "min_corona_score": 9,
+      "corona_neg_max_asymmetry": -0.75,
+      "corona_pos_min_asymmetry": 0.65,
+      "corona_min_slew_rate": 50000000,
+      "corona_max_amp_phase_corr": 0.2,
+      "corona_max_spectral_power_low": 0.65,
+      "min_internal_score": 8,
+      "internal_min_asymmetry": -0.85,
+      "internal_max_asymmetry": 0.65,
+      "internal_min_amp_phase_corr": 0.5,
+      "internal_min_spectral_power_low": 0.8999999999999999,
+      "internal_min_slew_rate": 10000000,
+      "internal_max_slew_rate": 55000000
+    }
+  },
+  "best_accuracy": 0.993859011627907,
+  "confusion_matrix": {
+    "CORONA": {
+      "CORONA": 24391
+    },
+    "INTERNAL": {
+      "SURFACE": 169,
+      "INTERNAL": 380
+    },
+    "SURFACE": {
+      "SURFACE": 2580
+    }
+  },
+  "per_type_accuracy": {
+    "CORONA": 1.0,
+    "INTERNAL": 0.692167577413479,
+    "SURFACE": 1.0
+  },
+  "n_trials": 10,
+  "timestamp": "2026-01-13T08:18:41.993442",
+  "k_threshold": 6.0
+}

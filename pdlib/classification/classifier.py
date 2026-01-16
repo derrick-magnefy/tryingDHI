@@ -78,15 +78,29 @@ class PDTypeClassifier:
                 'min_cross_correlation': 0.3,
                 'max_coefficient_of_variation': 2.0,
                 'min_pulses_for_multipulse': 2,
+                # New noise indicators for sub-threshold detection
+                # NOTE: Tuned to avoid false positives on Surface PD (which has wide phase spread)
+                'min_phase_entropy': 0.95,  # Very high entropy = nearly uniform = likely noise
+                'max_amplitude_cv': 1.5,  # High CV = very inconsistent = likely noise
+                'max_pulses_per_cycle': 20.0,  # Many pulses per cycle = likely noise
+                'noise_score_threshold': 0.35,  # Balanced threshold
+                # Amplitude/SNR based noise detection (primary differentiator for sub-threshold)
+                'min_mean_snr_for_pd': 6.0,  # Real PD should have SNR > 6 dB
+                'min_mean_amplitude_for_pd': 0.001,  # Real PD should have decent amplitude
             },
             'phase_spread': {
-                'surface_phase_spread_min': 120.0,
+                'surface_phase_spread_min': 30.0,  # Lowered from 120 - Surface can have narrow phase spread
             },
             'surface_detection': {
                 'weights': {'primary': 4, 'secondary': 3, 'mid': 2, 'supporting': 1},
-                'min_surface_score': 10,
-                'surface_phase_spread': 120.0,
+                'min_surface_score': 8,
+                'surface_phase_spread': 30.0,  # Lowered from 120 - Surface can have narrow phase spread
                 'corona_phase_spread': 100.0,
+                # NEW: Focused PD detection - low entropy + good SNR indicates real Surface PD
+                # even with narrow phase spread (distinguishes from Corona)
+                'surface_max_phase_entropy': 0.6,  # Low entropy = focused activity
+                'surface_min_snr_for_focused': 7.0,  # Good SNR = real PD signal
+                'surface_max_slew_for_focused': 1.0e7,  # Not extremely fast like Corona
                 'surface_max_slew_rate': 5.0e6,
                 'corona_min_slew_rate': 1.0e7,
                 'surface_max_spectral_power_ratio': 0.5,
@@ -94,7 +108,7 @@ class PDTypeClassifier:
                 'surface_min_cv': 0.4,
                 'corona_max_cv': 0.3,
                 'surface_min_crest_factor': 4.0,
-                'surface_max_crest_factor': 6.0,
+                'surface_max_crest_factor': 10.0,  # Expanded from 6.0 - Surface can have high crest factor
                 'corona_min_crest_factor': 6.0,
                 'surface_min_cross_corr': 0.4,
                 'surface_max_cross_corr': 0.6,
@@ -109,8 +123,8 @@ class PDTypeClassifier:
             },
             'corona_internal': {
                 'weights': {'primary': 4, 'secondary': 2, 'supporting': 1},
-                'min_corona_score': 8,
-                'min_internal_score': 8,
+                'min_corona_score': 15,  # Raised from 8 - harder to classify as Corona
+                'min_internal_score': 15,  # Raised from 8 - harder to classify as Internal
                 'corona_neg_max_asymmetry': -0.6,
                 'corona_pos_min_asymmetry': 0.6,
                 'internal_min_asymmetry': -0.9,
@@ -242,25 +256,44 @@ class PDTypeClassifier:
         is_multi_pulse = self._get_feature(cluster_features, 'mean_is_multi_pulse', 0)
 
         if is_multi_pulse > 0.5 or pulses_per_waveform >= noise_cfg['min_pulses_for_multipulse']:
-            result['pd_type'] = 'NOISE_MULTIPULSE'
-            result['pd_type_code'] = PD_TYPES['NOISE_MULTIPULSE']['code']
-            result['confidence'] = 0.90
-            result['reasoning'].append(
-                f"Multi-pulse: {pulses_per_waveform:.1f} pulses/waveform"
-            )
-            return result
+            # Check for Internal PD indicators before classifying as noise
+            # Internal PD can have multiple pulses per waveform but shows characteristic patterns
+            spectral_power_low = self._get_feature(cluster_features, 'mean_spectral_power_low',
+                                                   self._get_feature(cluster_features, 'spectral_power_low', 0))
+            amp_phase_corr = self._get_feature(cluster_features, 'amplitude_phase_correlation', 0)
+            phase_spread = self._get_feature(cluster_features, 'phase_spread', 0)
+
+            # Internal PD typically has: high spectral power low (>0.5), moderate amp-phase correlation
+            # and moderate phase spread
+            is_internal_like = (spectral_power_low > 0.5 or amp_phase_corr > 0.3) and phase_spread > 80
+
+            if is_internal_like:
+                result['warnings'].append(
+                    f"Multi-pulse ({pulses_per_waveform:.1f}/wfm) but Internal-like: "
+                    f"spec_low={spectral_power_low:.2f}, corr={amp_phase_corr:.2f}"
+                )
+                # Don't classify as noise, continue to further branches
+            else:
+                result['pd_type'] = 'NOISE_MULTIPULSE'
+                result['pd_type_code'] = PD_TYPES['NOISE_MULTIPULSE']['code']
+                result['confidence'] = 0.90
+                result['reasoning'].append(
+                    f"Multi-pulse: {pulses_per_waveform:.1f} pulses/waveform"
+                )
+                return result
 
         # Score-based noise detection
         noise_score, noise_reasons = self._compute_noise_score(cluster_features, noise_cfg)
+        noise_threshold = noise_cfg.get('noise_score_threshold', 0.30)
 
-        if noise_score >= 0.45:
+        if noise_score >= noise_threshold:
             result['pd_type'] = 'NOISE'
             result['pd_type_code'] = PD_TYPES['NOISE']['code']
             result['confidence'] = min(0.5 + noise_score, 0.95)
             result['reasoning'].append(f"Noise indicators: {', '.join(noise_reasons)}")
             return result
 
-        if noise_score > 0.2:
+        if noise_score > noise_threshold * 0.5:
             result['warnings'].append(f"Partial noise indicators (score={noise_score:.2f})")
 
         result['reasoning'].append(f"Passed noise detection (score={noise_score:.2f})")
@@ -271,33 +304,73 @@ class PDTypeClassifier:
         phase_spread = self._get_feature(cluster_features, 'phase_spread', 0)
         result['reasoning'].append(f"Phase spread: {phase_spread:.1f}deg")
 
+        # Wide phase spread CAN indicate Surface, but Corona and Internal also have wide spreads
+        # Only classify as Surface here if we DON'T see strong Corona/Internal indicators
+        skip_surface_detection = False  # Flag to skip Branch 3 if Corona/Internal detected
+
         if phase_spread > phase_cfg['surface_phase_spread_min']:
-            result['pd_type'] = 'SURFACE'
-            result['pd_type_code'] = PD_TYPES['SURFACE']['code']
-            result['confidence'] = 0.85
-            result['reasoning'].append(
-                f"SURFACE: phase_spread={phase_spread:.1f}° > {phase_cfg['surface_phase_spread_min']}°"
-            )
-            return result
+            # Check for Corona indicators before committing to Surface
+            oscillation = self._get_feature(cluster_features, 'mean_oscillation_count',
+                                            self._get_feature(cluster_features, 'oscillation_count', 0))
+            slew_rate = self._get_feature(cluster_features, 'mean_slew_rate',
+                                          self._get_feature(cluster_features, 'slew_rate', 1e7))
+
+            # Check for Internal indicators
+            amp_phase_corr = self._get_feature(cluster_features, 'amplitude_phase_correlation', 0)
+            spectral_power_low = self._get_feature(cluster_features, 'mean_spectral_power_low',
+                                                   self._get_feature(cluster_features, 'spectral_power_low', 0))
+
+            # Corona typically has: high oscillation (>20), slower slew (<1e6)
+            is_corona_like = oscillation > 20 and slew_rate < 1e6
+
+            # Internal typically has: HIGH spectral power in low frequency (>0.7)
+            # This is the most distinctive Internal feature
+            # amp_phase_corr alone is not enough (Surface can have moderate correlation)
+            is_internal_like = spectral_power_low > 0.7
+
+            if is_corona_like:
+                result['reasoning'].append(
+                    f"Wide phase spread but Corona-like: osc={oscillation:.0f}, slew={slew_rate:.1e}"
+                )
+                skip_surface_detection = True  # Skip to Corona/Internal branch
+            elif is_internal_like:
+                result['reasoning'].append(
+                    f"Wide phase spread but Internal-like: corr={amp_phase_corr:.2f}, spec_low={spectral_power_low:.2f}"
+                )
+                skip_surface_detection = True  # Skip to Corona/Internal branch
+            else:
+                result['pd_type'] = 'SURFACE'
+                result['pd_type_code'] = PD_TYPES['SURFACE']['code']
+                result['confidence'] = 0.85
+                result['reasoning'].append(
+                    f"SURFACE: phase_spread={phase_spread:.1f}° > {phase_cfg['surface_phase_spread_min']}°"
+                )
+                return result
 
         # ===== BRANCH 3: SURFACE DETECTION =====
-        result['branch_path'].append('Branch 3: Surface Detection')
+        # Skip if we detected Corona/Internal-like patterns in Branch 2
+        if skip_surface_detection:
+            result['branch_path'].append('Branch 3: Surface Detection (SKIPPED - Corona/Internal detected)')
+        else:
+            result['branch_path'].append('Branch 3: Surface Detection')
 
-        surface_score, surface_indicators, max_surface_score = self._compute_surface_score(
-            cluster_features, phase_spread, surface_cfg
-        )
+        # Only compute and check Surface score if we didn't detect Corona/Internal indicators
+        if not skip_surface_detection:
+            surface_score, surface_indicators, max_surface_score = self._compute_surface_score(
+                cluster_features, phase_spread, surface_cfg
+            )
 
-        min_surface = surface_cfg['min_surface_score']
-        result['reasoning'].append(
-            f"Surface score: {surface_score}/{max_surface_score} (need {min_surface})"
-        )
+            min_surface = surface_cfg['min_surface_score']
+            result['reasoning'].append(
+                f"Surface score: {surface_score}/{max_surface_score} (need {min_surface})"
+            )
 
-        if surface_score >= min_surface:
-            result['pd_type'] = 'SURFACE'
-            result['pd_type_code'] = PD_TYPES['SURFACE']['code']
-            result['confidence'] = min(0.5 + (surface_score / max_surface_score) * 0.4, 0.90)
-            result['reasoning'].append(f"SURFACE: {', '.join(surface_indicators[:3])}...")
-            return result
+            if surface_score >= min_surface:
+                result['pd_type'] = 'SURFACE'
+                result['pd_type_code'] = PD_TYPES['SURFACE']['code']
+                result['confidence'] = min(0.5 + (surface_score / max_surface_score) * 0.4, 0.90)
+                result['reasoning'].append(f"SURFACE: {', '.join(surface_indicators[:3])}...")
+                return result
 
         # ===== BRANCH 4: CORONA VS INTERNAL =====
         result['branch_path'].append('Branch 4: Corona vs Internal')
@@ -426,6 +499,96 @@ class PDTypeClassifier:
             score += 0.10
             reasons.append(f"low_freq={dom_freq:.0f}")
 
+        # === NEW NOISE INDICATORS FOR SUB-THRESHOLD DETECTION ===
+        # NOTE: Lower weights to avoid false positives on Surface PD
+
+        # 1. Phase distribution uniformity (high entropy = random/uniform = likely noise)
+        # Real PD has characteristic phase patterns; noise is uniformly distributed
+        # Surface PD has wide spread but NOT perfectly uniform - threshold set high
+        phase_entropy = self._get_feature(features, 'phase_entropy', 0)
+        if phase_entropy > cfg.get('min_phase_entropy', 0.95):
+            score += 0.10  # Reduced from 0.15
+            reasons.append(f"uniform_phase={phase_entropy:.2f}")
+
+        # 2. Amplitude consistency (high CV in amplitudes = inconsistent = likely noise)
+        # Real PD clusters have relatively consistent amplitudes; noise is random
+        # Surface PD can have variable amplitudes - threshold set higher
+        amp_cv = self._get_feature(features, 'amplitude_coefficient_of_variation',
+                                   self._get_feature(features, 'amp_cv', 0))
+        if amp_cv > cfg.get('max_amplitude_cv', 1.5):
+            score += 0.08  # Reduced from 0.10
+            reasons.append(f"amp_inconsistent={amp_cv:.2f}")
+
+        # 3. Pulses per cycle (too many pulses per AC cycle = likely noise)
+        # Real PD typically has limited pulses per cycle; excessive count suggests noise
+        # NOTE: pulses_per_cycle may be unreliable without timing info (could be total count)
+        # Only use this indicator if the value is in a reasonable range (< 1000)
+        pulses_per_cycle = self._get_feature(features, 'pulses_per_cycle', 0)
+        if pulses_per_cycle > cfg.get('max_pulses_per_cycle', 20.0) and pulses_per_cycle < 1000:
+            score += 0.10  # Reduced from 0.15
+            reasons.append(f"high_pulse_rate={pulses_per_cycle:.1f}/cycle")
+
+        # 4. Amplitude/SNR based noise detection (PRIMARY for sub-threshold)
+        # Real PD should have decent amplitude and SNR even if below trigger threshold
+        # This is a key differentiator: Surface PD has HIGH amplitude, noise has LOW amplitude
+        mean_snr = self._get_feature(features, 'mean_signal_to_noise_ratio',
+                                     self._get_feature(features, 'signal_to_noise_ratio', 10))
+        mean_amp = self._get_feature(features, 'mean_absolute_amplitude',
+                                     self._get_feature(features, 'absolute_amplitude', 0.01))
+
+        min_snr_for_pd = cfg.get('min_mean_snr_for_pd', 6.0)
+        min_amp_for_pd = cfg.get('min_mean_amplitude_for_pd', 0.001)
+
+        # Low SNR is a strong noise indicator
+        if mean_snr < min_snr_for_pd:
+            score += 0.15
+            reasons.append(f"low_mean_snr={mean_snr:.1f}dB")
+
+        # Very low amplitude combined with other noise indicators
+        if mean_amp < min_amp_for_pd:
+            score += 0.10
+            reasons.append(f"low_mean_amp={mean_amp:.2e}")
+
+        # === FOCUSED PD PROTECTION ===
+        # If signal shows clear PD characteristics (low entropy + good SNR),
+        # reduce noise score to prevent false positives on Surface PD
+        # This is critical for narrow-phase Surface PD with moderate slew rate
+        if phase_entropy < 0.6 and mean_snr > 7.0:
+            protection = 0.20  # Subtract from noise score
+            score = max(0, score - protection)
+            reasons.append(f"focused_pd_protection: entropy={phase_entropy:.2f}, SNR={mean_snr:.1f}dB")
+
+        # === CORONA-LIKE PD PROTECTION ===
+        # Corona PD naturally has some noise-like characteristics:
+        # - Slow slew rate (compared to Surface)
+        # - Low SNR (Corona discharges are typically weaker)
+        # - High phase entropy (Corona can occur across wide phase range)
+        # BUT Corona has characteristic wide phase spread and high oscillation count
+        phase_spread = self._get_feature(features, 'phase_spread', 0)
+        oscillation = self._get_feature(features, 'mean_oscillation_count',
+                                        self._get_feature(features, 'oscillation_count', 0))
+
+        # If wide phase spread (>100°) AND significant oscillation (>20),
+        # this is likely Corona - reduce noise score significantly
+        # Corona naturally has slow slew, low SNR, and uniform phase which look like noise
+        if phase_spread > 100.0 and oscillation > 20.0:
+            protection = 0.40  # Strong protection for Corona-like patterns
+            score = max(0, score - protection)
+            reasons.append(f"corona_protection: spread={phase_spread:.1f}°, osc={oscillation:.1f}")
+
+        # === INTERNAL-LIKE PD PROTECTION ===
+        # Internal PD can also have lower slew rates but shows characteristic
+        # symmetric discharge (asymmetry near 0) and moderate phase spread
+        asymmetry = self._get_feature(features, 'discharge_asymmetry', 1.0)
+        amp_phase_corr = self._get_feature(features, 'amplitude_phase_correlation', 0)
+
+        # If relatively symmetric (|asymmetry| < 0.3) AND good amp-phase correlation (>0.3),
+        # this might be Internal PD - reduce noise score
+        if abs(asymmetry) < 0.3 and amp_phase_corr > 0.3:
+            protection = 0.20
+            score = max(0, score - protection)
+            reasons.append(f"internal_protection: asym={asymmetry:.2f}, corr={amp_phase_corr:.2f}")
+
         return score, reasons
 
     def _compute_surface_score(
@@ -439,10 +602,27 @@ class PDTypeClassifier:
         score = 0
         indicators = []
 
-        # Primary: phase spread
+        # Primary 1: phase spread (wide activity across phases)
         if phase_spread > cfg['surface_phase_spread']:
             score += weights['primary']
             indicators.append(f"phase_spread={phase_spread:.1f}°")
+
+        # Primary 2: Focused high-quality PD detection
+        # Low phase entropy + Good SNR + Moderate slew = real Surface PD
+        # This catches narrow-phase Surface PD that would otherwise look like Corona
+        phase_entropy = self._get_feature(features, 'phase_entropy', 1.0)
+        mean_snr = self._get_feature(features, 'mean_signal_to_noise_ratio',
+                                     self._get_feature(features, 'signal_to_noise_ratio', 0))
+        slew_rate = self._get_feature(features, 'mean_slew_rate',
+                                      self._get_feature(features, 'slew_rate', 1e7))
+
+        max_entropy = cfg.get('surface_max_phase_entropy', 0.6)
+        min_snr = cfg.get('surface_min_snr_for_focused', 7.0)
+        max_slew_focused = cfg.get('surface_max_slew_for_focused', 1.0e7)
+
+        if phase_entropy < max_entropy and mean_snr > min_snr and slew_rate < max_slew_focused:
+            score += weights['primary']
+            indicators.append(f"focused_pd: entropy={phase_entropy:.2f}, SNR={mean_snr:.1f}dB")
 
         # Secondary features
         slew_rate = self._get_feature(features, 'mean_slew_rate',
@@ -493,7 +673,7 @@ class PDTypeClassifier:
             indicators.append(f"freq={dom_freq/1e6:.1f}MHz")
 
         max_score = (
-            weights['primary'] +
+            2 * weights['primary'] +  # phase_spread + focused_pd
             3 * weights['secondary'] +
             2 * weights['mid'] +
             3 * weights['supporting']

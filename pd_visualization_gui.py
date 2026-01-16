@@ -4617,6 +4617,22 @@ def create_app(data_dir=DATA_DIR):
                         missing_features = [f for f in selected_features if f not in available_features]
                         if missing_features:
                             needs_extraction = True
+
+                        # Check for waveform/feature count mismatch (stale features after reprocessing)
+                        if not needs_extraction:
+                            # Count features in file (skip header)
+                            with open(input_file, 'r') as f:
+                                n_features = sum(1 for _ in f) - 1  # Subtract header
+
+                            # Count waveforms
+                            wfms_file = os.path.join(data_path, f"{clean_prefix}-WFMs.txt")
+                            if os.path.exists(wfms_file):
+                                with open(wfms_file, 'r') as f:
+                                    n_waveforms = sum(1 for _ in f)
+
+                                if n_waveforms != n_features and n_waveforms > 0 and n_features > 0:
+                                    needs_extraction = True
+                                    results_details.append(f"⚠ {dataset}: Waveform/feature count mismatch ({n_waveforms} vs {n_features})")
                     except Exception as e:
                         fail_count += 1
                         results_details.append(f"✗ {dataset}: Error reading features file: {str(e)[:30]}")
@@ -4639,7 +4655,13 @@ def create_app(data_dir=DATA_DIR):
                             results_details.append(f"✗ {dataset}: Feature extraction failed - {error_msg}")
                             continue
 
-                        results_details.append(f"↻ {dataset}: Re-extracted features ({len(missing_features)} were missing)")
+                        # Don't add another message if we already added a mismatch warning
+                        already_logged = any(dataset in d and d.startswith("⚠") for d in results_details)
+                        if not already_logged:
+                            if missing_features:
+                                results_details.append(f"↻ {dataset}: Re-extracted features ({len(missing_features)} were missing)")
+                            else:
+                                results_details.append(f"↻ {dataset}: Re-extracted features (waveform count changed)")
                         # Update loader's dataset_info to reflect that features now exist
                         if dataset in loader.dataset_info:
                             loader.dataset_info[dataset]['has_features'] = True
@@ -4702,7 +4724,10 @@ def create_app(data_dir=DATA_DIR):
                     updated = False
                     for j, d in enumerate(results_details):
                         if dataset in d and (d.startswith("↻") or d.startswith("⚠")):
-                            results_details[j] = f"✓ {dataset}" + (" (re-extracted)" if d.startswith("↻") else "")
+                            if d.startswith("⚠"):
+                                results_details[j] = f"✓ {dataset} (re-extracted - count mismatch fixed)"
+                            else:
+                                results_details[j] = f"✓ {dataset} (re-extracted)"
                             updated = True
                             break
                     if not updated:
