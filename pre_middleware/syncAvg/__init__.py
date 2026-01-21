@@ -31,11 +31,20 @@ Usage:
 """
 
 from .phase_interpolator import PhaseInterpolator, interpolate_phase
-from .sync_averager import SyncAverager, SyncAverageResult
+from .sync_averager import SyncAverager, SyncAverageResult, compute_sync_average
+from .raw_sync_accumulator import (
+    RawSyncAccumulator,
+    RawSyncAverageState,
+    merge_accumulators,
+)
 
 __all__ = [
     'PhaseInterpolator',
     'interpolate_phase',
     'SyncAverager',
     'SyncAverageResult',
+    'compute_sync_average',
+    'RawSyncAccumulator',
+    'RawSyncAverageState',
+    'merge_accumulators',
 ]
